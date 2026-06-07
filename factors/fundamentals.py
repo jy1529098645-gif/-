@@ -15,6 +15,19 @@ import numpy as np
 import pandas as pd
 
 
+def load_pit_fundamentals(ticker: str, fields: tuple[str, ...] = ("sue", "value_pctl", "quality")):
+    """Point-in-time 基本面因子接口（F2/F3）——**预留接口，未接付费源时显式拒绝**。
+
+    免费 yfinance 的 .info / 财务报表是"最新快照"，含前视+重述偏差，**严禁**用于历史因子回测。
+    干净的 PIT(SUE/预期上修/估值分位/质量趋势)需付费源(Sharadar/FMP/Tiingo ~$30-50/月)。
+    日后接入时在此实现：返回 MultiIndex(date,ticker) 的 PIT 因子面板（只用"当时可知"的数据）。
+    现在调用会抛 NotImplementedError，避免有人误用快照数据当历史因子。
+    """
+    raise NotImplementedError(
+        "PIT 基本面因子需付费 point-in-time 数据源(Sharadar/FMP/Tiingo)；"
+        "免费 yfinance 快照含前视偏差，不可用于历史回测。见 README『数据源说明』。")
+
+
 def _reported(edates: pd.DataFrame) -> pd.DataFrame:
     """只保留已公布（有 Surprise(%)）的财报行。"""
     return edates.dropna(subset=["Surprise(%)"]).sort_index()

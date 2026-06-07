@@ -320,7 +320,7 @@ def live_quote(ticker: str) -> dict:
 # ---------------------------------------------------------------------------
 # 财报日期（补充规格 B / Phase F1，免费 yfinance）
 # ---------------------------------------------------------------------------
-def load_earnings_dates(ticker: str, limit: int = 80, refresh: bool = False) -> pd.DataFrame:
+def load_earnings_dates(ticker: str, limit: int = 160, refresh: bool = False) -> pd.DataFrame:
     """返回财报日历：index=财报公布日(tz-naive)，列 EPS Estimate / Reported EPS / Surprise(%)。
 
     PIT 性质：财报**日期**是提前公布的（无前视）；Surprise(%) 只有在公布日之后才可知。
@@ -368,7 +368,7 @@ def _fred_api_key() -> str | None:
 
 def _macro_cache_path(tag: str) -> Path:
     safe = tag.replace("/", "_").replace("^", "_")
-    return _CACHE / f"macro_{safe}.parquet"
+    return _CACHE / f"macro_{safe}_{CACHE_VERSION}.parquet"
 
 
 def _fetch_fred_api(series_id: str, start: str, end: str | None, key: str) -> pd.Series:

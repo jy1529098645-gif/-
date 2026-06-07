@@ -322,6 +322,20 @@ def c_factor(factor_name: str, universe: str, start: str, end: str):
 
 
 @st.cache_data(show_spinner=False)
+def c_factor_decay(factor_name: str, universe: str, start: str, end: str):
+    """滚动 IC + IC 衰减曲线（监控因子有效性随时间/持有期变化）。"""
+    from data import loader
+    from factors import price_factors as pf
+    from evaluation import factor_eval as fe
+    tickers = loader.load_universe(universe)
+    px = loader.load_prices(tickers, start, end)
+    fac = pf.REGISTRY[factor_name](px)
+    decay = fe.ic_decay(fac, px, horizons=(1, 5, 21, 63, 126, 252))
+    roll = fe.rolling_ic(fac, px, horizon=21, window=126)
+    return {"decay": decay, "roll": roll, "verdict": fe.decay_verdict(decay)}
+
+
+@st.cache_data(show_spinner=False)
 def c_blend(factor_names: tuple, universe: str, start: str, end: str):
     """多因子组合（Phase 6）：z-score 等权混合 → IC + 多空分位回测（带 Sharpe CI）。"""
     from data import loader
@@ -1001,6 +1015,24 @@ def page_factor():
                "**柱子越高越好**，超过虚线(0.03)才算有用；IC 高得离谱(>0.2)反而要怀疑用了未来数据。")
     if factor == "random_factor":
         st.success("✅ 健全性检查：随机因子的预测力应≈0。若明显偏离 0，说明流程有前视偏差(用了未来信息)。")
+
+    # 滚动 IC + 因子衰减（有效期监控）
+    st.divider()
+    st.markdown("##### 📉 因子衰减 & 滚动 IC（有效持有期 + 是否随时间失效）")
+    with st.spinner("计算横截面 IC 衰减曲线…"):
+        dec = c_factor_decay(factor, universe, start, end)
+    st.markdown(f'<div class="verdict">{dec["verdict"]}</div>', unsafe_allow_html=True)
+    dcol = st.columns(2)
+    _dd = dec["decay"].dropna()
+    if not _dd.empty:
+        ddf = pd.DataFrame({"持有期(日)": _dd.index, "平均IC": _dd.values})
+        dcol[0].markdown("**IC 随持有期衰减**")
+        dcol[0].bar_chart(ddf.set_index("持有期(日)"), color="#7C5CFC")
+    _roll = dec["roll"]
+    if _roll is not None and not _roll.empty and _roll["roll_ic"].notna().any():
+        dcol[1].markdown("**滚动 IC(126日窗·h21)**")
+        dcol[1].line_chart(_roll[["roll_ic"]].dropna(), color="#00D4FF")
+    st.caption("📖 IC 衰减曲线：因子在哪个持有期最强、多久失效（峰值=最佳持有期）。滚动 IC 跌到 0 附近=因子近年走弱。**横截面需多标的，建议用 mag7 池**。")
 
     # Phase 6（免费）：多因子组合
     st.divider()

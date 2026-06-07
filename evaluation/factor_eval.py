@@ -152,3 +152,66 @@ def print_report(result: dict) -> None:
     print("\n多空价差（最高分位 − 最低分位，按周期）：")
     print(result["long_short_spread"].round(5).to_string())
     print(f"\n最高分位换手率（均值）：{result['top_quantile_turnover']:.3f}")
+
+
+# ---------------------------------------------------------------------------
+# 滚动 IC / 因子衰减监控（自包含，不依赖 alphalens）—— 看因子有效期与是否衰减
+# ---------------------------------------------------------------------------
+def cross_sectional_ic(factor_values: pd.DataFrame, prices: pd.DataFrame, horizon: int = 21) -> pd.Series:
+    """每个交易日的**横截面 Spearman IC**（因子值 vs 未来 horizon 日收益）。
+
+    需多标的(列)做截面；返回以日期为 index 的 IC 时间序列（每日至少 5 个标的才算）。
+    """
+    from scipy.stats import spearmanr
+
+    cols = [c for c in factor_values.columns if c in prices.columns]
+    fv = factor_values[cols]
+    px = prices[cols]
+    fwd = px.shift(-horizon) / px - 1.0
+    ics: dict = {}
+    for dt, frow in fv.iterrows():
+        if dt not in fwd.index:
+            continue
+        f = frow.dropna()
+        r = fwd.loc[dt].reindex(f.index).dropna()
+        common = f.index.intersection(r.index)
+        if len(common) >= 5:
+            ic, _ = spearmanr(f[common], r[common])
+            if ic == ic:
+                ics[dt] = float(ic)
+    return pd.Series(ics, dtype=float).sort_index()
+
+
+def rolling_ic(factor_values: pd.DataFrame, prices: pd.DataFrame,
+               horizon: int = 21, window: int = 126) -> pd.DataFrame:
+    """滚动平均 IC 与滚动 IR（IC 均值/标准差）时间序列——监控因子有效性随时间变化。"""
+    ic = cross_sectional_ic(factor_values, prices, horizon)
+    if ic.empty:
+        return pd.DataFrame(columns=["ic", "roll_ic", "roll_ir"])
+    mp = max(10, window // 2)
+    rmean = ic.rolling(window, min_periods=mp).mean()
+    rstd = ic.rolling(window, min_periods=mp).std()
+    return pd.DataFrame({"ic": ic, "roll_ic": rmean, "roll_ir": rmean / rstd.replace(0.0, float("nan"))})
+
+
+def ic_decay(factor_values: pd.DataFrame, prices: pd.DataFrame,
+             horizons: tuple[int, ...] = (1, 5, 21, 63, 126, 252)) -> pd.Series:
+    """IC 随持有期的衰减曲线：每个 horizon 的全样本平均横截面 IC。看因子在多长周期内有效。"""
+    out = {h: (float(ic.mean()) if len(ic := cross_sectional_ic(factor_values, prices, h)) else float("nan"))
+           for h in horizons}
+    return pd.Series(out, name="mean_ic")
+
+
+def decay_verdict(decay: pd.Series) -> str:
+    """把衰减曲线翻成一句话：峰值在哪个周期、是否快速衰减。"""
+    d = decay.dropna()
+    if d.empty:
+        return "样本不足，无法评估因子衰减。"
+    peak_h = int(d.abs().idxmax())
+    peak = float(d.loc[peak_h])
+    last_h = int(d.index[-1])
+    last = float(d.loc[last_h])
+    trend = "已显著衰减" if abs(last) < 0.5 * abs(peak) else "仍有残留"
+    usable = "可用" if abs(peak) >= 0.03 else "偏弱（IC<0.03）"
+    return (f"因子 IC 在 h={peak_h} 日最强({peak:+.3f}，{usable})；到 h={last_h} 日为 {last:+.3f}，{trend}。"
+            f"→ 该因子的有效持有期约在 h={peak_h} 附近。")

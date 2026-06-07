@@ -34,6 +34,20 @@ def _time_stop_exits(entries: pd.Series, n: int) -> pd.Series:
     return entries.shift(n, fill_value=False).astype(bool)
 
 
+def vol_scaled_trail(price: pd.Series, k: float = 3.0, lookback: int = 21) -> float:
+    """波动自适应移动止损宽度：k × 该票典型日波动(年化前的日 std 中位)。
+
+    思路同 ATR/Chandelier——安静的票给更紧的止损、波动大的票给更宽的止损，避免被正常噪音扫出。
+    用收盘价的日收益滚动 std 的中位作 ATR 代理(close-only 管线兼容)；夹在 [5%,50%] 防极端。
+    返回一个**移动止损比例**(供 vectorbt sl_stop + sl_trail=True 用)。
+    """
+    vol = price.pct_change().rolling(lookback, min_periods=max(2, lookback // 2)).std()
+    typical = float(vol.median())
+    if not (typical == typical) or typical <= 0:
+        return 0.20
+    return float(min(0.50, max(0.05, k * typical)))
+
+
 def build_exit_kwargs(price: pd.Series, entries: pd.Series, exit_spec: dict) -> dict:
     """把出场规格 dict 翻成 from_signals 的 kwargs。
 
@@ -41,7 +55,11 @@ def build_exit_kwargs(price: pd.Series, entries: pd.Series, exit_spec: dict) -> 
                     time_stop（int 天），signal_exit（布尔 Series）。
     """
     kw: dict = {}
-    if "trailing_stop" in exit_spec and exit_spec["trailing_stop"] is not None:
+    # 波动自适应移动止损：vol_trail=k → 止损宽度按该票典型波动缩放（优先于固定 trailing/stop）
+    if exit_spec.get("vol_trail"):
+        kw["sl_stop"] = vol_scaled_trail(price, k=float(exit_spec["vol_trail"]))
+        kw["sl_trail"] = True
+    elif "trailing_stop" in exit_spec and exit_spec["trailing_stop"] is not None:
         kw["sl_stop"] = float(exit_spec["trailing_stop"])
         kw["sl_trail"] = True
     elif "stop_loss" in exit_spec and exit_spec["stop_loss"] is not None:
