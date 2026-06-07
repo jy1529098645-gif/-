@@ -401,6 +401,21 @@ def c_signal_decay(tickers: tuple, start: str, end: str):
 
 
 @st.cache_data(show_spinner=False)
+def c_purged_cv(tickers: tuple, start: str, end: str, horizon: int = 21):
+    """横截面动量因子的 purged+embargo CV 无泄漏 OOS IC。"""
+    from stats import purged_cv as pcv
+    px = c_prices(tickers, start, end).dropna(how="all").ffill()
+    score = px.pct_change(252).shift(21)  # 12-1 动量
+    return pcv.purged_cv_ic(score, px, horizon=horizon, n_splits=6, embargo=0.02)
+
+
+@st.cache_data(show_spinner=False)
+def c_data_health(tickers: tuple, start: str, end: str):
+    from analysis import data_quality as dq
+    return dq.data_health(c_prices(tickers, start, end))
+
+
+@st.cache_data(show_spinner=False)
 def c_volume_profile(ticker: str, start: str, end: str, lookback: int):
     from data import loader
     from analysis import volume_profile as vpm
@@ -1857,6 +1872,13 @@ def page_panorama():
         except Exception as _e:  # noqa: BLE001
             st.caption(f"校准库读取失败：{_e}")
 
+    with st.expander("🩺 数据质量体检（新鲜度 / 缺口 / 异常跳空）"):
+        peers_dq = tuple(dict.fromkeys([a] + [t for t in _TICKER_GROUPS[grp] if t != "SPY"]))[:12]
+        dh = c_data_health(peers_dq, "2015-01-01", end)
+        st.markdown(f'<div class="verdict">{dh["summary"]}</div>', unsafe_allow_html=True)
+        st.dataframe(dh["table"], use_container_width=True, hide_index=True)
+        st.caption("📖 免费数据(yfinance)可能停更/缺口/未除权跳空——陈旧🔴或带⚠️的标的，其分析结论要打折看。仅体检、不改数据。")
+
     with st.expander("🌐 全局多重检验账本（扣除挖掘后，还剩几个真显著）"):
         from analysis import mt_ledger as _mt
         rep = _mt.fdr_report(alpha=0.10)
@@ -2045,6 +2067,17 @@ def page_panorama():
                 ncs[0].markdown(stat_card("因子 IC(均)", f"{ic_m:.3f}", f"{cse.get('ic_n_periods',0)} 期·已beta中性化", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
                 ncs[1].markdown(stat_card("IC 的 |t| (Newey-West)", f"{abs(nwt):.2f}" if nwt == nwt else "—",
                                           "显著(>2)" if (nwt == nwt and abs(nwt) > 2) else "不显著", "#2BE6A8" if (nwt == nwt and abs(nwt) > 2) else "#FF5C7A", tip="IR"), unsafe_allow_html=True)
+                # Purged & Embargo CV：无标签泄漏的 OOS IC（比 walk-forward 更严）
+                pcv_r = c_purged_cv(peers_cs, "2015-01-01", end)
+                if pcv_r.get("n_folds", 0) >= 2:
+                    pcc = st.columns(2)
+                    pcc[0].markdown(stat_card("Purged-CV OOS IC", f"{pcv_r['mean_oos_ic']:.3f}",
+                                              f"{pcv_r['n_folds']} 折·无标签泄漏", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
+                    pt = pcv_r.get("t_across_folds", float("nan"))
+                    pcc[1].markdown(stat_card("跨折 |t|", f"{abs(pt):.2f}" if pt == pt else "—",
+                                              "稳健(>2)" if (pt == pt and abs(pt) > 2) else "不稳健",
+                                              "#2BE6A8" if (pt == pt and abs(pt) > 2) else "#FF5C7A"), unsafe_allow_html=True)
+                    st.caption(f"📖 {pcv_r['note']}")
                 # 记入全局多重检验账本（IC 的 NW p 值）
                 try:
                     from analysis import mt_ledger as _mt
