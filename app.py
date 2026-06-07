@@ -518,9 +518,19 @@ def c_data_health(tickers: tuple, start: str, end: str):
 
 @st.cache_data(show_spinner=False, ttl=30)
 def c_live_quote(ticker: str, _bucket: int = 0):
-    """近实时现价快照（缓存 30 秒）。_bucket 让盘中按分钟桶强制刷新。"""
-    from data import loader
-    return loader.live_quote(ticker)
+    """近实时现价快照（缓存 30 秒）。_bucket 让盘中按分钟桶强制刷新。
+
+    单点兜底：任何失败——含部署/模块缓存错位导致 loader 暂无 live_quote、或取价异常——
+    都返回 ok=False，由调用方回退到日线收盘，绝不让「今日状态/总览」整页崩溃。"""
+    try:
+        from data import loader
+        fn = getattr(loader, "live_quote", None)
+        if fn is not None:
+            return fn(ticker)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ticker": ticker, "price": float("nan"), "change": float("nan"),
+            "change_pct": float("nan"), "ok": False, "delayed": True}
 
 
 def is_market_open() -> bool:
