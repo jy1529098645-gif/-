@@ -188,6 +188,18 @@ def run_gate(key: str, params: dict, label: str = "🚀 运行回测", hint: str
     return run
 
 
+def _lazy_gate(key: str, label: str = "▶ 加载此分析（较重，按需运行）") -> bool:
+    """惰性门控：Streamlit 的 Tab/expander 内容**每次都会执行**(折叠也算)，重计算会拖慢整页。
+    用此门控让重模块只在点击后运行，且本会话内记住。返回 True=已激活。"""
+    sk = f"_lazy_{key}"
+    if st.session_state.get(sk):
+        return True
+    if st.button(label, key=f"btn_{sk}"):
+        st.session_state[sk] = True
+        return True
+    return False
+
+
 def _col_cfg(columns):
     """为数据表生成带悬浮释义的 column_config：列名照常显示，悬浮列头出含义。"""
     cfg = {}
@@ -713,21 +725,26 @@ _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 2
 with st.sidebar:
     st.markdown("### 📊 量化研究工具")
     st.caption("选股 → 自动全景分析 · 校准而非预测")
+    st.markdown("**📍 查询**")
     grp = st.selectbox("📂 板块", list(_TICKER_GROUPS), index=0)
     asset = st.selectbox("🎯 选择标的", _TICKER_GROUPS[grp], index=0)
+    if grp == "⚡ 杠杆ETF(3x)":
+        st.caption("⚠️ 3x 杠杆 ETF 有每日复利衰减、长持有失真，历史短；分析仅供参考。")
+    st.markdown("**⚙️ 分析参数**")
     gl_horizon = _HZ[st.selectbox("分析周期", list(_HZ), index=0, help="远期收益/建仓校准的持有期")]
     gl_profile = st.selectbox("🧭 风险偏好", ["保守", "均衡", "激进"], index=1,
                               help="在证据等级给的仓位封顶上做个性化缩放：保守 0.5×、均衡 1×、激进 1.25×（仍受单票硬上限约束）。")
+    _pm = {"保守": 0.5, "均衡": 1.0, "激进": 1.25}[gl_profile]
+    st.caption(f"→ 当前档位仓位封顶 **×{_pm:g}**（在证据等级给的上限上缩放；单票硬上限不破）")
     if st.button("🔄 重新分析（刷新数据/重算）", use_container_width=True,
                  help="清空缓存并用最新数据重新计算当前页"):
         st.cache_data.clear()
         st.rerun()
-    if grp == "⚡ 杠杆ETF(3x)":
-        st.caption("⚠️ 3x 杠杆 ETF 有每日复利衰减、长持有失真，历史短；分析仅供参考。")
     st.divider()
     view = st.radio("视图", _VIEWS, index=0, label_visibility="collapsed")
     adv = st.selectbox("研究工具", _ADV_NAMES) if view == "🧪 高级研究" else None
     st.divider()
+    st.markdown("**🔧 数据 & 工具**")
     import datetime as _dt
     _today = _dt.date.today().isoformat()
     _presets = {"近 10 年": "2016-01-01", "近 15 年": "2010-01-01", "2005 至今": "2005-01-01", "自定义…": None}
@@ -2107,10 +2124,15 @@ def page_panorama():
         elif pd_now is not None:
             st.caption("📈 PEAD：当前不在财报后漂移窗口内（或该票同类财报样本不足）。")
 
-    # ---- 收起的扩展（吸收原"建仓作战室/信号挖掘"的单股模块，三页合一）----
+    # ---- 深入分析：12 个模块按主题收进 5 个 Tab（吸收原作战室/信号挖掘，三页合一）----
     from regime import entry_cockpit as ec
 
-    with st.expander("🔬 历史相似案例（当前状态在历史上的真实实例 · 可核对）"):
+    st.markdown("#### 📂 深入分析（按需展开）")
+    _T_ZONE, _T_RISK, _T_HIST, _T_EVENT, _T_TOOL = st.tabs(
+        ["💠 价位 & 方案", "📈 策略 & 风险", "🔬 历史 & 信号", "🗓️ 事件 & 账本", "🧰 工具 & 导出"])
+
+    with _T_HIST.expander("🔬 历史相似案例（当前状态在历史上的真实实例 · 可核对）"):
+      if _lazy_gate(f"analog_{a}"):
         ana = c_analogs(a, "2008-01-01" if a != "SPY" else "1995-01-01", end, int(horizon))
         st.markdown(f'<div class="verdict">{ana["summary"]}</div>', unsafe_allow_html=True)
         cs = ana["cases"]
@@ -2123,7 +2145,7 @@ def page_panorama():
                          use_container_width=True, hide_index=True)
             st.caption("📖 这些是构成上方引擎分布的**真实历史日期**；是样本陈列，不代表'现在更像哪一次'。")
 
-    with st.expander("🎯 校准追踪（记录此刻信号 · 事后比对'说的 vs 做到的'）"):
+    with _T_HIST.expander("🎯 校准追踪（记录此刻信号 · 事后比对'说的 vs 做到的'）"):
         from analysis import journal as jn
         st.caption("把当前状态/引擎预期落库，待 horizon 走完后用真实价格回填，检验工具到底准不准（自验证闭环）。")
         if st.button("📝 记录当前信号到校准库", key=f"logsig_{a}"):
@@ -2153,14 +2175,15 @@ def page_panorama():
         except Exception as _e:  # noqa: BLE001
             st.caption(f"校准库读取失败：{_e}")
 
-    with st.expander("🩺 数据质量体检（新鲜度 / 缺口 / 异常跳空）"):
+    with _T_TOOL.expander("🩺 数据质量体检（新鲜度 / 缺口 / 异常跳空）"):
+      if _lazy_gate(f"dq_{a}"):
         peers_dq = tuple(dict.fromkeys([a] + [t for t in _TICKER_GROUPS[grp] if t != "SPY"]))[:12]
         dh = c_data_health(peers_dq, "2015-01-01", end)
         st.markdown(f'<div class="verdict">{dh["summary"]}</div>', unsafe_allow_html=True)
         st.dataframe(dh["table"], use_container_width=True, hide_index=True)
         st.caption("📖 免费数据(yfinance)可能停更/缺口/未除权跳空——陈旧🔴或带⚠️的标的，其分析结论要打折看。仅体检、不改数据。")
 
-    with st.expander("🌐 全局多重检验账本（扣除挖掘后，还剩几个真显著）"):
+    with _T_EVENT.expander("🌐 全局多重检验账本（扣除挖掘后，还剩几个真显著）"):
         from analysis import mt_ledger as _mt
         rep = _mt.fdr_report(alpha=0.10)
         if rep["n_tests"] == 0:
@@ -2176,7 +2199,7 @@ def page_panorama():
                 columns={"family": "类别", "name": "检验", "p_value": "p值", "显著_未校正": "未校正", "显著_BH": "BH存活"})
             st.dataframe(tb.style.format({"p值": "{:.4f}"}), use_container_width=True, hide_index=True)
 
-    with st.expander("💠 各价位带明细（盈亏比 / 期望值 / 超额）"):
+    with _T_ZONE.expander("💠 各价位带明细（盈亏比 / 期望值 / 超额）"):
         enough = z[z["enough"]] if "enough" in z.columns else z.iloc[0:0]
         if not enough.empty:
             zsel = st.selectbox("看某价位带的校准结论", enough["zone"].tolist(), key=f"zsel_{a}")
@@ -2197,7 +2220,7 @@ def page_panorama():
                      use_container_width=True, hide_index=True, column_config=_col_cfg(show.columns))
         st.caption("📖 列名可悬浮看含义。每个回撤区间对应一段价位，给该状态历史远期收益分布；区间+分布，不是目标价。")
 
-    with st.expander("🪜 建仓方案模拟器：一次性 vs 定投 vs 越跌越补（该怎么把钱投进去）"):
+    with _T_ZONE.expander("🪜 建仓方案模拟器：一次性 vs 定投 vs 越跌越补（该怎么把钱投进去）"):
         st.caption("回答一个具体问题：**我要把一笔钱投进这只票，是一次性、还是分批/越跌越补更好？** "
                    "用历史滚动窗口对比三种方案的**回报**与**建仓期最深浮亏(痛感)**，给可执行结论。")
         mc = st.columns([2, 2, 3])
@@ -2233,7 +2256,8 @@ def page_panorama():
                        "“建仓期最深浮亏”是投钱过程中净值相对自身峰值的最深回撤（你要扛的痛）；"
                        "“跑赢一次性”是历史上该方案期末回报高于一次性的窗口比例。**非预测、非投资建议**。")
 
-    with st.expander("🔎 各状态下建仓/风险的历史表现（哪种状态进场更好）"):
+    with _T_HIST.expander("🔎 各状态下建仓/风险的历史表现（哪种状态进场更好）"):
+      if _lazy_gate(f"scan1_{a}"):
         from analysis import signal_scan as _ssm
         sc_df, _cs, ew_items, rw_items = c_scan((a,), "2012-01-01", end, int(horizon))
         disp, summary = _ssm.humanize_scan(sc_df)
@@ -2245,7 +2269,8 @@ def page_panorama():
             st.markdown("**建仓分 / 风险分 走势（0–100 历史分位，非预测）**")
             st.plotly_chart(ch.score_timeseries(sdf, a), use_container_width=True, config=ch.CHART_CONFIG)
 
-    with st.expander("📊 策略 vs 持有 · 年化 / 夏普 / 回撤对照"):
+    with _T_RISK.expander("📊 策略 vs 持有 · 年化 / 夏普 / 回撤对照"):
+      if _lazy_gate(f"perf_{a}"):
         pv = c_perf(a, "2014-01-01", end)
         s_, h_ = pv["strategy"], pv["hold"]
         pc = st.columns(4)
@@ -2305,7 +2330,8 @@ def page_panorama():
             wfc[2].markdown(stat_card("OOS 持有年化(中位)", f"{wf['hold_cagr_median']:+.0%}", "同期对照", "#8A93A6"), unsafe_allow_html=True)
             st.caption(f"📖 {wf['note']}")
 
-    with st.expander("🛡️ Regime 风险加权暴露（高波动/避险环境自动降仓 · 改善回撤）"):
+    with _T_RISK.expander("🛡️ Regime 风险加权暴露（高波动/避险环境自动降仓 · 改善回撤）"):
+      if _lazy_gate(f"regime_{a}"):
         ro = c_regime_overlay(a, "2014-01-01", end)
         ex, ov = ro["exposure"], ro["overlay"]
         st.markdown(stat_card("今日建议暴露", f"{ex['exposure']:.0%}", "满仓的百分比(只降不加杠杆)",
@@ -2328,7 +2354,7 @@ def page_panorama():
         st.caption("📖 波动目标=按近期波动反比缩放仓位(平静加、动荡减，上限不加杠杆)。常以**更低回撤换更稳夏普**，"
                    "年化可能略低——这是风控 edge，不是择时预测。")
 
-    with st.expander("🏁 横截面相对排名 edge（同组谁更强 · 动量+低波多空 · deflated Sharpe）"):
+    with _T_RISK.expander("🏁 横截面相对排名 edge（同组谁更强 · 动量+低波多空 · deflated Sharpe）"):
         peers_cs = tuple(t for t in _TICKER_GROUPS[grp] if t != "SPY")[:12]
         if len(peers_cs) >= 5:
             if st.button("运行横截面回测", key=f"runcs_{a}"):
@@ -2383,11 +2409,13 @@ def page_panorama():
         else:
             st.caption("该组标的不足 5 只，无法做横截面相对排名。")
 
-    with st.expander("📦 筹码分布（Volume Profile / POC）"):
+    with _T_ZONE.expander("📦 筹码分布（Volume Profile / POC）"):
+      if _lazy_gate(f"vp_{a}"):
         ohlcv, vpf = c_volume_profile(a, "2015-01-01", end, 252)
         st.plotly_chart(ch.volume_profile_bars(vpf, title=f"{a} 筹码分布"), use_container_width=True, config=ch.CHART_CONFIG)
 
-    with st.expander(f"🛰️ 同板块今日对比（{grp} · 建仓分 / 风险分排名）"):
+    with _T_RISK.expander(f"🛰️ 同板块今日对比（{grp} · 建仓分 / 风险分排名）"):
+      if _lazy_gate(f"peers_{a}"):
         peers = tuple(t for t in _TICKER_GROUPS[grp] if t != "SPY")[:8]
         if len(peers) >= 2:
             _df, cs7, _ew, _rw = c_scan(peers, "2012-01-01", end, int(horizon))
@@ -2401,7 +2429,7 @@ def page_panorama():
 
     nw = b.get("news")
     if nw is not None and len(nw):
-        with st.expander("🗞️ 最近新闻（免费 · 仅线索 · 不入量化）"):
+        with _T_EVENT.expander("🗞️ 最近新闻（免费 · 仅线索 · 不入量化）"):
             for _, r in nw.head(6).iterrows():
                 title = f"[{r['title']}]({r['url']})" if r.get("url") else r["title"]
                 st.markdown(f"- `{r['date']}` {title} — *{r.get('provider','')}*")
