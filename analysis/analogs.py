@@ -26,14 +26,25 @@ def historical_analogs(price: pd.Series, macro: pd.DataFrame, asset: str,
     dd_state = ob.drawdown_state(price)            # in_drawdown / near_high
     vol_st = ob.vol_state(price) if use_vol else None
 
+    # 估值分位用**扩张窗口(point-in-time)**重算，杜绝前视：每天只用截至当天的历史定三分位
+    # （build_state 的 valuation_tercile 是全样本分位，会把未来信息漏进历史标签）。
+    val_tercile = None
+    if use_valuation:
+        vd = state["_val_dev"]
+        q1 = vd.expanding(min_periods=252).quantile(1 / 3)
+        q2 = vd.expanding(min_periods=252).quantile(2 / 3)
+        val_tercile = pd.Series(
+            np.where(vd <= q1, "low", np.where(vd >= q2, "high", "mid")),
+            index=vd.index).where(vd.notna() & q1.notna())
+
     today = price.index[-1]
     cur_dd = str(dd_state.iloc[-1])
-    cur_val = str(state["valuation_tercile"].iloc[-1]) if use_valuation else None
+    cur_val = str(val_tercile.iloc[-1]) if (use_valuation and val_tercile is not None) else None
     cur_vol = str(vol_st.iloc[-1]) if (use_vol and vol_st is not None) else None
 
     mask = (dd_state == cur_dd)
-    if use_valuation and cur_val == cur_val and cur_val != "nan":
-        mask &= (state["valuation_tercile"] == cur_val)
+    if use_valuation and cur_val is not None and cur_val != "nan":
+        mask &= (val_tercile == cur_val)
     if use_vol and cur_vol is not None and cur_vol != "nan":
         mask &= (vol_st == cur_vol)
 

@@ -58,6 +58,13 @@ def test_strong_signal_can_reach_A():
     assert g["max_position_fraction"] >= 0.6
 
 
+def test_significant_negative_reaches_F():
+    # 显著为负 + 盈亏比<1 → F(0% 不建仓)
+    g = ed.evidence_grade(_bucket(-0.05, (-0.10, -0.02), sig=True, rr=0.6))
+    assert g["grade"] == "F"
+    assert g["max_position_fraction"] == 0.0
+
+
 def test_high_vol_negative_excess_forces_defensive():
     g = ed.evidence_grade(_bucket(-0.02, (-0.08, 0.03), sig=False), vol_percentile=0.97)
     assert g["grade"] in ("D", "F")

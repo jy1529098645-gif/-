@@ -127,6 +127,16 @@ def evidence_grade(bucket: dict | None, vol_percentile: float | None = None,
     if excess is None:
         grade, confidence, action = "C", "低", "仅观察"
         reasons.append("超额缺失")
+    elif excess < 0 and significant and (ci_high is not None and ci_high < 0):
+        # 显著为负 + 左尾差(盈亏比<1 或缺失) → F：历史上该状态进场显著吃亏，不建仓
+        rr = bucket.get("reward_risk")
+        bad_tail = (rr is None) or (rr != rr) or (rr < 1.0)
+        if bad_tail:
+            grade, confidence, action = "F", "低", "不建仓（历史显著吃亏）"
+            reasons.append("超额显著为负且左尾差（盈亏比<1）")
+        else:
+            grade, confidence, action = "D", "低", "不主动建仓 / 等确认"
+            reasons.append("超额显著为负")
     elif excess <= 0:
         grade, confidence, action = "D", "低", "不主动建仓 / 等确认"
         reasons.append("超额≤0（更可能是 beta/选股偏差，非择时 alpha）")

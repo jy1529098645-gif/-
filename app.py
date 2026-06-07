@@ -440,11 +440,11 @@ def c_earnings_reaction(ticker: str, start: str, end: str):
 
 
 @st.cache_data(show_spinner=False)
-def c_ladder(asset: str, start: str, end: str, bands: tuple):
+def c_ladder(asset: str, start: str, end: str, bands: tuple, budget: float = 10000.0):
     from data import loader
     from regime import entry_cockpit as ec
     px = loader.load_prices([asset], start, end)
-    return ec.ladder_plan_backtest(px, asset=asset, bands=bands, n_boot=500)
+    return ec.ladder_plan_backtest(px, asset=asset, bands=bands, budget=budget, n_boot=500)
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
@@ -1754,16 +1754,41 @@ def page_panorama():
                      use_container_width=True, hide_index=True, column_config=_col_cfg(show.columns))
         st.caption("📖 列名可悬浮看含义。每个回撤区间对应一段价位，给该状态历史远期收益分布；区间+分布，不是目标价。")
 
-    with st.expander("🪜 阶梯式建仓布局回测（越跌越补 vs 一次性/定投）"):
-        bands_pick = st.multiselect("补仓触发档（距前高回撤）", ["5%", "10%", "15%", "20%", "25%", "30%"],
-                                    default=["10%", "20%", "30%"], key=f"bands_{a}")
-        if st.button("运行阶梯回测", key=f"runladder_{a}") and bands_pick:
+    with st.expander("🪜 建仓方案模拟器：一次性 vs 定投 vs 越跌越补（该怎么把钱投进去）"):
+        st.caption("回答一个具体问题：**我要把一笔钱投进这只票，是一次性、还是分批/越跌越补更好？** "
+                   "用历史滚动窗口对比三种方案的**回报**与**建仓期最深浮亏(痛感)**，给可执行结论。")
+        mc = st.columns([2, 2, 3])
+        budget_k = mc[0].number_input("投入金额（美元）", min_value=1000, max_value=10_000_000,
+                                      value=25000, step=5000, key=f"budget_{a}")
+        bands_pick = mc[1].multiselect("越跌越补触发档（距前高回撤）", ["5%", "10%", "15%", "20%", "25%", "30%"],
+                                       default=["10%", "20%", "30%"], key=f"bands_{a}")
+        if mc[2].button("▶ 运行建仓方案对比", key=f"runladder_{a}", use_container_width=True) and bands_pick:
             bands = tuple(int(x.rstrip("%")) / 100 for x in bands_pick)
-            with st.spinner("滚动窗口 阶梯 vs 一次性 vs 定投 + bootstrap…"):
-                lr = c_ladder(a, zstart, end, bands)
-            st.markdown(f'<div class="hero-sub">{lr["note"]}</div>', unsafe_allow_html=True)
-            st.plotly_chart(ch.strategy_compare(lr["per_strategy"], title="布局资本回报中位 + 95% CI"), use_container_width=True, config=ch.CHART_CONFIG)
-            st.caption("📖 长期上涨的票里一次性投入常胜过分批；阶梯/定投的价值在**降低择时风险与浮亏**，不一定提高收益。")
+            with st.spinner("滚动窗口模拟 一次性/定投/越跌越补 + bootstrap…"):
+                lr = c_ladder(a, zstart, end, bands, float(budget_k))
+            # 白话裁决置顶
+            st.markdown(f'<div class="verdict" style="font-size:1.02rem">{lr["verdict"]}</div>', unsafe_allow_html=True)
+            # 风险-回报权衡图（右下=高回报低痛感）
+            st.plotly_chart(ch.ladder_risk_return(lr["per_strategy"]), use_container_width=True, config=ch.CHART_CONFIG)
+            # 三方案明细表（回报 + 痛感 + 最坏 + 到位时间 + 跑赢一次性）
+            cn = {"lump_sum": "一次性全投", "dca": "定投(DCA)", "ladder": "越跌越补(阶梯)"}
+            rows = []
+            for k, s in lr["per_strategy"].items():
+                vl = lr["vs_lump_sum"].get(k, {})
+                rows.append({
+                    "方案": cn.get(k, k),
+                    f"投${int(budget_k/1000)}k→期末": f"${budget_k*(1+s['median'])/1000:.0f}k ({s['median']:+.0%})",
+                    "中位回报": s["median"], "差(p10~p90)": f"{s['p10']:+.0%} ~ {s['p90']:+.0%}",
+                    "建仓期最深浮亏": s["mdd_median"], "最坏窗口(p5)": s["p5"],
+                    "投满用时(天)": f"{s['deploy_days_median']:.0f}",
+                    "跑赢一次性": "—" if k == "lump_sum" else f"{vl.get('beats_lump_rate',float('nan')):.0%}",
+                })
+            tdf = pd.DataFrame(rows)
+            st.dataframe(tdf.style.format({"中位回报": "{:+.0%}", "建仓期最深浮亏": "{:+.0%}", "最坏窗口(p5)": "{:+.0%}"}),
+                         use_container_width=True, hide_index=True)
+            st.caption(f"📖 {lr['note']}　**怎么读**：右下角的方案=高回报+低痛感最优；"
+                       "“建仓期最深浮亏”是投钱过程中净值相对自身峰值的最深回撤（你要扛的痛）；"
+                       "“跑赢一次性”是历史上该方案期末回报高于一次性的窗口比例。**非预测、非投资建议**。")
 
     with st.expander("🔎 各状态下建仓/风险的历史表现（哪种状态进场更好）"):
         from analysis import signal_scan as _ssm

@@ -217,11 +217,15 @@ def pead_now(ticker: str, start: str = "2010-01-01", end: str | None = None,
     if edates is None or edates.empty:
         return None
 
-    idx = price.index
-    dsl = fd.days_since_last_earnings(idx, edates)
-    ls = fd.last_surprise(idx, edates)
-    days_since = float(dsl.iloc[-1]) if dsl.notna().iloc[-1] else None
-    surprise = float(ls.iloc[-1]) if ls.notna().iloc[-1] else None
+    # 关键：days_since 与 surprise 必须指向**同一次已公布财报**——只用 _reported 集，
+    # 否则最近一次财报已发生但 Surprise 未回填时，会出现"天数算新事件、超额读旧事件"的错配。
+    rep = fd._reported(edates)
+    if rep.empty:
+        return None
+    last_dt = pd.Timestamp(rep.index[-1])
+    surprise = float(rep["Surprise(%)"].iloc[-1])
+    today = pd.Timestamp(price.index[-1])
+    days_since = float((today - last_dt).days)
     # 反应日盘后公布→次日，窗口用交易日近似（post_window 交易日 ≈ post_window*1.4 自然日）
     in_window = days_since is not None and 0 <= days_since <= post_window * 1.5
 

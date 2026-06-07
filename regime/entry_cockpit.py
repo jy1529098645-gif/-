@@ -295,26 +295,42 @@ def _ladder_schedule(close: pd.Series, budget: float, bands: tuple[float, ...]) 
 
 def _simulate_ladder_window(close: pd.Series, budget: float, bands: tuple[float, ...],
                             deploy: int, n_dca: int) -> dict[str, float]:
-    """单窗口模拟 lump_sum / dca / ladder 三策略的资本回报。"""
+    """单窗口模拟 lump_sum / dca / ladder：返回各策略的资本回报、建仓期最深浮亏、到位时间(天)。
+
+    扁平 key：'{strat}'(资本回报)、'{strat}_mdd'(净值最大回撤)、'{strat}_deploy'(投满预算用了几天)。
+    最深浮亏是"建仓+持有"全程净值相对自身峰值的最深回撤——这是分批真正想压低的痛感指标。"""
     import vectorbt as vbt
     from backtest.strategies import _schedule_dca, _schedule_lump_sum
 
     close = close.dropna()
     cols = ["lump_sum", "dca", "ladder"]
+    out: dict[str, float] = {}
     if close.shape[0] < 5:
-        return {k: np.nan for k in cols}
-    size = pd.DataFrame({
+        for k in cols:
+            out[k] = out[f"{k}_mdd"] = out[f"{k}_deploy"] = np.nan
+        return out
+    sched = {
         "lump_sum": _schedule_lump_sum(close, budget=budget),
         "dca": _schedule_dca(close, budget=budget, deploy=deploy, n_dca=n_dca),
         "ladder": _ladder_schedule(close, budget, bands),
-    })
+    }
+    size = pd.DataFrame(sched)
     close_df = pd.concat({k: close for k in cols}, axis=1)
     pf = vbt.Portfolio.from_orders(
         close_df, size=size, size_type="value", direction="longonly",
         fees=_FEES, slippage=_SLIP, init_cash=budget, freq="1D",
     )
-    fv = pf.value().iloc[-1]
-    return {k: float(fv[k] / budget - 1.0) for k in cols}
+    val = pf.value()
+    fv = val.iloc[-1]
+    for k in cols:
+        out[k] = float(fv[k] / budget - 1.0)
+        v = val[k].to_numpy(dtype=float)
+        out[f"{k}_mdd"] = float(np.min(v / np.maximum.accumulate(v) - 1.0))
+        # 到位时间：现金投入累计达预算 99% 的第一天序号
+        invested = sched[k].fillna(0.0).cumsum().to_numpy()
+        hit = np.where(invested >= budget * 0.99)[0]
+        out[f"{k}_deploy"] = float(hit[0]) if hit.size else float(len(v))
+    return out
 
 
 def ladder_plan_backtest(
@@ -350,26 +366,56 @@ def ladder_plan_backtest(
     wr = pd.DataFrame(rows).set_index("start_date")
     block = max(2, hold // start_step)
 
-    def _summ(o):
-        o = o[~np.isnan(o)]
+    def _summ(k):
+        o = wr[k].to_numpy(); o = o[~np.isnan(o)]
+        mdd = wr[f"{k}_mdd"].to_numpy(); mdd = mdd[~np.isnan(mdd)]
+        dep = wr[f"{k}_deploy"].to_numpy(); dep = dep[~np.isnan(dep)]
         pt, lo, hi = block_bootstrap_ci(o, np.median, block_size=min(block, max(1, len(o) // 5)), n=n_boot)
         return {"n_windows": int(len(o)), "median": float(np.median(o)), "mean": float(np.mean(o)),
                 "p10": float(np.percentile(o, 10)), "p90": float(np.percentile(o, 90)),
-                "win_rate_vs0": float((o > 0).mean()), "median_ci_low": lo, "median_ci_high": hi}
+                "p5": float(np.percentile(o, 5)),
+                "win_rate_vs0": float((o > 0).mean()), "median_ci_low": lo, "median_ci_high": hi,
+                "mdd_median": float(np.median(mdd)) if mdd.size else float("nan"),
+                "mdd_worst": float(np.percentile(mdd, 5)) if mdd.size else float("nan"),
+                "deploy_days_median": float(np.median(dep)) if dep.size else float("nan")}
 
-    per_strategy = {k: _summ(wr[k].to_numpy()) for k in cols}
+    per_strategy = {k: _summ(k) for k in cols}
     base = wr["lump_sum"].to_numpy()
     vs_lump = {}
     for k in ("dca", "ladder"):
         diff = (wr[k].to_numpy() - base)
         diff = diff[~np.isnan(diff)]
         pt, lo, hi = block_bootstrap_ci(diff, np.median, block_size=min(block, max(1, len(diff) // 5)), n=n_boot)
+        # 回撤改善：阶梯/DCA 相对 lump 的最深浮亏差（正=更浅、更不痛）
+        mdd_diff = (wr[f"{k}_mdd"].to_numpy() - wr["lump_sum_mdd"].to_numpy())
+        mdd_diff = mdd_diff[~np.isnan(mdd_diff)]
         vs_lump[k] = {"median_diff": float(np.median(diff)), "ci_low": lo, "ci_high": hi,
-                      "beats_lump_rate": float((diff > 0).mean()), "significant": bool(lo > 0 or hi < 0)}
+                      "beats_lump_rate": float((diff > 0).mean()), "significant": bool(lo > 0 or hi < 0),
+                      "mdd_improve_median": float(np.median(mdd_diff)) if mdd_diff.size else float("nan")}
+
+    verdict = _ladder_verdict(asset, per_strategy, vs_lump)
 
     note = (f"标的 {asset}：阶梯在距前高 {'/'.join(f'{b:.0%}' for b in bands)} 各补一档"
             f"（共 {len(bands)+1} 档，未触发的窗口末补齐，总投入=预算 {budget:.0f}）；"
             f"持有 {hold} 交易日、DCA {n_dca} 批；{len(starts)} 个滚动起点(步长 {start_step})。"
             f"样本 {price.index[0].date()}~{price.index[-1].date()}。"
             "中位数 + 95% block bootstrap CI；CI 跨 0 不算显著。")
-    return {"per_strategy": per_strategy, "vs_lump_sum": vs_lump, "window_returns": wr, "note": note}
+    return {"per_strategy": per_strategy, "vs_lump_sum": vs_lump, "window_returns": wr,
+            "note": note, "verdict": verdict, "budget": budget, "hold": hold}
+
+
+def _ladder_verdict(asset: str, per: dict, vs_lump: dict) -> str:
+    """把数字翻成一句可执行的白话：这只票该一次性还是分批，代价/好处各多少。"""
+    lump, lad = per["lump_sum"], per["ladder"]
+    ret_cost = lad["median"] - lump["median"]          # 阶梯相对一次性的收益差(通常为负)
+    mdd_gain = vs_lump["ladder"]["mdd_improve_median"]  # 浮亏改善(正=更浅)
+    beat = vs_lump["ladder"]["beats_lump_rate"]
+    if mdd_gain == mdd_gain and mdd_gain > 0.02 and ret_cost > -0.03:
+        return (f"📌 {asset}：**值得分批**。越跌越补把建仓期最深浮亏从 {lump['mdd_median']:+.0%} "
+                f"减到 {lad['mdd_median']:+.0%}（少痛 {mdd_gain:+.0%}），代价只是中位回报少 {abs(ret_cost):.0%}。"
+                f"适合：怕买在高点、想拿得稳的人。")
+    if ret_cost < -0.05:
+        return (f"📌 {asset}：**倾向一次性**。该票长期向上，分批的现金拖累让中位回报少了 {abs(ret_cost):.0%}，"
+                f"而浮亏只少 {max(mdd_gain,0):+.0%}——等跌的机会成本 > 抗跌收益。除非你强烈想压低短期回撤。")
+    return (f"📌 {asset}：**两者接近**。分批 vs 一次性中位回报差 {ret_cost:+.0%}、最深浮亏差 {mdd_gain:+.0%}，"
+            f"历史上分批跑赢一次性的概率 {beat:.0%}。按你的心理承受力选即可。")
