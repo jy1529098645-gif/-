@@ -34,6 +34,55 @@ st.set_page_config(page_title="量化研究工具", page_icon="📊", layout="wi
 
 CFG = config.load_config()
 
+
+# ---------------------------------------------------------------------------
+# 右上角实时纽约时间（JS 跳秒，注入父文档；不依赖 Streamlit rerun）
+# ---------------------------------------------------------------------------
+def _ny_clock():
+    import streamlit.components.v1 as _components
+    _components.html(
+        """
+        <script>
+        (function(){
+          const doc = window.parent.document;
+          let el = doc.getElementById('ny-clock');
+          if(!el){
+            el = doc.createElement('div');
+            el.id = 'ny-clock';
+            el.style.cssText = 'position:fixed;top:8px;right:16px;z-index:100000;'
+              + 'font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;'
+              + 'color:#BFD8FF;background:rgba(15,20,34,0.78);border:1px solid rgba(124,92,252,0.45);'
+              + 'border-radius:9px;padding:5px 11px;letter-spacing:0.3px;pointer-events:none;'
+              + 'box-shadow:0 4px 14px rgba(0,0,0,0.4)';
+            doc.body.appendChild(el);
+          }
+          function tick(){
+            try{
+              const now = new Date();
+              const t = now.toLocaleString('en-US',{timeZone:'America/New_York',
+                year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',
+                second:'2-digit',hour12:false,weekday:'short'});
+              // 判断美股是否开盘（周一–五 9:30–16:00 ET）
+              const parts = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
+                hour:'2-digit',minute:'2-digit',hour12:false,weekday:'short'}).formatToParts(now);
+              const get=k=>parts.find(p=>p.type===k)?.value;
+              const wd=get('weekday'); const hh=parseInt(get('hour')); const mm=parseInt(get('minute'));
+              const isWk=!['Sat','Sun'].includes(wd);
+              const mins=hh*60+mm; const open=isWk&&mins>=570&&mins<960;
+              el.innerHTML = '🗽 纽约 '+t+'  '+(open?'<span style="color:#2BE6A8">●开盘</span>':'<span style="color:#8A93A6">●休市</span>');
+            }catch(e){}
+          }
+          if(window.parent.__nyClockTimer) clearInterval(window.parent.__nyClockTimer);
+          tick(); window.parent.__nyClockTimer = setInterval(tick,1000);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
+_ny_clock()
+
 # ---------------------------------------------------------------------------
 # 炫酷暗色样式
 # ---------------------------------------------------------------------------
@@ -1597,6 +1646,61 @@ def page_panorama():
                 st.caption(f"🕐 多周期对账{cf}：短期{_bf._score_cn(_hz.get('short'))} / 中期{_bf._score_cn(_hz.get('medium'))} / "
                            f"长期{_bf._score_cn(_hz.get('long'))} → {_hz['action']}")
     st.write("")
+
+    # ---- 🛰️ 事件雷达（display-only 风险提醒，绝不入量化）----
+    import datetime as _dtm
+    from analysis import event_radar as _er
+    _today = _dtm.date.today()
+    _earn = [{"date": b["next_earnings"], "ticker": a}] if b.get("next_earnings") else None
+    radar = _er.upcoming(_today, ticker=a, horizon_days=45, earnings=_earn)
+    _sevcol = {"高": "#FF5C7A", "中": "#FFD166", "低": "#8A93A6"}
+    _rc = "#FF5C7A" if radar["n_high"] else "#7C5CFC"
+    chips = "".join(
+        f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:3px 9px;border-radius:8px;'
+        f'background:{_sevcol.get(e["severity"],"#8A93A6")}22;border:1px solid {_sevcol.get(e["severity"],"#8A93A6")}66;'
+        f'font-size:0.8rem;color:#E6E9EF">{e["date"].strftime("%m-%d")}·{e["days_ahead"]}天后 '
+        f'{e["category"]}{("·"+e["title"]) if e.get("title") else ""}</span>'
+        for e in radar["events"][:8])
+    st.markdown(
+        f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 6px;'
+        f'background:linear-gradient(92deg,{_rc}1f,{_rc}08);border:1px solid {_rc}44;border-left:6px solid {_rc}">'
+        f'<div style="font-size:0.8rem;color:#8A93A6;letter-spacing:0.5px">🛰️ 事件雷达 · 未来45天 '
+        f'（{radar["n_high"]} 项高风险）· <b>仅提醒、不入量化</b></div>'
+        f'<div style="margin-top:7px">{chips or "<span style=\'color:#8A93A6\'>无登记事件</span>"}</div>'
+        f'</div>', unsafe_allow_html=True)
+    with st.expander("🛰️ 事件雷达明细 + ➕ 添加你知道的特大事件（如 SpaceX 上市、并购、判决）"):
+        st.caption("⚠️ 特大/一次性事件（巨型IPO抽流动性、并购、监管判决…）**无法回测、绝不进量化结果**；"
+                   "这里只把它们列成提醒，请你人工纳入仓位与风险判断。")
+        if radar["events"]:
+            _rows = [{"日期": e["date"].isoformat(), "距今": f"{e['days_ahead']}天", "范围": e["scope"],
+                      "类别": e["category"], "事件": e.get("title", "") or "—", "严重度": e["severity"],
+                      "盯什么/为什么重要": e["watch"], "来源": "自动" if e["source"] == "auto" else "手填"}
+                     for e in radar["events"]]
+            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        with st.form(f"addevt_{a}", clear_on_submit=True):
+            st.markdown("**➕ 添加特大事件**")
+            fc = st.columns([2, 3, 2, 2])
+            ev_date = fc[0].date_input("日期", value=_today + _dtm.timedelta(days=7))
+            ev_title = fc[1].text_input("事件", placeholder="例：SpaceX 上市")
+            ev_scope = fc[2].selectbox("范围", ["全市场", a])
+            ev_sev = fc[3].selectbox("严重度", ["高", "中", "低"])
+            ev_cat = fc[0].text_input("类别", value="大型IPO")
+            ev_impact = fc[1].text_input("影响/盯什么", placeholder="例：抽走二级市场流动性、短期压制风险偏好")
+            if st.form_submit_button("保存事件"):
+                if ev_title.strip():
+                    _er.add_event(ev_date.isoformat(), ev_title.strip(), scope=ev_scope,
+                                  category=ev_cat.strip() or "特大事件", impact=ev_impact.strip(), severity=ev_sev)
+                    st.success(f"已添加：{ev_date} · {ev_title}。刷新即出现在雷达。")
+                else:
+                    st.warning("请填事件名。")
+        _man = _er.manual_events()
+        if _man:
+            st.caption("已手填事件（可删）：")
+            for e in _man:
+                dc = st.columns([6, 1])
+                dc[0].markdown(f"- `{e['date']}` **{e['title']}**（{e['scope']}·{e['category']}·{e['severity']}）{('— '+e['watch']) if e['watch'] else ''}")
+                if dc[1].button("删除", key=f"delevt_{e['id']}"):
+                    _er.delete_event(e["id"]); st.rerun()
 
     # ---- 今日状态 ----
     st.markdown("#### 📍 今日状态")
