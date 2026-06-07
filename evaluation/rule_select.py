@@ -104,8 +104,14 @@ def deflated_rule_sharpe(
     start: str = "2010-01-01",
     end: str | None = None,
     min_trades: int = 20,
+    extra_trials: int = 0,
 ) -> dict:
-    """对候选网格算每个的池化 per-trade Sharpe，取最优并做 deflated Sharpe 折扣。"""
+    """对候选网格算每个的池化 per-trade Sharpe，取最优并做 deflated Sharpe 折扣。
+
+    extra_trials：本次自动网格**之外**已经手工试过的规则数（如前端 AND/OR 组合构建器里
+    用户拖出来的若干组合、之前几轮调参）。这些"看不见的尝试"同样消耗显著性预算，
+    必须计入 n_trials，否则 DSR 会系统性高估稳健度。n_trials = 合格候选数 + extra_trials。
+    """
     from data import loader
 
     candidates = candidates or candidate_grid()
@@ -124,7 +130,7 @@ def deflated_rule_sharpe(
 
     best = elig.loc[elig["sharpe"].idxmax()]
     sr_trials_std = float(elig["sharpe"].std(ddof=1)) if len(elig) > 1 else 0.0
-    n_trials = len(elig)
+    n_trials = len(elig) + max(0, int(extra_trials))  # 计入网格外的手工尝试
     dsr = deflated_sharpe_ratio(
         sr=float(best["sharpe"]),
         sr_trials_std=sr_trials_std if sr_trials_std > 0 else 1e-6,

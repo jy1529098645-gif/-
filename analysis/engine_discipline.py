@@ -24,7 +24,11 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # 1. 基本面字段体检（§3）—— 操作"原始数值 info"，归一 + 标记可疑，可疑字段不入展示/评分
 # ---------------------------------------------------------------------------
-# 合理区间（小数口径，megacap 科技股语境）。越界即标记可疑、剔除展示。
+# 两档区间（小数口径，megacap 科技股语境），把"极端但真实"与"不可能/脏数据"分开：
+#   _FUND_BOUNDS（soft）：典型合理区间，内部视为正常值。
+#   _FUND_HARD（hard）  ：物理/会计上仍可能的极端边界。落在 soft 外、hard 内 = 极端但保留(标记)，
+#                         例如亏损公司 PE 可能高达数百~数千、或负值；剔除会误删真实极端。
+#                         落在 hard 外 = 不可能（如股息率 80%、毛利率 200%）→ 判脏数据，剔除。
 _FUND_BOUNDS = {
     "dividendYield": (0.0, 0.15),     # >15% 对大盘科技几乎不可能
     "trailingPE":    (0.0, 300.0),
@@ -35,6 +39,17 @@ _FUND_BOUNDS = {
     "revenueGrowth": (-0.9, 5.0),
     "earningsGrowth": (-5.0, 10.0),
     "beta":          (0.0, 5.0),
+}
+_FUND_HARD = {
+    "dividendYield": (0.0, 0.40),      # >40% 不可能（含股息率）
+    "trailingPE":    (-1000.0, 5000.0),  # 亏损/微利 → 负或极大，仍属真实极端
+    "forwardPE":     (-1000.0, 5000.0),
+    "returnOnEquity": (-10.0, 10.0),
+    "grossMargins":  (-2.0, 1.0),      # 毛利率 >100% 不可能
+    "profitMargins": (-5.0, 1.0),
+    "revenueGrowth": (-1.0, 50.0),     # 跌幅 >100% 不可能
+    "earningsGrowth": (-50.0, 100.0),
+    "beta":          (-5.0, 15.0),
 }
 
 
@@ -47,13 +62,16 @@ def _normalize_dividend_yield(v: float) -> float:
 
 
 def sanity_check_fundamentals(info: dict) -> dict:
-    """体检原始基本面数值字典。返回 {clean: {field: value(小数口径)}, suspicious: {field: 原值}, warnings: [..]}。
+    """体检原始基本面数值字典。三档分级，返回
+    {clean: {field: value}, extreme: {field: value}, suspicious: {field: 原值}, warnings: [..]}。
 
     - dividendYield 先做单位归一；
-    - 其余字段越界即判可疑：从 clean 剔除、登记到 suspicious，并产出中文告警。
-    可疑字段**不得**进入展示或任何评分。"""
+    - 在 soft 区间内 → 正常值，进 clean；
+    - 在 soft 外、hard 内 → **极端但真实**（如亏损公司高 PE）：仍进 clean 供展示，但登记到 extreme 并告警"请人工核实"；
+    - 在 hard 外 → 不可能/脏数据：进 suspicious，**不得**进入展示或评分。"""
     info = info or {}
     clean: dict = {}
+    extreme: dict = {}
     suspicious: dict = {}
     warnings: list[str] = []
 
@@ -67,13 +85,18 @@ def sanity_check_fundamentals(info: dict) -> dict:
             continue
         if field == "dividendYield":
             v = _normalize_dividend_yield(v)
+        hlo, hhi = _FUND_HARD.get(field, (lo, hi))
         if lo <= v <= hi:
             clean[field] = v
+        elif hlo <= v <= hhi:
+            clean[field] = v            # 极端但仍真实：保留展示
+            extreme[field] = v
+            warnings.append(f"{field} 取值 {v:.4g} 属极端值（超出典型区间[{lo:g},{hi:g}]但仍可能真实），保留但请人工核实。")
         else:
             suspicious[field] = v
-            warnings.append(f"{field} 取值 {v:.4g} 越出合理区间[{lo:g},{hi:g}]，疑似数据异常，已剔除展示与评分。")
+            warnings.append(f"{field} 取值 {v:.4g} 越出可能边界[{hlo:g},{hhi:g}]，判定数据异常，已剔除展示与评分。")
 
-    return {"clean": clean, "suspicious": suspicious, "warnings": warnings}
+    return {"clean": clean, "extreme": extreme, "suspicious": suspicious, "warnings": warnings}
 
 
 # ---------------------------------------------------------------------------

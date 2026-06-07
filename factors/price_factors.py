@@ -57,13 +57,25 @@ def blend(panels: dict[str, pd.DataFrame], weights: dict[str, float] | None = No
 
     所有因子约定"越高越好"（动量正、反转/低波已取负、趋势正），故等权 z-score 求和合理。
     panels：{因子名: 因子值面板}；weights：{因子名: 权重}（缺省等权）。
+
+    校验（加固）：panels 不能为空；权重不能为负（负权=偷偷反转因子，会让"越高越好"约定失效）；
+    截面标准差为 0（当日所有票因子值相同）→ 置 NaN 而非 0 除，避免 inf 污染。
     """
+    if not panels:
+        raise ValueError("blend: panels 为空，至少需要一个因子面板")
+    weights = weights or {}
+    bad = {k: v for k, v in weights.items() if v is not None and v < 0}
+    if bad:
+        raise ValueError(f"blend: 权重不可为负（因子已统一为'越高越好'，负权请改在因子侧取负）：{bad}")
+    if weights and sum(v for v in weights.values() if v is not None) <= 0:
+        raise ValueError("blend: 权重之和必须为正")
+
     total = None
     for name, panel in panels.items():
         mu = panel.mean(axis=1)
         sd = panel.std(axis=1).replace(0.0, np.nan)
         z = panel.sub(mu, axis=0).div(sd, axis=0)
-        w = (weights or {}).get(name, 1.0)
+        w = weights.get(name, 1.0)
         total = z * w if total is None else total.add(z * w, fill_value=0.0)
     return total
 

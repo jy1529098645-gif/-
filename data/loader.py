@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import tempfile
@@ -20,6 +21,11 @@ import config
 
 _CFG = config.load_config()
 _CACHE = config.get_path("cache", _CFG)
+_LOG = logging.getLogger("quantlab.loader")
+
+# 缓存格式/复权口径版本：bump 此值会让旧缓存文件名失配 → 自动重新下载。
+# 用途：yfinance 调整复权算法、或本项目改变缓存 schema 时，避免静默读到口径不一致的旧数据。
+CACHE_VERSION = "v2"
 
 
 def _ensure_ascii_ca_bundle() -> None:
@@ -72,14 +78,18 @@ def load_universe(name: str | None = None) -> list[str]:
 
 
 def _safe_read_parquet(path: "Path"):
-    """读 parquet；文件损坏/不可读则删除并返回 None（当缓存缺失处理，触发重新下载）。"""
+    """读 parquet；文件损坏/不可读则删除并返回 None（当缓存缺失处理，触发重新下载）。
+
+    与早先版本的区别：损坏不再**静默**删除——记一条 WARNING 便于诊断"为何反复重下"。
+    """
     try:
         return pd.read_parquet(path)
-    except Exception:  # noqa: BLE001  —— 截断/损坏的缓存不应让整个加载崩溃
+    except Exception as e:  # noqa: BLE001  —— 截断/损坏的缓存不应让整个加载崩溃
+        _LOG.warning("缓存损坏，删除并将重新下载: %s (%s: %s)", path, type(e).__name__, e)
         try:
             path.unlink()
-        except OSError:
-            pass
+        except OSError as ue:
+            _LOG.warning("删除损坏缓存失败: %s (%s)", path, ue)
         return None
 
 
@@ -98,7 +108,7 @@ def load_sp500() -> list[str]:
 # ---------------------------------------------------------------------------
 def _price_cache_path(ticker: str) -> Path:
     safe = ticker.replace("/", "_").replace("^", "_")
-    return _CACHE / f"price_{safe}.parquet"
+    return _CACHE / f"price_{safe}_{CACHE_VERSION}.parquet"
 
 
 def _download_one(ticker: str, start: str, end: str | None) -> pd.Series:
@@ -235,7 +245,7 @@ def load_prices(
 # ---------------------------------------------------------------------------
 def _ohlcv_cache_path(ticker: str) -> Path:
     safe = ticker.replace("/", "_").replace("^", "_")
-    return _CACHE / f"ohlcv_{safe}.parquet"
+    return _CACHE / f"ohlcv_{safe}_{CACHE_VERSION}.parquet"
 
 
 def load_ohlcv(ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:

@@ -26,9 +26,15 @@ def test_dividend_yield_truly_absurd_flagged():
 
 
 def test_pe_and_margin_bounds():
+    # PE=999 现在判为"极端但真实"(亏损/微利公司可能如此)：保留进 clean + 登记 extreme，不再剔除。
     out = ed.sanity_check_fundamentals({"trailingPE": 999.0, "grossMargins": 0.6})
-    assert "trailingPE" in out["suspicious"]
+    assert "trailingPE" in out["clean"]
+    assert "trailingPE" in out["extreme"]
     assert "grossMargins" in out["clean"]
+    # 真正不可能的值(毛利率 200% / PE 十万)才进 suspicious。
+    bad = ed.sanity_check_fundamentals({"trailingPE": 99999.0, "grossMargins": 2.0})
+    assert "trailingPE" in bad["suspicious"]
+    assert "grossMargins" in bad["suspicious"]
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ CA 修复依赖 data.loader 导入时设置的环境变量（中文路径下 cur
 from __future__ import annotations
 
 import re
+import time
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -21,6 +22,17 @@ import pandas as pd
 import data.loader  # noqa: F401  —— 触发 _ensure_ascii_ca_bundle() 的 CA 修复
 
 _COLS = ["date", "title", "provider", "url", "summary"]
+
+# 进程内 TTL 缓存：避免每次 app rerun / 重复调用都联网重抓同一只票的新闻。
+# 命中条件=同 (ticker, limit, sources, query) 且未过期。Streamlit 端另有 @st.cache_data，
+# 这里给非 Streamlit 调用（CLI / brief_cli / 测试）也兜一层。
+_NEWS_TTL_SEC = 900  # 15 分钟
+_NEWS_CACHE: dict[tuple, tuple[float, pd.DataFrame]] = {}
+
+
+def clear_news_cache() -> None:
+    """清空进程内新闻缓存（测试 / 强制刷新用）。"""
+    _NEWS_CACHE.clear()
 
 # 固定池（Mag7 + SPY）公司名，用于提升全网检索召回
 COMPANY_NAMES = {
@@ -136,11 +148,18 @@ def _gdelt_news(query: str, limit: int = 15, english_only: bool = True) -> list[
 
 
 def stock_news(ticker: str, limit: int = 12, sources=("google", "yahoo"),
-               query: str | None = None) -> pd.DataFrame:
+               query: str | None = None, use_cache: bool = True) -> pd.DataFrame:
     """全网多源聚合新闻：列 date/title/provider/url/summary。去重合并、按时间倒序。
 
     sources：可含 'google'(全网主引擎)/'yahoo'/'gdelt'(全球外媒)。失败的源静默跳过。
+    use_cache：命中 15 分钟内的进程缓存则直接返回（避免重复联网）；置 False 强制刷新。
     """
+    key = (ticker.upper(), int(limit), tuple(sources), query)
+    if use_cache:
+        hit = _NEWS_CACHE.get(key)
+        if hit is not None and (time.time() - hit[0]) < _NEWS_TTL_SEC:
+            return hit[1].copy()
+
     q = query or _query_for(ticker)
     rows: list[dict] = []
     if "google" in sources:
@@ -164,6 +183,8 @@ def stock_news(ticker: str, limit: int = 12, sources=("google", "yahoo"),
     df = pd.DataFrame(uniq, columns=_COLS)
     if not df.empty:
         df = df.sort_values("date", ascending=False, na_position="last").head(limit).reset_index(drop=True)
+    if use_cache:
+        _NEWS_CACHE[key] = (time.time(), df.copy())
     return df
 
 

@@ -13,8 +13,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import config
 from stats.bootstrap import sharpe
 from stats.walkforward import walk_forward_splits
+
+_WF = config.load_config().get("stats", {}).get("walk_forward", {})
+_WF_TRAIN = int(_WF.get("train", 1260))   # 默认约 5 年（与 config.yaml 一致）
+_WF_TEST = int(_WF.get("test", 252))      # 默认约 1 年
+_WF_STEP = int(_WF.get("step", _WF_TEST))
 
 
 def _rule_daily_returns(entry_fn, exit_spec, price: pd.Series) -> pd.Series:
@@ -50,14 +56,20 @@ def acceptance_gate(
     end: str | None = None,
     oos_sharpe_min: float = 1.0,
     max_dd_tol: float = 0.35,
-    train: int = 1000,
-    test: int = 250,
+    train: int | None = None,
+    test: int | None = None,
+    step: int | None = None,
 ) -> dict:
     """对一条规则跑三条验收标准，返回结构化裁决。
 
     rule_eval_result：evaluation.rule_eval.evaluate_rule(...) 的返回（取 pooled.excess*）。
     """
     p = rule_eval_result["pooled"]
+
+    # walk-forward 参数：缺省走 config.stats.walk_forward（train≈5年/test≈1年/step）
+    train = _WF_TRAIN if train is None else int(train)
+    test = _WF_TEST if test is None else int(test)
+    step = _WF_STEP if step is None else int(step)
 
     # 标准 1：跑赢基准（N_eff 折算后显著）
     c1_pass = bool(p["excess_median"] > 0 and p["excess_significant"])
@@ -70,7 +82,7 @@ def acceptance_gate(
     oos_sharpe = float("nan")
     n_oos = 0
     if len(pooled) > train + test:
-        splits = walk_forward_splits(pooled.index, train=train, test=test)
+        splits = walk_forward_splits(pooled.index, train=train, test=test, step=step)
         oos_chunks = [pooled.iloc[s.test_start:s.test_end].to_numpy() for s in splits]
         if oos_chunks:
             oos = np.concatenate(oos_chunks)
@@ -110,7 +122,8 @@ def acceptance_gate(
             },
         },
         "params": {"oos_sharpe_min": oos_sharpe_min, "max_dd_tol": max_dd_tol,
-                   "tickers": list(tickers), "start": start},
+                   "tickers": list(tickers), "start": start,
+                   "walk_forward": {"train": train, "test": test, "step": step}},
     }
 
 

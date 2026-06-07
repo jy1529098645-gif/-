@@ -18,10 +18,19 @@ _SLIP = float(_CFG["costs"]["slippage"])
 
 
 def _time_stop_exits(entries: pd.Series, n: int) -> pd.Series:
-    """时间止损的近似：入场信号后 n 个交易日标记一次出场。
+    """时间止损：入场信号 n 个交易日**之后**标记一次出场。
 
-    （vectorbt 1.0 无原生 td_stop，用入场信号平移近似；配合 accumulate=False。）
+    方向核对（重要，曾被误读）：`shift(+n)` 把布尔信号沿时间轴**向后**搬 n 个 bar，
+    即 t 日的入场信号会在 t+n 日出现 True → 这正是"入场 n 天后出场"，**不是** shift(-n)
+    （shift(-n) 会把出场放到入场之前，制造未来函数）。见 test_time_stop_direction。
+
+    近似说明：这是对入场**信号**序列平移，而非对实际成交日平移。在 accumulate=False 下，
+    同一持仓期内的重复入场信号被忽略，故平移出的出场点对绝大多数单仓场景与"成交后 n 天"一致；
+    极端密集信号下可能有 ≤1 个 bar 的对齐误差（vectorbt 1.0 无原生 td_stop，已知局限）。
+    n<1 视为不启用时间止损。
     """
+    if n < 1:
+        return pd.Series(False, index=entries.index)
     return entries.shift(n, fill_value=False).astype(bool)
 
 
