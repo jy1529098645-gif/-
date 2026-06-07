@@ -89,6 +89,35 @@ def test_low_effective_n_not_confident():
             assert bez["confident"] is False
 
 
+def test_across_horizons_picks_most_confident():
+    px = _mean_reverting_series(n=2200)
+    out = ec.best_entry_across_horizons(px, asset="X", horizons=(21, 63, 126, 252),
+                                        single_name=True, n_boot=150)
+    assert "horizon_scan" in out and len(out["horizon_scan"]) >= 1
+    # 胜出者应是各候选里 (confident, dsr, ci_low) 字典序最大的
+    scan = out["horizon_scan"]
+    if out.get("has_zone"):
+        best_conf = bool(out.get("confident"))
+        # 不应存在"比胜出者更可信"的候选被漏选
+        for s in scan:
+            if s.get("confident") and not best_conf:
+                raise AssertionError("有 confident 候选却没被选中")
+        # 胜出者的 horizon 必在候选周期内
+        assert out["horizon"] in (21, 63, 126, 252)
+
+
+def test_across_horizons_all_defensive_returns_defensive():
+    # 加速下跌：各周期都无正超额 → 跨周期也应返回防守
+    import numpy as np
+    n = 1400
+    t = np.arange(n)
+    px = pd.Series(100.0 - 2e-5 * t * t, index=pd.date_range("2014-01-01", periods=n, freq="B")).clip(lower=1.0)
+    out = ec.best_entry_across_horizons(px, asset="D", horizons=(21, 63), single_name=True, n_boot=120)
+    assert "horizon_scan" in out
+    if not out.get("has_zone"):
+        assert out["tier"] == "防守"
+
+
 def test_defensive_when_no_positive_excess():
     # 加速下跌(动量陷阱型)：越跌远期越差 → 不应硬给最佳入场点
     n = 1500

@@ -43,11 +43,13 @@ def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool =
         from data import loader as _ld
         from regime import entry_cockpit as _ec
         _px = _ld.load_prices([ticker.upper()], start, None)[ticker.upper()]
-        _bez = _ec.best_entry_zone(_px, asset=ticker.upper(), horizon=horizon,
-                                   single_name=(ticker.upper() != "SPY"))
+        # 跨持有期择优：自动挑置信最高的周期（而非固定 horizon），避免长周期低置信埋没好结果
+        _bez = _ec.best_entry_across_horizons(_px, asset=ticker.upper(),
+                                              single_name=(ticker.upper() != "SPY"))
         if _bez.get("has_zone"):
             best_entry = {
-                "zone": _bez["zone_label"], "anchor_price": round(_bez["anchor_price"], 2),
+                "zone": _bez["zone_label"], "best_horizon_days": _bez.get("horizon"),
+                "anchor_price": round(_bez["anchor_price"], 2),
                 "price_band": [None if _bez["price_band"][0] is None else round(_bez["price_band"][0], 2),
                                round(_bez["price_band"][1], 2)],
                 "anchor_distance_pct": (round(_bez["anchor_distance"], 4)

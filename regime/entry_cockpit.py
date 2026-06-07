@@ -340,6 +340,55 @@ def best_entry_zone(
     }
 
 
+def best_entry_across_horizons(
+    prices: pd.DataFrame | pd.Series,
+    asset: str = "SPY",
+    horizons: tuple[int, ...] = (21, 63, 126, 252),
+    single_name: bool = True,
+    n_boot: int = 400,
+) -> dict:
+    """跨多个持有期跑 best_entry_zone，选出**置信度最高**的 (horizon, 入场区)。
+
+    动机：长持有期(h=252)在单票上有效独立窗口常只剩 ~1 个 → 必为低置信，把短周期里
+    本可"稳健"的入场点埋没。本函数扫 21/63/126/252，按下列优先级择优：
+      ① 有入场区且 confident=True 优先；② DSR 高者优先；③ 超额的 CI 下界高者优先。
+    返回**胜出的那个 bez**(含其 horizon) + `horizon_scan`(各周期摘要,供 UI 展示比较)。
+    全周期都防守 → 返回防守裁决。
+    """
+    results = []
+    for h in horizons:
+        try:
+            bez = best_entry_zone(prices, asset=asset, horizon=h, single_name=single_name, n_boot=n_boot)
+        except Exception:  # noqa: BLE001
+            continue
+        results.append(bez)
+    if not results:
+        return {"asset": asset, "has_zone": False, "tier": "防守",
+                "verdict": "各持有期均无法计算入场区（样本不足）。", "caveats": [], "horizon_scan": []}
+
+    def _score(b):
+        if not b.get("has_zone"):
+            return (-1.0, -1.0, -1.0)
+        conf = 1.0 if b.get("confident") else 0.0
+        dsr = b.get("dsr", 0.0)
+        dsr = dsr if dsr == dsr else 0.0
+        ci_low = b.get("ci", [float("nan")])[0]
+        ci_low = ci_low if ci_low == ci_low else -1.0
+        return (conf, dsr, ci_low)
+
+    ranked = sorted(results, key=_score, reverse=True)
+    best = dict(ranked[0])
+    best["horizon_scan"] = [
+        {"horizon": r.get("horizon"), "tier": r.get("tier", "防守"),
+         "has_zone": bool(r.get("has_zone")), "confident": bool(r.get("confident")),
+         "dsr": r.get("dsr"), "anchor": r.get("anchor_price"),
+         "excess": r.get("excess_median"), "n_independent": r.get("n_independent"),
+         "zone_label": r.get("zone_label")}
+        for r in sorted(results, key=lambda x: x.get("horizon", 0))
+    ]
+    return best
+
+
 def format_best_entry(bez: dict) -> str:
     """把最佳入场区裁决渲染成一句话（含锚点价/区间/超额/盈亏比/N/CI/置信标注）。"""
     if not bez.get("has_zone"):
@@ -358,8 +407,8 @@ def format_best_entry(bez: dict) -> str:
     else:
         anchor_label = "锚点价"
         band_s = f"区间 {band[0]:.1f}–{band[1]:.1f}{dist_s}"
-    head = (f"{badge} 最佳入场区[{bez['zone_label']}]　{anchor_label} ≈ **{bez['anchor_price']:.1f}**"
-            f"（{band_s}）")
+    head = (f"{badge} 最佳入场区[{bez['zone_label']}·持有约{h_m:.0f}个月]　"
+            f"{anchor_label} ≈ **{bez['anchor_price']:.1f}**（{band_s}）")
     dsr = bez.get("dsr", float("nan"))
     dsr_s = f"、DSR {dsr:.2f}" if dsr == dsr else ""
     body = (f"｜历史 {h_m:.0f} 个月远期中位 {bez['median_fwd']*100:+.1f}%、"
