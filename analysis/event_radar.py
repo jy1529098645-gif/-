@@ -22,8 +22,6 @@ import pandas as pd
 
 import config
 
-_DB = Path(config.ROOT) / "data" / "quantlab.db"
-
 SEVERITY_ORDER = {"高": 3, "中": 2, "低": 1}
 
 
@@ -92,7 +90,7 @@ def auto_market_events(today: _dt.date, horizon_days: int = 45) -> list[dict]:
 # 用户手填特大事件（SQLite）
 # ---------------------------------------------------------------------------
 def _conn(db_path: str | Path | None = None):
-    p = Path(db_path) if db_path else _DB
+    p = Path(db_path) if db_path else config.user_db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(p)
     c.execute(

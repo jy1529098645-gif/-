@@ -41,7 +41,7 @@ def test_store_roundtrip(tmp_path, monkeypatch):
     import config
     from frontend import store
 
-    monkeypatch.setattr(store, "_DB", tmp_path / "t.db")
+    monkeypatch.setenv("QUANTLAB_DB_PATH", str(tmp_path / "t.db"))
     spec = {"specs": (("dip_from_high", 0.1, 0.0),), "op": "and", "trailing": 0.2,
             "tp": 0.25, "time_stop": 63, "cond_kind": "none", "cond_window": 20, "rule_name": "r"}
     store.save_rule("r1", spec)

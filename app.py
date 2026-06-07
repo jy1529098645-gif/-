@@ -587,6 +587,28 @@ with st.sidebar:
     else:
         start, end = _presets[_choice], _today
     st.caption(f"样本 {start} → {end}　·　yfinance + FRED + 财报，本地缓存")
+    with st.expander("💾 我的数据（备份 / 恢复）"):
+        from analysis import userdata as _ud
+        st.caption("校准信号 / 手填事件 / 检验账本 / 保存的规则。云端重启会清空——**先导出备份**，需要时上传恢复。"
+                   "（自建主机可设环境变量 QUANTLAB_DB_PATH 指向持久盘，免手动备份。）")
+        try:
+            _cnt = _ud.export_userdata().get("_counts", {})
+            st.caption("当前：" + (" · ".join(f"{k}={v}" for k, v in _cnt.items()) or "空"))
+            st.download_button("⬇️ 导出备份(JSON)", _ud.export_json(),
+                               file_name=f"quantlab_backup_{end}.json", mime="application/json",
+                               use_container_width=True)
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"导出失败：{_e}")
+        _up = st.file_uploader("⬆️ 上传备份恢复", type=["json"], key="restore_up")
+        if _up is not None:
+            _mode = st.radio("恢复方式", ["merge", "replace"], horizontal=True,
+                             format_func=lambda m: "合并(追加)" if m == "merge" else "替换(先清空)")
+            if st.button("恢复数据", use_container_width=True):
+                try:
+                    w = _ud.import_userdata(_up.getvalue().decode("utf-8"), mode=_mode)
+                    st.success("已恢复：" + (" · ".join(f"{k}+{v}" for k, v in w.items()) or "无"))
+                except Exception as _e:  # noqa: BLE001
+                    st.error(f"恢复失败：{_e}")
 
 
 # ===========================================================================

@@ -7,12 +7,9 @@ from pathlib import Path
 
 import config
 
-_DB = Path(config.ROOT) / "data" / "quantlab.db"
-
-
 def _conn():
-    _DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(_DB)
+    db = config.user_db_path()
+    c = sqlite3.connect(db)
     c.execute(
         "CREATE TABLE IF NOT EXISTS rules ("
         "name TEXT PRIMARY KEY, spec TEXT NOT NULL, created TEXT)"

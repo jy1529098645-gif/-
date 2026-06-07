@@ -17,11 +17,8 @@ import pandas as pd
 
 import config
 
-_DB = Path(config.ROOT) / "data" / "quantlab.db"
-
-
 def _conn(db_path: str | Path | None = None):
-    p = Path(db_path) if db_path else _DB
+    p = Path(db_path) if db_path else config.user_db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(p)
     c.execute(
