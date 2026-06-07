@@ -2049,43 +2049,47 @@ def page_panorama():
     z = c_zones(a, zstart, end, horizon)
 
     # —— 🎯 最佳入场区 + 锚点价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
+    # 整块容错：任何失败（含云端旧构建/数据缺失）只降级为提示，绝不崩整页。
     from regime import entry_cockpit as ec
-    bez = c_best_entry_scan(a, zstart, end)
-    if bez.get("has_zone"):
-        _band = bez["price_band"]
-        _anc = "触发价" if _band[0] is None else "锚点价"
-        _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
-        _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
-        _hm = int(round(bez.get("horizon", horizon) / 21))
-        _bc = st.columns(4)
-        _d = bez.get("anchor_distance", float("nan"))
-        _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
-                                  f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
-        _bc[1].markdown(stat_card("最佳入场区", _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166"), unsafe_allow_html=True)
-        _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
-                                  f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
-        _ci = bez["ci"]
-        _dsr = bez.get("dsr", float("nan"))
-        _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
-        _bc[3].markdown(stat_card("置信", bez["tier"],
-                                  f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
-                                  _tc, tip="CI"), unsafe_allow_html=True)
-    st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-    # 各持有期对比（看不同周期的置信与锚点，哪个周期最该信）
-    _scan = bez.get("horizon_scan") or []
-    if _scan:
-        _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
-                  "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
-                  "锚点价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
-                  "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
-                  "有效N": s.get("n_independent", "—"),
-                  "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
-                  "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
-                 for s in _scan]
-        with st.expander("🔭 各持有期对比（自动已选其中置信最高者为上方推荐）"):
-            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
-            st.caption("📖 同一只票在不同持有期的入场区/置信不同。工具自动挑 DSR/置信最高的那个周期作为顶部推荐；"
-                       "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
+    try:
+        bez = c_best_entry_scan(a, zstart, end)
+        if bez.get("has_zone"):
+            _band = bez["price_band"]
+            _anc = "触发价" if _band[0] is None else "锚点价"
+            _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
+            _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
+            _hm = int(round(bez.get("horizon", horizon) / 21))
+            _bc = st.columns(4)
+            _d = bez.get("anchor_distance", float("nan"))
+            _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
+                                      f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
+            _bc[1].markdown(stat_card("最佳入场区", _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166"), unsafe_allow_html=True)
+            _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
+                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
+            _ci = bez["ci"]
+            _dsr = bez.get("dsr", float("nan"))
+            _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
+            _bc[3].markdown(stat_card("置信", bez["tier"],
+                                      f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
+                                      _tc, tip="CI"), unsafe_allow_html=True)
+        st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
+        # 各持有期对比（看不同周期的置信与锚点，哪个周期最该信）
+        _scan = bez.get("horizon_scan") or []
+        if _scan:
+            _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
+                      "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
+                      "锚点价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
+                      "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
+                      "有效N": s.get("n_independent", "—"),
+                      "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
+                      "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
+                     for s in _scan]
+            with st.expander("🔭 各持有期对比（自动已选其中置信最高者为上方推荐）"):
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                st.caption("📖 同一只票在不同持有期的入场区/置信不同。工具自动挑 DSR/置信最高的那个周期作为顶部推荐；"
+                           "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
+    except Exception as _e:  # noqa: BLE001
+        st.caption(f"🎯 最佳入场区暂不可用（{type(_e).__name__}）——其余分析不受影响。若刚更新代码，请在 Streamlit 后台 Reboot 清缓存。")
     st.write("")
 
     cL, cR = st.columns([3, 2])

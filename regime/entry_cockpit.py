@@ -36,6 +36,12 @@ _CFG = config.load_config()
 _FEES = float(_CFG["costs"]["fees"])
 _SLIP = float(_CFG["costs"]["slippage"])
 
+# 公共 API（显式导出，便于核对部署完整性；缺任一即构建不完整）
+__all__ = [
+    "entry_zones", "format_zone_verdict", "best_entry_zone", "best_entry_across_horizons",
+    "format_best_entry", "earnings_reaction_stats", "upcoming_events", "ladder_plan_backtest",
+]
+
 # 默认回撤带阈值（距前高的深度），相邻两档构成一个价位带；最后一段为 ">最深档"。
 DEFAULT_BANDS = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30)
 _MIN_N = 20  # 单带样本(天)下限，低于此不报分布，只保留价位（诚实标注样本不足）
