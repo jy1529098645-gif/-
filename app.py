@@ -1989,6 +1989,27 @@ def page_panorama():
     # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
     horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
     z = c_zones(a, zstart, end, horizon)
+
+    # —— 🎯 最佳入场区 + 锚点价（按历史 reward/risk 排名 · 校准式 · 含置信分层）——
+    from regime import entry_cockpit as ec
+    bez = c_best_entry(a, zstart, end, horizon)
+    if bez.get("has_zone"):
+        _band = bez["price_band"]
+        _anc = "触发价" if _band[0] is None else "锚点价"
+        _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
+        _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
+        _bc = st.columns(4)
+        _d = bez.get("anchor_distance", float("nan"))
+        _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
+                                  f"距现价 {_d:+.1%}" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
+        _bc[1].markdown(stat_card("最佳入场区", _bs, bez["zone_label"], "#FFD166"), unsafe_allow_html=True)
+        _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
+                                  f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
+        _ci = bez["ci"]
+        _bc[3].markdown(stat_card("置信", bez["tier"], f"N≈{bez['n_events']}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]", _tc, tip="CI"), unsafe_allow_html=True)
+    st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
+    st.write("")
+
     cL, cR = st.columns([3, 2])
     with cL:
         from frontend import tvchart
