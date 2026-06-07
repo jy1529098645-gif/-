@@ -1548,14 +1548,20 @@ def page_cockpit():
 # ===========================================================================
 # 页面：多票作战简报（综合层）—— 一屏总览 + 每票建仓档 + 引擎桶 + 财报 + 免费新闻 + 自动权重
 # ===========================================================================
-def _brief_overview_row(b: dict) -> dict:
+def _brief_overview_row(b: dict, live: dict | None = None) -> dict:
     be = b.get("engine_headline")
     trap = "⚠️" if b.get("momentum_trap") else ""
     sig = "✅" if (be and be["significant"] and be["excess"] > 0) else ""
     bk = f"{be['bucket']} {be['median']:+.1%}(超额{be['excess']:+.1%}){sig}{trap}" if be else "—"
     volp = f"{b['vol_percentile']:.0%}" if b["vol_percentile"] == b["vol_percentile"] else "—"
+    # 现价：有实时报价用实时（带今日涨跌），否则回退日线收盘
+    if live and live.get("ok") and live["price"] == live["price"]:
+        px = f"{live['price']:.2f}"
+        chg = f"{live['change_pct']:+.2%}" if live.get("change_pct") == live.get("change_pct") else "—"
+    else:
+        px, chg = f"{b['price']:.1f}", "—"
     return {
-        "标的": b["ticker"], "现价": f"{b['price']:.1f}",
+        "标的": b["ticker"], "现价": px, "今日涨跌": chg,
         "趋势/距前高": f"{b['trend']} / {b['drawdown']:.1%}", "波动分位": volp,
         "引擎最优桶": bk,
         "盈亏比": f"{be['reward_risk']:.2f}" if (be and be["reward_risk"] == be["reward_risk"]) else "—",
@@ -1595,10 +1601,26 @@ def page_briefing():
     prog.empty()
     weights = bf.auto_weights(briefs)
 
-    # 一屏总览
+    # 一屏总览（现价接入盘中近实时，开盘时每 30 秒自动刷新）
     st.markdown("#### 🗒️ 一屏总览")
-    ov = pd.DataFrame([_brief_overview_row(b) for b in briefs])
-    st.dataframe(ov, use_container_width=True, hide_index=True)
+    _mkt_open = is_market_open()
+
+    @st.fragment(run_every=("30s" if _mkt_open else None))
+    def _overview_table():
+        import datetime as _d
+        bucket = int(_d.datetime.now().timestamp() // 30)
+        rows = []
+        for b in briefs:
+            try:
+                lq = c_live_quote(b["ticker"], bucket)
+            except Exception:  # noqa: BLE001
+                lq = None
+            rows.append(_brief_overview_row(b, lq))
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption(("🟢 盘中 · 现价为近实时(≈15min延迟)，每30秒自动刷新" if _mkt_open
+                    else "⚪ 休市 · 现价为最近报价") + " · 仅展示、不入量化")
+
+    _overview_table()
 
     # 自动权重
     st.markdown("#### ⚖️ 候选池内排序权重（机械规则：引擎超额×显著性折扣×反波动率 · 非投资建议）")
