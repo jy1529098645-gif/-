@@ -87,7 +87,133 @@ def auto_market_events(today: _dt.date, horizon_days: int = 45) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 用户手填特大事件（SQLite）
+# 全网自动抓取的即将事件（IPO 日历 + 经济日历 + 新闻线索）—— 全部 display-only
+# ---------------------------------------------------------------------------
+def _parse_money(s: str) -> float:
+    """'$86,249,999,880' → 86249999880.0；失败返回 0。"""
+    try:
+        return float(str(s).replace("$", "").replace(",", "").strip())
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def fetch_ipo_calendar(today: _dt.date, horizon_days: int = 45) -> list[dict]:
+    """NASDAQ IPO 日历：未来 horizon_days 内的 IPO，按募资额自动判严重度。
+
+    巨型 IPO(募资额大)会从二级市场抽走资金 → 压制流动性/风险偏好，自动标高风险。免费、失败返回 []。"""
+    from data.news import _http_get
+    end = today + _dt.timedelta(days=horizon_days)
+    months = {today.strftime("%Y-%m"), end.strftime("%Y-%m")}
+    seen, out = set(), []
+    for mo in months:
+        try:
+            r = _http_get(f"https://api.nasdaq.com/api/ipo/calendar?date={mo}", timeout=18)
+            rows = ((r.json().get("data", {}) or {}).get("upcoming", {}) or {}).get("upcomingTable", {}) or {}
+            rows = rows.get("rows") or []
+        except Exception:  # noqa: BLE001
+            continue
+        for row in rows:
+            dstr = row.get("expectedPriceDate") or ""
+            try:
+                d = _dt.datetime.strptime(dstr, "%m/%d/%Y").date()
+            except ValueError:
+                continue
+            if not (today <= d <= end):
+                continue
+            usd = _parse_money(row.get("dollarValueOfSharesOffered"))
+            sym = (row.get("proposedTickerSymbol") or "").strip()
+            name = (row.get("companyName") or "").strip()
+            key = (sym, dstr)
+            if key in seen or usd < 1e9:   # 只报募资额 ≥ $1B 的（够大才算"大事"）
+                continue
+            seen.add(key)
+            mega = usd >= 5e9
+            bil = usd / 1e9
+            out.append({
+                "date": d, "scope": "全市场", "category": "大型IPO" + ("(巨型)" if mega else ""),
+                "title": f"{name}({sym}) 上市 ${bil:.0f}B", "severity": "高" if mega else "中",
+                "source": "web",
+                "watch": (f"募资约 ${bil:.0f}B 的巨型 IPO → 从二级市场抽走巨量资金、短期压制流动性与风险偏好；"
+                          "留意成交缩量/波动抬升，别在事件窗口满仓押方向。" if mega
+                          else f"募资约 ${bil:.0f}B 的大型 IPO → 短期分流部分资金，留意板块资金面。")})
+    return out
+
+
+def fetch_econ_calendar(today: _dt.date, horizon_days: int = 14) -> list[dict]:
+    """ForexFactory 经济日历(本周)：美国高影响宏观(CPI/PPI/零售/就业等)。免费、失败返回 []。"""
+    import xml.etree.ElementTree as ET
+    from data.news import _http_get
+    end = today + _dt.timedelta(days=horizon_days)
+    import re as _re
+    root = None
+    try:
+        r = _http_get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=18)
+        try:
+            root = ET.fromstring(r.content)            # bytes：尊重编码声明
+        except ET.ParseError:
+            # 实时源偶发截断 → 去声明、恢复到最后一个完整 </event>、补根标签
+            txt = _re.sub(r"<\?xml[^>]*\?>", "", r.content.decode("windows-1252", errors="ignore"))
+            cut = txt.rfind("</event>")
+            if cut > 0:
+                root = ET.fromstring("<weeklyevents>" + txt[txt.find("<event>"):cut + len("</event>")] + "</weeklyevents>")
+    except Exception:  # noqa: BLE001
+        return []
+    if root is None:
+        return []
+    out, seen = [], set()
+    for e in root.findall(".//event"):
+        if (e.findtext("impact") or "") != "High":
+            continue
+        if (e.findtext("country") or "") != "USD":   # 聚焦美股最相关的美国高影响数据
+            continue
+        try:
+            d = _dt.datetime.strptime((e.findtext("date") or "").strip(), "%m-%d-%Y").date()
+        except ValueError:
+            continue
+        if not (today <= d <= end):
+            continue
+        title = (e.findtext("title") or "").strip()
+        key = (title, d)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"date": d, "scope": "全市场", "category": "宏观数据", "title": title,
+                    "severity": "高", "source": "web",
+                    "watch": f"美国高影响数据({title}) → 数据爆冷/爆热当日易跳空、放大全市场波动。"})
+    return out
+
+
+def fetch_event_news(ticker: str | None, limit: int = 6) -> list[dict]:
+    """新闻里的**前瞻性事件线索**(并购/判决/发布/解禁/分拆等)。未核实、无精确日期 → 仅作线索，不进时间线。"""
+    from data import news as _n
+    if ticker:
+        q = f'{_n.COMPANY_NAMES.get(ticker.upper(), ticker)} ({"merger OR acquisition OR ruling OR verdict OR launch OR lockup OR split OR IPO OR guidance"})'
+    else:
+        q = '(stock market) (IPO OR merger OR "rate decision" OR shutdown OR tariff OR ruling)'
+    try:
+        items = _n._google_news(q, limit=limit * 2)
+    except Exception:  # noqa: BLE001
+        return []
+    _FWD = ("will", "to acquire", "to merge", "set to", "plans", "expected", "upcoming", "ruling",
+            "verdict", "launch", "to report", "lockup", "split", "ipo", "debut", "guidance", "deadline")
+    out = []
+    for it in items:
+        t = (it.get("title") or "")
+        if any(w in t.lower() for w in _FWD):
+            out.append({"date": it.get("date"), "title": t, "provider": it.get("provider"), "url": it.get("url")})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def web_events(today: _dt.date, ticker: str | None = None, horizon_days: int = 45) -> list[dict]:
+    """聚合全网自动抓取的结构化事件(IPO + 经济日历)。失败的源静默跳过。"""
+    ev = fetch_ipo_calendar(today, horizon_days) + fetch_econ_calendar(today, min(horizon_days, 14))
+    return ev
+
+
+# ---------------------------------------------------------------------------
+# 用户手填特大事件（SQLite）—— 作为自动抓取的补充/覆盖
 # ---------------------------------------------------------------------------
 def _conn(db_path: str | Path | None = None):
     p = Path(db_path) if db_path else config.user_db_path()
@@ -135,13 +261,16 @@ def manual_events(db_path: str | Path | None = None) -> list[dict]:
 # 汇总：未来事件雷达
 # ---------------------------------------------------------------------------
 def upcoming(today: _dt.date, ticker: str | None = None, horizon_days: int = 45,
-             earnings: list[dict] | None = None, db_path: str | Path | None = None) -> dict:
-    """合并 自动 + 手填 事件，过滤到未来 horizon_days，按日期排序。
+             earnings: list[dict] | None = None, include_web: bool = True,
+             db_path: str | Path | None = None) -> dict:
+    """合并 规则日历 + 全网自动抓取(IPO/经济日历) + 手填 事件，过滤到未来 horizon_days，按日期排序。
 
     ticker 非空时：保留 全市场 事件 + scope==ticker 的事件 + 该票财报(若传入 earnings)。
-    返回 {events:[...], summary:str}。events 每项含 days_ahead。"""
+    include_web=True 时联网抓 IPO/经济日历(失败静默跳过)。返回 {events, summary, news_leads}。"""
     end = today + _dt.timedelta(days=horizon_days)
     ev = auto_market_events(today, horizon_days)
+    if include_web:
+        ev += web_events(today, ticker, horizon_days)
     for m in manual_events(db_path):
         if today <= m["date"] <= end:
             ev.append(m)
@@ -161,17 +290,27 @@ def upcoming(today: _dt.date, ticker: str | None = None, horizon_days: int = 45,
     if ticker:
         ev = [e for e in ev if e["scope"] == "全市场" or e["scope"] == ticker]
 
+    # 去重：同日期 + 标题/类别前缀相同（手填覆盖自动）
+    dedup, seen = [], set()
+    for e in sorted(ev, key=lambda x: 0 if x["source"] == "manual" else 1):
+        k = (e["date"], (e.get("title") or e["category"])[:8])
+        if k in seen:
+            continue
+        seen.add(k); dedup.append(e)
+    ev = dedup
+
     for e in ev:
         e["days_ahead"] = (e["date"] - today).days
     ev = sorted(ev, key=lambda e: (e["date"], -SEVERITY_ORDER.get(e["severity"], 0)))
 
     n_high = sum(1 for e in ev if e["severity"] == "高")
+    n_web = sum(1 for e in ev if e["source"] == "web")
     if not ev:
-        summary = f"未来 {horizon_days} 天内无登记的重大事件。"
+        summary = f"未来 {horizon_days} 天内未发现重大事件（已查 IPO/经济日历 + 规则日历）。"
     else:
         nearest = ev[0]
-        summary = (f"未来 {horizon_days} 天内 {len(ev)} 项事件（{n_high} 项高风险）。"
+        summary = (f"未来 {horizon_days} 天内 {len(ev)} 项事件（{n_high} 项高风险，{n_web} 项全网自动抓取）。"
                    f"最近：{nearest['date']}（{nearest['days_ahead']}天后）· {nearest['category']}"
                    f"{('·' + nearest['title']) if nearest.get('title') else ''}。"
                    "⚠️ 仅提醒、不入量化——这些是前视/独特事件，模型吃不进，请人工纳入仓位与风险判断。")
-    return {"events": ev, "summary": summary, "n_high": n_high}
+    return {"events": ev, "summary": summary, "n_high": n_high, "n_web": n_web}

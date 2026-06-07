@@ -38,7 +38,7 @@ def test_upcoming_merges_and_sorts(tmp_path):
     er.add_event("2026-06-12", "SpaceX 上市", scope="全市场", category="大型IPO",
                  impact="抽流动性", severity="高", db_path=db)
     today = dt.date(2026, 6, 7)
-    res = er.upcoming(today, ticker="NVDA", horizon_days=45, db_path=db)
+    res = er.upcoming(today, ticker="NVDA", horizon_days=45, include_web=False, db_path=db)
     evs = res["events"]
     assert len(evs) >= 2
     # 排序：日期升序
@@ -57,11 +57,28 @@ def test_upcoming_ticker_filter(tmp_path):
                  impact="单票事件", severity="高", db_path=db)
     today = dt.date(2026, 6, 7)
     # NVDA 视角不应看到 AAPL 专属事件
-    nvda = er.upcoming(today, ticker="NVDA", horizon_days=30, db_path=db)
+    nvda = er.upcoming(today, ticker="NVDA", horizon_days=30, include_web=False, db_path=db)
     assert not any(e.get("title") == "AAPL 反垄断判决" for e in nvda["events"])
     # AAPL 视角应看到
-    aapl = er.upcoming(today, ticker="AAPL", horizon_days=30, db_path=db)
+    aapl = er.upcoming(today, ticker="AAPL", horizon_days=30, include_web=False, db_path=db)
     assert any(e.get("title") == "AAPL 反垄断判决" for e in aapl["events"])
+
+
+def test_parse_money():
+    assert er._parse_money("$86,249,999,880") == 86249999880.0
+    assert er._parse_money("$1,000,000,000") == 1e9
+    assert er._parse_money("bad") == 0.0
+
+
+def test_web_events_graceful_offline(monkeypatch):
+    # 模拟网络失败：_http_get 抛错 → web_events 静默返回 []
+    import data.news as _n
+    def _boom(*a, **k):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(_n, "_http_get", _boom)
+    monkeypatch.setattr("data.news._google_news", lambda *a, **k: [])
+    today = dt.date(2026, 6, 7)
+    assert er.web_events(today, "NVDA", 45) == []
 
 
 def test_delete_event(tmp_path):
