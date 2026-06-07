@@ -1268,7 +1268,16 @@ def page_snapshot():
     pc = st.columns(3)
     pc[0].markdown(stat_card("POC（成交最密价位）", f"{vp['poc']:.1f}", "强支撑/压力参考", "#00D4FF", tip="POC"), unsafe_allow_html=True)
     pc[1].markdown(stat_card("价值区(70%)", f"{vp['value_area'][0]:.0f} – {vp['value_area'][1]:.0f}", "成交集中区间", "#7C5CFC", tip="Volume Profile"), unsafe_allow_html=True)
-    pc[2].markdown(stat_card("现价", f"{ohlcv['close'].iloc[-1]:.1f}", str(ohlcv.index[-1].date()), "#2BE6A8"), unsafe_allow_html=True)
+    # 现价接入盘中近实时（休市/取价失败回退日线收盘）
+    _q = c_live_quote(tk, int(__import__("datetime").datetime.now().timestamp() // 30))
+    if _q.get("ok") and _q["price"] == _q["price"]:
+        _ch = _q.get("change_pct")
+        _arr = ("▲" if (_ch == _ch and _ch >= 0) else "▼") if _ch == _ch else ""
+        _sub = (f"{_arr} {_ch:+.2%} · {'🟢盘中' if is_market_open() else '⚪休市'}" if _ch == _ch else "近实时")
+        _col = "#2BE6A8" if (_ch == _ch and _ch >= 0) else "#FF5C7A"
+        pc[2].markdown(stat_card("现价(≈15min延迟)", f"{_q['price']:.2f}", _sub, _col), unsafe_allow_html=True)
+    else:
+        pc[2].markdown(stat_card("现价", f"{ohlcv['close'].iloc[-1]:.1f}", str(ohlcv.index[-1].date()), "#2BE6A8"), unsafe_allow_html=True)
     st.write("")
     a, b = st.columns([3, 1])
     with a:
@@ -1567,7 +1576,8 @@ def _brief_overview_row(b: dict, live: dict | None = None) -> dict:
     # 现价：有实时报价用实时（带今日涨跌），否则回退日线收盘
     if live and live.get("ok") and live["price"] == live["price"]:
         px = f"{live['price']:.2f}"
-        chg = f"{live['change_pct']:+.2%}" if live.get("change_pct") == live.get("change_pct") else "—"
+        _c = live.get("change_pct")
+        chg = (f"{'▲' if _c >= 0 else '▼'} {_c:+.2%}") if _c == _c else "—"
     else:
         px, chg = f"{b['price']:.1f}", "—"
     return {
@@ -1929,7 +1939,7 @@ def page_panorama():
         chg = q.get("change_pct")
         if q.get("ok") and chg == chg:
             col = "#2BE6A8" if chg >= 0 else "#FF5C7A"
-            sub = f"{q['change']:+.2f} ({chg:+.2%}) · {'🟢盘中' if _mkt_open else '⚪休市'}"
+            sub = f"{'▲' if chg >= 0 else '▼'} {q['change']:+.2f} ({chg:+.2%}) · {'🟢盘中' if _mkt_open else '⚪休市'}"
         else:
             col = "#FFD166"; sub = fallback["date"]
         st.markdown(stat_card("现价", f"{price:.2f}", sub, col), unsafe_allow_html=True)

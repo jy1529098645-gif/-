@@ -119,26 +119,64 @@ def _download_one(ticker: str, start: str, end: str | None) -> pd.Series:
     return s
 
 
+def _read_price_cache(ticker: str) -> pd.Series | None:
+    """读单只价格缓存（损坏自动删除→None）。"""
+    path = _price_cache_path(ticker)
+    cdf = _safe_read_parquet(path) if path.exists() else None
+    if cdf is None:
+        return None
+    s = cdf.iloc[:, 0]
+    s.index = pd.to_datetime(s.index)
+    return s
+
+
+def _cache_is_fresh(cached: pd.Series | None, start_ts, end_ts) -> bool:
+    return (cached is not None and cached.index.min() <= start_ts
+            and cached.index.max() >= end_ts - pd.Timedelta(days=1))
+
+
+def _download_one(ticker: str, start: str, end: str | None) -> pd.Series:  # noqa: F811
+    return _download_many([ticker], start, end).get(ticker, pd.Series(dtype=float, name=ticker))
+
+
+def _download_many(tickers: list[str], start: str, end: str | None) -> dict[str, pd.Series]:
+    """一次性批量下载多只复权收盘价（yf.download 单请求）。返回 {ticker: Series}，缺失的票不在内。"""
+    import yfinance as yf
+    out: dict[str, pd.Series] = {}
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return out
+    df = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)
+    if df is None or df.empty:
+        return out
+    close = df["Close"] if "Close" in (df.columns.get_level_values(0) if isinstance(df.columns, pd.MultiIndex) else df.columns) else None
+    if close is None:
+        return out
+    if isinstance(close, pd.Series):  # 单票时为 Series
+        close = close.to_frame(tickers[0])
+    for t in tickers:
+        if t in close.columns:
+            s = pd.to_numeric(close[t], errors="coerce").dropna()
+            if len(s):
+                s.name = t
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                out[t] = s
+    return out
+
+
 def _load_one_cached(ticker: str, start: str, end: str | None) -> pd.Series:
     """带缓存地取单只标的复权收盘价。缓存覆盖请求区间则切片，否则下载并合并缓存。"""
-    path = _price_cache_path(ticker)
     end_ts = pd.Timestamp(end) if end else pd.Timestamp.today().normalize()
     start_ts = pd.Timestamp(start)
-
-    cached: pd.Series | None = None
-    _cdf = _safe_read_parquet(path) if path.exists() else None
-    if _cdf is not None:
-        cached = _cdf.iloc[:, 0]
-        cached.index = pd.to_datetime(cached.index)
-        # 缓存已覆盖请求区间（已结算日线只容忍 1 个自然日尾部差 → 最多滞后约 1 个交易日）
-        if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=1):
-            return cached.loc[start_ts:end_ts]
-
-    # 下载（缓存缺失或不够新）。下载请求区间并与旧缓存并集后写回。
+    cached = _read_price_cache(ticker)
+    if _cache_is_fresh(cached, start_ts, end_ts):
+        return cached.loc[start_ts:end_ts]
     fresh = _download_one(ticker, start, end)
+    if fresh.empty and cached is None:
+        raise ValueError(f"{ticker}: 未取到数据（区间 {start}~{end}）")
     merged = fresh if cached is None else pd.concat([cached, fresh])
     merged = merged[~merged.index.duplicated(keep="last")].sort_index()
-    merged.to_frame().to_parquet(path)
+    merged.to_frame().to_parquet(_price_cache_path(ticker))
     return merged.loc[start_ts:end_ts]
 
 
@@ -149,16 +187,45 @@ def load_prices(
 ) -> pd.DataFrame:
     """返回复权收盘价面板，index=日期(DatetimeIndex)，columns=ticker。带本地缓存。
 
+    优化：缓存命中的票直接切片；**所有缓存缺失/过期的票一次性批量下载**（大票池显著提速）。
     价格不前向填充：停牌/退市/上市前留 NaN。
     """
     start = start or _CFG["dates"]["start"]
     end = end or _CFG["dates"]["end"]  # 可能为 None → 取到今天
+    end_ts = pd.Timestamp(end) if end else pd.Timestamp.today().normalize()
+    start_ts = pd.Timestamp(start)
 
-    series = {}
+    series: dict[str, pd.Series] = {}
+    cached_map: dict[str, pd.Series | None] = {}
+    to_fetch: list[str] = []
     for t in tickers:
-        series[t] = _load_one_cached(t, start, end)
+        c = _read_price_cache(t)
+        if _cache_is_fresh(c, start_ts, end_ts):
+            series[t] = c.loc[start_ts:end_ts]
+        else:
+            cached_map[t] = c
+            to_fetch.append(t)
 
-    panel = pd.DataFrame(series)
+    if to_fetch:
+        fetched = _download_many(to_fetch, start, end)
+        for t in to_fetch:
+            fresh = fetched.get(t)
+            cached = cached_map.get(t)
+            if fresh is None or fresh.empty:
+                # 批量没拿到 → 单票兜底（仍可能抛错=真不可用）
+                try:
+                    series[t] = _load_one_cached(t, start, end)
+                except Exception:  # noqa: BLE001
+                    if cached is not None:
+                        series[t] = cached.loc[start_ts:end_ts]
+                continue
+            merged = fresh if cached is None else pd.concat([cached, fresh])
+            merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+            merged.to_frame().to_parquet(_price_cache_path(t))
+            series[t] = merged.loc[start_ts:end_ts]
+
+    # 按入参顺序组装（只保留成功取到的票）
+    panel = pd.DataFrame({t: series[t] for t in tickers if t in series})
     panel.index.name = "date"
     return panel  # 不 ffill：保留 NaN
 
