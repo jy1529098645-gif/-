@@ -50,6 +50,45 @@ def test_index_not_single_name_drops_survivorship_caveat():
     assert not any("幸存者偏差" in c for c in bez["caveats"])
 
 
+def test_methodology_fields_present():
+    px = _mean_reverting_series()
+    bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=150)
+    for k in ("dsr", "dsr_ok", "n_trials", "n_independent", "regime_clustered", "open_ended"):
+        assert k in bez, f"缺字段 {k}"
+    assert bez["n_trials"] >= 1
+
+
+def test_confident_implies_all_gates_pass():
+    # 「稳健」是强承诺：必须 DSR 达标 + 有效独立窗口≥5 + 非 regime 聚集 + 非个股深档
+    px = _mean_reverting_series()
+    for sn in (True, False):
+        bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=200, single_name=sn)
+        if bez.get("has_zone") and bez.get("confident"):
+            assert bez["dsr_ok"] is True
+            assert bez["n_independent"] >= 5
+            assert bez["regime_clustered"] is False
+            assert not (sn and bez["zones"].loc[bez["zones"]["zone"] == bez["zone_label"], "depth_hi"].iloc[0] > 0.30)
+
+
+def test_anchor_is_median_dd_projection_in_band():
+    # 锚点=历史命中回撤深度中位投影到当前前高 → 必落在 [price_low, price_high]
+    px = _mean_reverting_series()
+    bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=150)
+    if bez.get("has_zone") and not bez.get("open_ended"):
+        lo, hi = bez["price_band"]
+        assert lo <= bez["anchor_price"] <= hi
+
+
+def test_low_effective_n_not_confident():
+    # 长持有期 + 短样本 → 有效独立窗口很少 → 不得"稳健"
+    px = _mean_reverting_series(n=900, period=120)
+    bez = ec.best_entry_zone(px, asset="X", horizon=252, n_boot=120, single_name=True)
+    if bez.get("has_zone"):
+        # n_independent = n_days//252，短样本下任一档都很小
+        if bez["n_independent"] < 5:
+            assert bez["confident"] is False
+
+
 def test_defensive_when_no_positive_excess():
     # 加速下跌(动量陷阱型)：越跌远期越差 → 不应硬给最佳入场点
     n = 1500

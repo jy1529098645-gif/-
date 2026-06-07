@@ -2006,7 +2006,11 @@ def page_panorama():
         _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
                                   f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
         _ci = bez["ci"]
-        _bc[3].markdown(stat_card("置信", bez["tier"], f"N≈{bez['n_events']}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]", _tc, tip="CI"), unsafe_allow_html=True)
+        _dsr = bez.get("dsr", float("nan"))
+        _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
+        _bc[3].markdown(stat_card("置信", bez["tier"],
+                                  f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
+                                  _tc, tip="CI"), unsafe_allow_html=True)
     st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
     st.write("")
 

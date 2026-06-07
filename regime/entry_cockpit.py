@@ -30,6 +30,7 @@ from regime.conditional_returns import (
     _path_min_return,
 )
 from stats.bootstrap import block_bootstrap_ci
+from stats.deflated_sharpe import deflated_sharpe_ratio
 
 _CFG = config.load_config()
 _FEES = float(_CFG["costs"]["fees"])
@@ -62,6 +63,9 @@ def _zone_stats(arr: np.ndarray, pmin: np.ndarray, baseline_median: float,
     med_mae = float(np.median(pmin)) if pmin.size else float("nan")
     # 盈亏比(决策口径)：中位远期收益 / 中位途中浮亏(要忍受的回撤) —— 校准"赔率"
     reward_risk = float(med / abs(med_mae)) if med_mae and med_mae < 0 else float("nan")
+    # per-观测 夏普(均值/标准差)——供 deflated Sharpe 多重检验折扣用
+    sd = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+    sharpe = float(np.mean(arr) / sd) if sd > 0 else 0.0
     eff_block = max(1, min(block_size, len(arr) // 5))
     try:
         _, ci_lo, ci_hi = block_bootstrap_ci(arr, np.median, block_size=eff_block, n=n_boot)
@@ -80,6 +84,7 @@ def _zone_stats(arr: np.ndarray, pmin: np.ndarray, baseline_median: float,
         "expectancy": expectancy,
         "winloss_ratio": winloss_ratio,
         "reward_risk": reward_risk,
+        "sharpe": sharpe,
         "baseline_median": baseline_median,
         "excess_median": med - baseline_median,
         "ci_low": ci_lo,
@@ -127,6 +132,18 @@ def entry_zones(
         sel = fwd[mask].dropna()
         n_days = int(sel.shape[0])
         n_events = _count_independent_events(mask.reindex(fwd.index))
+        # 有效独立窗口：远期窗口重叠，n_days//horizon 才是真·独立样本数（防 CI 假性变窄）
+        n_independent = max(1, n_days // max(1, horizon))
+        # 锚点：历史命中的**回撤深度中位**投影到当前前高（"当前价位"口径，反映档内聚集位置，
+        #       必落在 [price_low, price_high] 内；比几何中点更贴历史分布）。
+        hit_dd = dd[mask].dropna()
+        if hit_dd.shape[0]:
+            median_dd = float(hit_dd.median())
+            anchor_median = cur_high * (1 + median_dd)
+            yr = hit_dd.index.year.value_counts()
+            regime_year_frac = float(yr.iloc[0] / hit_dd.shape[0])
+        else:
+            median_dd = float("nan"); anchor_median = float("nan"); regime_year_frac = float("nan")
         price_high = cur_high * (1 - lo_d)
         price_low = cur_high * (1 - hi_d) if hi_d < 1.0 else 0.0
         label = (f"距前高 {lo_d:.0%}–{hi_d:.0%}" if hi_d < 1.0 else f"距前高 >{lo_d:.0%}")
@@ -137,8 +154,11 @@ def entry_zones(
             "depth_hi": hi_d,
             "price_high": price_high,
             "price_low": price_low,
+            "anchor_median": anchor_median,
             "n_days": n_days,
             "n_events": n_events,
+            "n_independent": n_independent,
+            "regime_year_frac": regime_year_frac,
             "is_current": is_current,
             "enough": n_days >= _MIN_N,
         }
@@ -147,7 +167,7 @@ def entry_zones(
             row.update(_zone_stats(sel.to_numpy(), pm, baseline_median, block_size, n_boot))
         else:
             for k in ("win_rate", "median", "p10", "p25", "p75", "p90", "avg_win", "avg_loss",
-                      "median_mae", "expectancy", "winloss_ratio", "reward_risk",
+                      "median_mae", "expectancy", "winloss_ratio", "reward_risk", "sharpe",
                       "excess_median", "ci_low", "ci_high"):
                 row[k] = float("nan")
             row["baseline_median"] = baseline_median
@@ -201,17 +221,18 @@ def best_entry_zone(
     n_boot: int = 400,
     single_name: bool = True,
 ) -> dict:
-    """从条件价位带中**排名选出最佳入场区**，并给出区内锚点价。
+    """从条件价位带中**排名选出最佳入场区**，并给出区内锚点价（校准式，非预测）。
 
-    排名口径（诚实）：以每档中位远期收益的 **block bootstrap CI 下界** 为主排序键——
-    即"保守的地板超额"。这天然同时奖励"高超额"与"高可靠(CI 窄/不跨 0)"，避免被某个
-    样本极少、看着惊艳但 CI 跨 0 的深跌档骗到。规则：
-      - 候选 = 样本达标(n_days≥MIN_N) 且 中位超额>0 的档；
-      - 若存在 CI 下界>0 的档 → 取其中 CI 下界最高者 = **稳健最佳入场区**；
-      - 否则取中位超额最高者 = **历史最高倾斜档(低置信)**，并明确标注 CI 跨 0；
-      - 若没有任何档正超额 → 返回**防守裁决**（无最佳入场区，建议观望/轻仓），绝不硬凑买点。
-    锚点价 = 最佳档价位区间的中值（区间仍一并返回，提醒这是"区"不是"点"）。
-    single_name=True 时附幸存者偏差提醒（个股深跌可能是"价值陷阱"而非折价）。
+    排名口径：以每档中位远期收益的 **block bootstrap CI 下界** 为主排序键（保守地板超额），
+    且「稳健」要求 ci_low > 基准中位（即**超额**的 CI 下界>0，强势股每档绝对收益 CI 都>0 会让
+    ci_low>0 形同虚设）。但选出后必须再过三道**反过度自信**关：
+      1. **多重检验折扣**：选档=「N 选 1」。用各合格档的 per-观测夏普做 deflated Sharpe，
+         得 DSR(从 N 档里选最优后这档夏普为真的概率)。DSR<0.95 → 不得标"稳健"。
+      2. **有效独立样本**：远期窗口重叠，真·独立样本 = n_days//horizon。有效N<5 → 强制低置信。
+      3. **幸存者偏差 / regime 聚集**：个股深档(>30%回撤)永不"稳健"；命中日 >70% 挤在单一年份
+         → 标 regime_clustered 降置信。
+    锚点价 = 历史上落在该档的价格**中位**(anchor_median，比几何中点更贴历史分布)；开口档报触发价。
+    无任何正超额档 → 防守裁决，绝不硬凑买点。single_name=True 附幸存者偏差提醒。
     """
     zones = entry_zones(prices, asset=asset, horizon=horizon, bands=bands,
                         lookback_high=lookback_high, n_boot=n_boot)
@@ -233,9 +254,6 @@ def best_entry_zone(
                             "建议观望或仅极轻仓试探、严格止损。"),
                 "caveats": ["无正超额档：硬给买点=骗自己。"]}
 
-    # 选档：优先有界档(能给真实锚点中值)；开口的">X%"档只在没有有界正超额档时才用。
-    # 「稳健」口径必须看**超额**的 CI 下界 >0，即 ci_low > 基准中位——强势股每档绝对收益 CI
-    # 都 >0 会让 ci_low>0 形同虚设、把"超额≈0 的浅档"误判稳健；用基准做门槛才抓得住真 edge。
     base_med = float(zones.attrs.get("baseline_median", 0.0))
     robust = elig[elig["ci_low"] > base_med]
     if not robust.empty:
@@ -246,53 +264,78 @@ def best_entry_zone(
     use = bounded if not bounded.empty else pool
     best = use.loc[use[key].idxmax()]
 
-    open_ended = bool(best["depth_hi"] >= 1.0) or float(best["price_low"]) <= 0
-    if open_ended:
-        confident = False  # 开口深档无价格下限+样本常集中于单一历史阶段 → 强制降置信
+    # —— 反关 1：多重检验折扣（从 len(elig) 个合格档里选最优）——
+    sharpes = elig["sharpe"].dropna().to_numpy()
+    n_trials = max(1, len(sharpes))
+    sr_std = float(np.std(sharpes, ddof=1)) if len(sharpes) > 1 else 0.0
+    n_ind = int(best.get("n_independent", max(1, int(best["n_days"]) // max(1, horizon))))
+    try:
+        dsr = deflated_sharpe_ratio(sr=float(best["sharpe"]),
+                                    sr_trials_std=sr_std if sr_std > 0 else 1e-6,
+                                    n_trials=n_trials, n_obs=max(2, n_ind))
+    except Exception:  # noqa: BLE001
+        dsr = float("nan")
+    dsr_ok = bool(dsr == dsr and dsr >= 0.95)
 
-    n_ev = int(best["n_events"])
-    low_power = n_ev < _LOW_POWER_EVENTS
+    open_ended = bool(best["depth_hi"] >= 1.0) or float(best["price_low"]) <= 0
+    # —— 反关 2：有效独立样本 ——
+    low_power = (n_ind < 5) or (int(best["n_events"]) < _LOW_POWER_EVENTS)
+    # —— 反关 3：幸存者偏差 / regime 聚集 ——
+    deep_single = bool(single_name and float(best["depth_hi"]) > 0.30)
+    ryf = float(best.get("regime_year_frac", float("nan")))
+    regime_clustered = bool(ryf == ryf and ryf > 0.70)
+
+    # 任一反关不过 → 强制降置信
+    if open_ended or not dsr_ok or low_power or deep_single or regime_clustered:
+        confident = False
+
     p_low, p_high = float(best["price_low"]), float(best["price_high"])
+    anchor_median = float(best.get("anchor_median", float("nan")))
     if open_ended:
-        anchor = p_high                  # 触发价：「跌到此价以下进入深跌档」，无中值
+        anchor = p_high                  # 触发价：「跌到此价以下进入深跌档」
         price_band = [None, p_high]
     else:
-        anchor = (p_low + p_high) / 2.0  # 有界档：区间中值
+        anchor = anchor_median if anchor_median == anchor_median else (p_low + p_high) / 2.0
         price_band = [p_low, p_high]
     dist_pct = (anchor / cur_price - 1.0) if cur_price == cur_price and cur_price else float("nan")
 
-    if confident and not low_power:
+    if confident:
         tier = "稳健最佳入场区"
-    elif confident and low_power:
-        tier = "最佳入场区(样本偏少)"
     elif open_ended:
         tier = "深跌触发区(开口·低置信)"
+    elif not dsr_ok:
+        tier = "最佳入场区(多重检验后存疑)"
     else:
-        tier = "历史最高倾斜档(低置信·CI跨0)"
+        tier = "历史最高倾斜档(低置信)"
 
     caveats = []
-    if open_ended:
-        caveats.append("开口深跌档无价格下限，且样本常集中于单一历史阶段(如早期低价高增长)，"
-                       "锚点为触发价非中值，置信已下调。")
-    elif not confident:
-        caveats.append("该档中位收益 95% CI 跨 0：方向可能为正，但统计上不显著，按低置信对待。")
+    if not dsr_ok:
+        caveats.append(f"从 {n_trials} 个回撤档里选最优，deflated Sharpe={dsr:.2f}(<0.95)——"
+                       f"这个'最佳'有相当概率是多重检验下的运气。")
     if low_power:
-        caveats.append(f"仅 ~{n_ev} 个独立事件，长周期下样本不足，别当确定性结论。")
+        caveats.append(f"有效独立窗口仅 ~{n_ind} 个(远期重叠后)，长周期样本不足，CI 可能偏窄。")
+    if regime_clustered:
+        caveats.append(f"该档 {ryf:.0%} 的历史样本挤在单一年份，是特定 regime 而非稳定规律。")
+    if open_ended:
+        caveats.append("开口深跌档无价格下限，锚点为触发价非中值。")
+    if deep_single:
+        caveats.append("个股深档(>30%)幸存者偏差最重，已封顶为低置信。")
     if single_name:
-        caveats.append("个股深跌存在幸存者偏差：历史回升的样本天然偏多，下一个深跌可能是不回头的价值陷阱。")
-    caveats.append("锚点价是「**若到达就分批行动**」的参考"
-                   + ("触发价" if open_ended else "中值") + "，不是预测/不是保证会到。")
+        caveats.append("个股深跌存在幸存者偏差：历史回升样本天然偏多，下一个深跌可能是不回头的价值陷阱。")
+    caveats.append("锚点价=历史落在该档价格的中位，是「**若到达就分批行动**」的参考"
+                   + ("触发价" if open_ended else "价") + "，不是预测/不是保证会到。")
 
     return {
         **base, "has_zone": True, "confident": confident, "low_power": low_power,
-        "open_ended": open_ended,
+        "open_ended": open_ended, "dsr": dsr, "dsr_ok": dsr_ok, "n_trials": n_trials,
+        "n_independent": n_ind, "regime_clustered": regime_clustered,
         "tier": tier, "zone_label": best["zone"],
         "price_band": price_band, "anchor_price": anchor, "anchor_distance": dist_pct,
         "median_fwd": float(best["median"]), "excess_median": float(best["excess_median"]),
         "reward_risk": float(best["reward_risk"]), "win_rate": float(best["win_rate"]),
         "expectancy": float(best["expectancy"]),
         "ci": [float(best["ci_low"]), float(best["ci_high"])],
-        "n_events": n_ev, "n_days": int(best["n_days"]),
+        "n_events": int(best["n_events"]), "n_days": int(best["n_days"]),
         "is_current": bool(best["is_current"]), "caveats": caveats,
     }
 
@@ -317,9 +360,12 @@ def format_best_entry(bez: dict) -> str:
         band_s = f"区间 {band[0]:.1f}–{band[1]:.1f}{dist_s}"
     head = (f"{badge} 最佳入场区[{bez['zone_label']}]　{anchor_label} ≈ **{bez['anchor_price']:.1f}**"
             f"（{band_s}）")
+    dsr = bez.get("dsr", float("nan"))
+    dsr_s = f"、DSR {dsr:.2f}" if dsr == dsr else ""
     body = (f"｜历史 {h_m:.0f} 个月远期中位 {bez['median_fwd']*100:+.1f}%、"
             f"超无条件基准 {bez['excess_median']*100:+.1f} 点、盈亏比 {rr_s}、胜率 {bez['win_rate']:.0%}、"
-            f"N≈{bez['n_events']} 独立事件、CI[{ci[0]*100:+.1f}%,{ci[1]*100:+.1f}%]｜{bez['tier']}")
+            f"有效独立窗口≈{bez.get('n_independent','?')}(名义 N={bez['n_events']})、"
+            f"CI[{ci[0]*100:+.1f}%,{ci[1]*100:+.1f}%]{dsr_s}｜{bez['tier']}")
     tail = "　⚠️ " + " ".join(bez.get("caveats", []))
     return head + body + tail
 
