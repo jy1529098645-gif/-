@@ -40,61 +40,38 @@ CFG = config.load_config()
 # ---------------------------------------------------------------------------
 def _ny_clock():
     import streamlit.components.v1 as _components
-    # 能注入父文档(本地同源)就做右上角悬浮时钟并把本 iframe 收成 0 高；
-    # 注入失败(Streamlit Cloud 跨域沙箱)则在本 iframe 内渲染可见时钟条作兜底。
+    # 纯 iframe 内渲染：零跨域依赖，云端/本地都必显示（不再注入父文档，避免被沙箱挡掉）。
     _components.html(
         """
-        <div id="ny-clock-fallback" style="display:none"></div>
+        <style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}</style>
+        <div id="nyc" style="display:inline-block;float:right;
+             font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;
+             color:#BFD8FF;background:rgba(15,20,34,0.85);border:1px solid rgba(124,92,252,0.5);
+             border-radius:9px;padding:4px 11px;letter-spacing:0.3px">🗽 纽约 …</div>
         <script>
         (function(){
-          function clockHTML(){
-            const now = new Date();
-            const t = now.toLocaleString('en-US',{timeZone:'America/New_York',
-              year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',
-              second:'2-digit',hour12:false,weekday:'short'});
-            // 判断美股是否开盘（周一–五 9:30–16:00 ET）
-            const parts = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
-              hour:'2-digit',minute:'2-digit',hour12:false,weekday:'short'}).formatToParts(now);
-            const get=k=>parts.find(p=>p.type===k)?.value;
-            const wd=get('weekday'); const hh=parseInt(get('hour')); const mm=parseInt(get('minute'));
-            const isWk=!['Sat','Sun'].includes(wd);
-            const mins=hh*60+mm; const open=isWk&&mins>=570&&mins<960;
-            return '🗽 纽约 '+t+'  '+(open?'<span style="color:#2BE6A8">●开盘</span>'
-                                          :'<span style="color:#8A93A6">●休市</span>');
+          const el=document.getElementById('nyc');
+          function tick(){
+            try{
+              const now=new Date();
+              const t=now.toLocaleString('en-US',{timeZone:'America/New_York',year:'numeric',
+                month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',
+                hour12:false,weekday:'short'});
+              // 美股是否开盘（周一–五 9:30–16:00 ET）
+              const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
+                hour:'2-digit',minute:'2-digit',hour12:false,weekday:'short'}).formatToParts(now);
+              const g=k=>parts.find(p=>p.type===k)?.value;
+              const wd=g('weekday'); const hh=parseInt(g('hour')); const mm=parseInt(g('minute'));
+              const isWk=!['Sat','Sun'].includes(wd); const mins=hh*60+mm; const open=isWk&&mins>=570&&mins<960;
+              el.innerHTML='🗽 纽约 '+t+'  '+(open?'<span style="color:#2BE6A8">●开盘</span>'
+                                               :'<span style="color:#8A93A6">●休市</span>');
+            }catch(e){ el.textContent='🗽 '+new Date().toUTCString(); }
           }
-          // —— 优先：注入父文档做右上角悬浮时钟（本地同源可用）——
-          try{
-            const doc = window.parent.document;
-            let el = doc.getElementById('ny-clock');
-            if(!el){
-              el = doc.createElement('div'); el.id='ny-clock';
-              el.style.cssText = 'position:fixed;top:8px;right:16px;z-index:100000;'
-                + 'font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;'
-                + 'color:#BFD8FF;background:rgba(15,20,34,0.78);border:1px solid rgba(124,92,252,0.45);'
-                + 'border-radius:9px;padding:5px 11px;letter-spacing:0.3px;pointer-events:none;'
-                + 'box-shadow:0 4px 14px rgba(0,0,0,0.4)';
-              doc.body.appendChild(el);
-            }
-            if(window.parent.__nyClockTimer) clearInterval(window.parent.__nyClockTimer);
-            const run=()=>{ try{ el.innerHTML=clockHTML(); }catch(e){} };
-            run(); window.parent.__nyClockTimer = setInterval(run,1000);
-            try{ if(window.frameElement) window.frameElement.style.height='0px'; }catch(e){}
-            return;  // 父文档注入成功，无需兜底
-          }catch(e){ /* 跨域(云端) → 落到下面的 iframe 内兜底 */ }
-
-          // —— 兜底：在本 iframe 内渲染可见时钟条（Streamlit Cloud 跨域时走这里）——
-          const fb = document.getElementById('ny-clock-fallback');
-          document.body.style.margin='0';
-          fb.style.cssText = 'display:block;text-align:right;'
-            + 'font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;'
-            + 'color:#BFD8FF;background:rgba(15,20,34,0.78);border:1px solid rgba(124,92,252,0.45);'
-            + 'border-radius:9px;padding:5px 11px;letter-spacing:0.3px';
-          const run2=()=>{ try{ fb.innerHTML=clockHTML(); }catch(e){} };
-          run2(); setInterval(run2,1000);
+          tick(); setInterval(tick,1000);
         })();
         </script>
         """,
-        height=34,
+        height=32,
     )
 
 
