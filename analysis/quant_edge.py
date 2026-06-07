@@ -68,6 +68,63 @@ def alpha_beta(strat_ret: pd.Series, mkt_ret: pd.Series, n_boot: int = 1000) -> 
             "n": int(df.shape[0]), "verdict": verdict}
 
 
+# 风格因子的免费 ETF 代理（相对市场的超额=风格暴露）
+FACTOR_ETFS = {"市场": "SPY", "动量": "MTUM", "价值": "IWD", "小盘": "IWM", "低波": "USMV"}
+
+
+def factor_attribution(strat_ret: pd.Series, factor_prices: dict[str, pd.Series],
+                       n_boot: int = 800) -> dict:
+    """多因子归因：strat = α + β_mkt·MKT + β_mom·(MTUM−SPY) + β_val·(IWD−SPY) + …。
+
+    把收益拆成市场 β + 各风格倾斜 + 真 α(扣掉所有风格后剩下的)。α 带 block bootstrap CI。
+    factor_prices: {名称: 价格Series}，至少含 'SPY'。返回 {alpha_ann, alpha_ci, betas{}, r2, n, verdict}。"""
+    spy = factor_prices.get("SPY")
+    if spy is None:
+        return {"verdict": "缺市场基准 SPY", "n": 0}
+    spy_r = spy.pct_change()
+    cols = {"市场": spy_r}
+    for name, etf in FACTOR_ETFS.items():
+        if name == "市场":
+            continue
+        p = factor_prices.get(etf)
+        if p is not None:
+            cols[name] = p.pct_change() - spy_r   # 风格相对市场的超额=纯风格暴露
+    df = pd.concat({"s": strat_ret, **cols}, axis=1).dropna()
+    if df.shape[0] < 120:
+        return {"verdict": "样本不足（风格 ETF 多 2013+ 上市）", "n": int(df.shape[0])}
+
+    fac_names = [c for c in df.columns if c != "s"]
+    X = np.column_stack([np.ones(len(df))] + [df[c].to_numpy() for c in fac_names])
+    y = df["s"].to_numpy()
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    resid = y - X @ beta
+    ss_tot = np.sum((y - y.mean()) ** 2)
+    r2 = float(1 - np.sum(resid ** 2) / ss_tot) if ss_tot > 0 else float("nan")
+
+    # block bootstrap α(截距)的 CI
+    L = len(y); blk = min(21, max(1, L // 5)); nb = int(np.ceil(L / blk))
+    rng = np.random.default_rng(0); off = np.arange(blk)
+    alphas = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = (rng.integers(0, L, size=nb)[:, None] + off[None, :]).ravel()[:L] % L
+        b, *_ = np.linalg.lstsq(X[idx], y[idx], rcond=None)
+        alphas[i] = b[0]
+    lo, hi = float(np.nanpercentile(alphas, 2.5)) * 252, float(np.nanpercentile(alphas, 97.5)) * 252
+    alpha_ann = float(beta[0] * 252)
+    sig = bool(lo > 0 or hi < 0)
+    betas = {name: float(b) for name, b in zip(fac_names, beta[1:])}
+    tilt = max(((k, v) for k, v in betas.items() if k != "市场"), key=lambda kv: abs(kv[1]), default=(None, 0))
+    if sig and alpha_ann > 0:
+        verdict = f"扣掉市场+风格后仍有显著正 α（年化 {alpha_ann:+.1%}）——这才是真本事。"
+    elif sig and alpha_ann < 0:
+        verdict = f"扣掉风格后 α 显著为负（年化 {alpha_ann:+.1%}）。"
+    else:
+        verdict = (f"α 不显著（CI 跨 0）：收益主要由市场 β({betas.get('市场',float('nan')):.2f})"
+                   + (f" 和 {tilt[0]}倾斜({tilt[1]:+.2f})" if tilt[0] else "") + " 解释，没有可证明的纯 α。")
+    return {"alpha_ann": alpha_ann, "alpha_ci": (lo, hi), "alpha_significant": sig,
+            "betas": betas, "r2": r2, "n": int(df.shape[0]), "verdict": verdict}
+
+
 # ---------------------------------------------------------------------------
 # 2. Regime 暴露系数（免费可观测状态 → 0–1 仓位乘子，只降不加杠杆）
 # ---------------------------------------------------------------------------
@@ -121,16 +178,24 @@ def regime_exposure(price: pd.Series, macro: pd.DataFrame | None = None) -> dict
             "note": "regime 暴露=风控纪律(高波动/避险环境自动降仓)，只降不加杠杆；非涨跌预测。"}
 
 
+def ewma_vol(ret: pd.Series, lam: float = 0.94) -> pd.Series:
+    """RiskMetrics EWMA 年化波动预测：σ²_t = λσ²_{t-1} + (1-λ)r²_{t-1}（只用过去，无前视）。
+
+    比等权滚动波动反应更快、更贴近 ex-ante 预测（近期冲击权重更高）。"""
+    r2 = (ret.fillna(0.0) ** 2)
+    var = r2.ewm(alpha=1 - lam, adjust=False).mean()
+    return np.sqrt(var.shift(1) * 252)  # shift(1)：今日暴露只能用到昨日为止的信息
+
+
 def vol_target_backtest(price: pd.Series, target_vol: float = 0.20,
                         window: int = 21, max_lev: float = 1.0) -> dict:
-    """波动目标 overlay：每日按 target_vol / 近 window 日已实现波动 缩放暴露(上限 max_lev=不加杠杆)
+    """波动目标 overlay：每日按 target_vol / **EWMA ex-ante 波动预测** 缩放暴露(上限 max_lev=不加杠杆)
     vs 闭眼满仓持有。返回两者 {cagr,vol,sharpe,maxdd} + 归一净值 DataFrame。诚实：只降不加杠杆。"""
-    from regime import observables as ob
     from backtest.strategies import _perf
 
     price = price.dropna()
     ret = price.pct_change()
-    rv = ob.realized_vol(price, window).shift(1)  # 用昨日波动定今日暴露，无前视
+    rv = ewma_vol(ret)  # EWMA 预测波动定今日暴露，无前视
     expo = (target_vol / rv).clip(upper=max_lev).fillna(0.0)
     strat_ret = expo * ret
     strat_val = (1 + strat_ret.fillna(0)).cumprod() * float(price.iloc[0])
@@ -254,28 +319,82 @@ def pead_now(ticker: str, start: str = "2010-01-01", end: str | None = None,
 # ---------------------------------------------------------------------------
 # 4. 横截面相对排名 edge（动量 + 低波，多空分位价差，deflated Sharpe 折扣）
 # ---------------------------------------------------------------------------
+def _newey_west_t(x: np.ndarray, lags: int = 5) -> float:
+    """序列的均值 / Newey-West(自相关稳健)标准误 → t 统计量。IC 序列有自相关，普通 t 会高估显著性。"""
+    x = x[~np.isnan(x)]
+    T = len(x)
+    if T < 10:
+        return float("nan")
+    xc = x - x.mean()
+    gamma0 = np.mean(xc ** 2)
+    s = gamma0
+    for L in range(1, min(lags, T - 1) + 1):
+        w = 1.0 - L / (lags + 1)
+        s += 2 * w * np.mean(xc[L:] * xc[:-L])
+    se = np.sqrt(max(s, 1e-18) / T)
+    return float(x.mean() / se) if se > 0 else float("nan")
+
+
 def cross_section_edge(prices: pd.DataFrame, lookback_mom: int = 252, skip: int = 21,
                        vol_win: int = 63, rebalance: int = 21, quantiles: int = 3,
-                       n_boot: int = 600) -> dict:
-    """一篮子标的的横截面相对排名回测：综合分 = z(12-1动量) + z(-波动)，多顶分位/空底分位。
+                       n_boot: int = 600, neutralize_beta: bool = True, winsor: float = 3.0) -> dict:
+    """横截面相对排名回测（准专业版）：综合分 = z(12-1动量) + z(-波动)，
+    经 **winsorize(±3σ) + beta 中性化** 后多顶分位/空底分位。
 
-    返回 factor_quantile_backtest 结果 + deflated Sharpe（按 2 个因子做多重检验折扣）。"""
+    返回 factor_quantile_backtest 结果 + deflated Sharpe + IC 的 **Newey-West t 统计量**。"""
     from backtest.strategies import factor_quantile_backtest
     from stats.deflated_sharpe import deflated_sharpe_ratio
+    from scipy.stats import spearmanr
 
     px = prices.dropna(how="all").ffill()
     rets = px.pct_change()
-    # 12-1 动量（跳过最近 skip 日，避开短期反转）
-    mom = px.shift(skip) / px.shift(lookback_mom) - 1.0
+    mom = px.shift(skip) / px.shift(lookback_mom) - 1.0          # 12-1 动量
     vol = rets.rolling(vol_win, min_periods=vol_win // 2).std()
 
-    def _z(df):
-        return df.sub(df.mean(axis=1), axis=0).div(df.std(axis=1).replace(0, np.nan), axis=0)
+    def _z(df):  # 横截面标准化 + winsorize（截尾极端值，防单票主导）
+        z = df.sub(df.mean(axis=1), axis=0).div(df.std(axis=1).replace(0, np.nan), axis=0)
+        return z.clip(-winsor, winsor)
 
-    score = _z(mom) - _z(vol)  # 高动量 + 低波动 得分高
+    score = _z(mom) - _z(vol)
+
+    # —— beta 中性化：逐期把 score 对各票 beta 做横截面回归取残差，剔除 beta 暴露 ——
+    if neutralize_beta:
+        mkt = rets.mean(axis=1)                                   # 等权篮子=市场代理
+        var_m = mkt.rolling(252, min_periods=126).var()
+        beta = rets.rolling(252, min_periods=126).cov(mkt).div(var_m, axis=0)
+        bz = beta.sub(beta.mean(axis=1), axis=0).div(beta.std(axis=1).replace(0, np.nan), axis=0)
+        # 残差化：score_resid = score − proj(score onto beta) 逐行
+        sv, bv = score.to_numpy(), bz.to_numpy()
+        resid = np.full_like(sv, np.nan)
+        for t in range(sv.shape[0]):
+            s_row, b_row = sv[t], bv[t]
+            m = ~np.isnan(s_row) & ~np.isnan(b_row)
+            if m.sum() >= 5:
+                bb = b_row[m]
+                coef = np.dot(bb, s_row[m]) / max(np.dot(bb, bb), 1e-12)
+                resid[t, m] = s_row[m] - coef * bb
+            else:
+                resid[t] = s_row
+        score = pd.DataFrame(resid, index=score.index, columns=score.columns)
+
     res = factor_quantile_backtest(score, px, quantiles=quantiles, rebalance=rebalance,
                                    long_short=True, n_boot=n_boot)
-    # deflated Sharpe：2 个因子搜索 → 折扣
+
+    # —— IC 序列 + Newey-West t（每 rebalance 期，score vs 未来 rebalance 日收益）——
+    fwd = px.shift(-rebalance) / px - 1.0
+    ic_list = []
+    for d in px.index[lookback_mom + skip::rebalance]:
+        s_row = score.loc[d].dropna(); f_row = fwd.loc[d].dropna()
+        common = s_row.index.intersection(f_row.index)
+        if len(common) >= 5:
+            r = spearmanr(s_row[common], f_row[common]).statistic
+            if r == r:
+                ic_list.append(r)
+    ic_arr = np.array(ic_list)
+    res["ic_mean"] = float(ic_arr.mean()) if ic_arr.size else float("nan")
+    res["ic_t_newey_west"] = _newey_west_t(ic_arr, lags=5)
+    res["ic_n_periods"] = int(ic_arr.size)
+
     sr_daily = res["sharpe"] / np.sqrt(252) if res["sharpe"] == res["sharpe"] else float("nan")
     try:
         dsr = deflated_sharpe_ratio(sr=sr_daily, sr_trials_std=abs(sr_daily) * 0.5 + 1e-6,
@@ -284,8 +403,9 @@ def cross_section_edge(prices: pd.DataFrame, lookback_mom: int = 252, skip: int 
         dsr = float("nan")
     res["deflated_sharpe_prob"] = float(dsr)
     res["robust"] = bool(dsr > 0.95) if dsr == dsr else False
-    res["edge_note"] = ("横截面多空价差的夏普；deflated prob>0.95 才算扛得住多重检验。"
-                        "这是相对排名 edge(谁强于谁)，与单票择时是两回事。")
+    res["neutralized"] = bool(neutralize_beta)
+    res["edge_note"] = ("横截面多空价差(动量+低波，winsorize+beta中性化)。IC 的 Newey-West |t|>2 "
+                        "且 deflated prob>0.95 才算扛得住自相关与多重检验。相对排名 edge，非单票择时。")
     return res
 
 
@@ -307,7 +427,15 @@ def portfolio_weights(prices: pd.DataFrame, lookback: int = 252,
         return {"weights": {c: 1.0 / max(1, n) for c in cols}, "port_vol": float("nan"),
                 "method": method, "note": "样本不足，退化为等权。", "compare": {}}
 
-    cov = rets.cov().to_numpy() * 252
+    # Ledoit-Wolf 收缩协方差：样本协方差在 n 接近样本量时极不稳定（min-var 会放大估计噪声）。
+    # 收缩到结构化目标后，组合权重稳健得多。退化时回退样本协方差。
+    try:
+        from sklearn.covariance import LedoitWolf
+        cov = LedoitWolf().fit(rets.to_numpy()).covariance_ * 252
+        shrink = "Ledoit-Wolf"
+    except Exception:  # noqa: BLE001
+        cov = rets.cov().to_numpy() * 252
+        shrink = "样本协方差"
     ones = np.ones(n)
     cap = max(single_cap, 1.0 / n)  # 上限不能低于等权，否则无可行解
 
@@ -347,8 +475,9 @@ def portfolio_weights(prices: pd.DataFrame, lookback: int = 252,
         "weights": {c: float(w) for c, w in zip(cols, chosen)},
         "port_vol": _vol(chosen), "method": method,
         "compare": {"等权": _vol(w_eq), "最小方差": _vol(w_mv), "风险平价": _vol(w_rp)},
-        "note": ("基于近 %d 日协方差的长仓权重(和=1，单票≤%.0f%%)。最小方差求组合波动最低，"
-                 "风险平价让各票风险贡献相等。仅用收益、免费；非投资建议。" % (lookback, cap * 100)),
+        "shrinkage": shrink,
+        "note": ("基于近 %d 日 %s 的长仓权重(和=1，单票≤%.0f%%)。最小方差求组合波动最低，"
+                 "风险平价让各票风险贡献相等。仅用收益、免费；非投资建议。" % (lookback, shrink, cap * 100)),
     }
 
 

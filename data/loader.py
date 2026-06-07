@@ -63,10 +63,22 @@ def load_universe(name: str | None = None) -> list[str]:
     无幸存者偏差（含已退市标的）的历史股票池见 Phase 6。
     """
     name = name or _CFG["universe"]["default"]
+    if name == "sp500":  # 大票池：降低选股偏差（成分表 data/sp500_constituents.txt，离线 bundled）
+        return load_sp500()
     entry = _CFG["universe"].get(name)
     if entry is None:
-        raise KeyError(f"未知股票池 '{name}'，可选：{[k for k in _CFG['universe'] if k != 'default']}")
+        raise KeyError(f"未知股票池 '{name}'，可选：{[k for k in _CFG['universe'] if k != 'default'] + ['sp500']}")
     return list(entry["tickers"])
+
+
+def load_sp500() -> list[str]:
+    """S&P 500 现成成分（离线 bundled，约 500 只）。用于横截面研究，大幅降低选股偏差。
+
+    ⚠️ 仍是**现成**成分（含幸存者偏差：已剔除退市股）；真·无偏差需付费 PIT 数据。"""
+    f = Path(config.ROOT) / "data" / "sp500_constituents.txt"
+    if not f.exists():
+        return []
+    return [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
 # ---------------------------------------------------------------------------

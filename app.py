@@ -293,6 +293,18 @@ def c_alpha_beta(ticker: str, start: str, end: str):
 
 
 @st.cache_data(show_spinner=False)
+def c_factor_attr(ticker: str, start: str, end: str):
+    """策略收益的多因子(市场/动量/价值/小盘/低波)归因。"""
+    from analysis import quant_edge as qe
+    pv = c_perf(ticker, start, end)
+    strat_ret = pv["equity"]["策略"].pct_change()
+    etfs = tuple(dict.fromkeys(qe.FACTOR_ETFS.values()))
+    pxe = c_prices(etfs, start, end)
+    fp = {e: pxe[e] for e in etfs if e in pxe.columns}
+    return qe.factor_attribution(strat_ret, fp)
+
+
+@st.cache_data(show_spinner=False)
 def c_regime_overlay(ticker: str, start: str, end: str):
     from analysis import quant_edge as qe
     px = c_prices((ticker,), start, end)[ticker]
@@ -522,8 +534,9 @@ def page_signals():
                 '和<b>多重检验 FDR 校正</b>。<b>只校准不预测</b>，分数是历史分位倾斜，非买卖指令。</div>', unsafe_allow_html=True)
     st.write("")
 
-    uni = st.radio("票池", ["mag7", "spy_demo"], horizontal=True,
-                   format_func=lambda u: "七姐妹(样本大)" if u == "mag7" else "SPY+成分股")
+    uni = st.radio("票池", ["mag7", "spy_demo", "diversified", "sp500"], horizontal=True,
+                   format_func=lambda u: {"mag7": "七姐妹(样本大)", "spy_demo": "SPY+成分股",
+                                          "diversified": "宽池(降选股偏差)", "sp500": "标普500(全)"}.get(u, u))
     horizon = _HORIZON_OPTS[st.selectbox("远期收益周期", list(_HORIZON_OPTS), index=2)]
     run = run_gate("signals", {"uni": uni, "h": horizon}, label="🚀 运行信号扫描",
                    hint="扫描约 20–40 秒：跨票池化 + bootstrap CI + FDR 校正。")
@@ -1075,6 +1088,13 @@ def page_earnings():
         col.markdown(stat_card(f"领先 IC {int(row['horizon'])}日", f"{row['ic_real']:+.3f}",
                                f"p={row['perm_pvalue']:.2f} {'显著' if sig else '不显著'} · 假对照{row['ic_fake_mean']:+.3f}",
                                "#2BE6A8" if sig else "#8A93A6", tip="PEAD"), unsafe_allow_html=True)
+    # 记入全局多重检验账本
+    try:
+        from analysis import mt_ledger as _mt
+        for _, row in tab.iterrows():
+            _mt.log_test("PEAD", f"领先IC_h{int(row['horizon'])}", float(row["perm_pvalue"]), stat=float(row["ic_real"]))
+    except Exception:  # noqa: BLE001
+        pass
     st.write("")
     a, b = st.columns([3, 2])
     a.plotly_chart(ch.event_study(study), use_container_width=True)
@@ -1733,6 +1753,22 @@ def page_panorama():
         except Exception as _e:  # noqa: BLE001
             st.caption(f"校准库读取失败：{_e}")
 
+    with st.expander("🌐 全局多重检验账本（扣除挖掘后，还剩几个真显著）"):
+        from analysis import mt_ledger as _mt
+        rep = _mt.fdr_report(alpha=0.10)
+        if rep["n_tests"] == 0:
+            st.caption("账本为空。跑「📅 财报 PEAD」或本页「🏁 横截面相对排名」后，其 p 值会自动累计到这里做全局 FDR。")
+        else:
+            mc = st.columns(3)
+            mc[0].markdown(stat_card("累计检验数", f"{rep['n_tests']}", "跨页跨标的", "#7C5CFC", tip="数据窥探"), unsafe_allow_html=True)
+            mc[1].markdown(stat_card("未校正显著", f"{rep['n_sig_raw']}", "p<0.05", "#8A93A6"), unsafe_allow_html=True)
+            mc[2].markdown(stat_card("BH-FDR 后存活", f"{rep['n_sig_bh']}", f"阈值 p*≤{rep['p_star']:.3f}",
+                                     "#2BE6A8" if rep["n_sig_bh"] > 0 else "#FF5C7A", tip="FDR"), unsafe_allow_html=True)
+            st.caption(f"📖 {rep['note']}")
+            tb = rep["table"][["family", "name", "p_value", "显著_未校正", "显著_BH"]].rename(
+                columns={"family": "类别", "name": "检验", "p_value": "p值", "显著_未校正": "未校正", "显著_BH": "BH存活"})
+            st.dataframe(tb.style.format({"p值": "{:.4f}"}), use_container_width=True, hide_index=True)
+
     with st.expander("💠 各价位带明细（盈亏比 / 期望值 / 超额）"):
         enough = z[z["enough"]] if "enough" in z.columns else z.iloc[0:0]
         if not enough.empty:
@@ -1835,6 +1871,22 @@ def page_panorama():
                                   "显著" if hab["alpha_significant"] else "跨0(纯beta)", "#8A93A6"), unsafe_allow_html=True)
         st.caption(f"📖 把每日收益对 SPY 回归：α=扣掉市场后的真超额、β=市场敏感度。**策略**：{sab['verdict']}")
 
+        # 多因子归因（市场 + 动量/价值/小盘/低波 风格）
+        fa = c_factor_attr(a, "2014-01-01", end)
+        if fa.get("n", 0) >= 120:
+            st.markdown("**🧬 多因子归因（收益拆成 市场β + 风格倾斜 + 真α）**")
+            bt = fa["betas"]
+            fac_order = [k for k in ("市场", "动量", "价值", "小盘", "低波") if k in bt]
+            fc = st.columns(len(fac_order) + 1)
+            _ac = "#2BE6A8" if fa["alpha_significant"] and fa["alpha_ann"] > 0 else "#FFD166"
+            fc[0].markdown(stat_card("年化α(扣风格)", f"{fa['alpha_ann']:+.1%}",
+                                     ("显著" if fa["alpha_significant"] else "跨0") + f"·R²{fa['r2']:.0%}", _ac), unsafe_allow_html=True)
+            for col, k in zip(fc[1:], fac_order):
+                col.markdown(stat_card(f"{k}β", f"{bt[k]:+.2f}", "暴露", "#00D4FF" if k == "市场" else "#7C5CFC"), unsafe_allow_html=True)
+            st.caption(f"📖 {fa['verdict']}（风格用免费 ETF 代理：MTUM/IWD/IWM/USMV 相对 SPY 的超额；多 2013+ 上市）")
+        else:
+            st.caption(f"🧬 多因子归因：{fa.get('verdict','样本不足')}")
+
         # Walk-forward OOS：edge 是否跨期稳定（过拟合自检）
         wf = c_walkforward(a, "2010-01-01", end)
         if wf.get("n_windows"):
@@ -1882,6 +1934,22 @@ def page_panorama():
                 csc[1].markdown(stat_card("年化收益", f"{cse['ann_return']:+.0%}", "多顶分位/空底分位", "#7C5CFC"), unsafe_allow_html=True)
                 csc[2].markdown(stat_card("deflated 概率", f"{cse['deflated_sharpe_prob']:.0%}",
                                           "稳健" if cse["robust"] else "未达0.95", "#2BE6A8" if cse["robust"] else "#FFD166", tip="deflated Sharpe"), unsafe_allow_html=True)
+                # IC + Newey-West t（自相关稳健显著性）
+                nwt = cse.get("ic_t_newey_west", float("nan"))
+                ic_m = cse.get("ic_mean", float("nan"))
+                ncs = st.columns(2)
+                ncs[0].markdown(stat_card("因子 IC(均)", f"{ic_m:.3f}", f"{cse.get('ic_n_periods',0)} 期·已beta中性化", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
+                ncs[1].markdown(stat_card("IC 的 |t| (Newey-West)", f"{abs(nwt):.2f}" if nwt == nwt else "—",
+                                          "显著(>2)" if (nwt == nwt and abs(nwt) > 2) else "不显著", "#2BE6A8" if (nwt == nwt and abs(nwt) > 2) else "#FF5C7A", tip="IR"), unsafe_allow_html=True)
+                # 记入全局多重检验账本（IC 的 NW p 值）
+                try:
+                    from analysis import mt_ledger as _mt
+                    from scipy.stats import norm as _norm
+                    if nwt == nwt:
+                        _p = float(2 * (1 - _norm.cdf(abs(nwt))))
+                        _mt.log_test("横截面因子", f"{grp}·动量低波", _p, stat=nwt)
+                except Exception:  # noqa: BLE001
+                    pass
                 st.caption(f"📖 {cse['edge_note']}（标的：{', '.join(peers_cs)}）")
                 # 信号衰减监控
                 dec = c_signal_decay(peers_cs, "2015-01-01", end)

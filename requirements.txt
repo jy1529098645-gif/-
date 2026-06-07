@@ -5,6 +5,7 @@
 pandas
 numpy
 scipy
+scikit-learn             # Ledoit-Wolf 协方差收缩（组合构建）
 pyarrow                  # parquet 缓存引擎
 
 # 数据源
