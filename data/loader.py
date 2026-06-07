@@ -71,6 +71,18 @@ def load_universe(name: str | None = None) -> list[str]:
     return list(entry["tickers"])
 
 
+def _safe_read_parquet(path: "Path"):
+    """读 parquet；文件损坏/不可读则删除并返回 None（当缓存缺失处理，触发重新下载）。"""
+    try:
+        return pd.read_parquet(path)
+    except Exception:  # noqa: BLE001  —— 截断/损坏的缓存不应让整个加载崩溃
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+
+
 def load_sp500() -> list[str]:
     """S&P 500 现成成分（离线 bundled，约 500 只）。用于横截面研究，大幅降低选股偏差。
 
@@ -114,11 +126,12 @@ def _load_one_cached(ticker: str, start: str, end: str | None) -> pd.Series:
     start_ts = pd.Timestamp(start)
 
     cached: pd.Series | None = None
-    if path.exists():
-        cached = pd.read_parquet(path).iloc[:, 0]
+    _cdf = _safe_read_parquet(path) if path.exists() else None
+    if _cdf is not None:
+        cached = _cdf.iloc[:, 0]
         cached.index = pd.to_datetime(cached.index)
-        # 缓存已覆盖请求区间（容忍 5 个自然日的尾部新鲜度差）
-        if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=5):
+        # 缓存已覆盖请求区间（已结算日线只容忍 1 个自然日尾部差 → 最多滞后约 1 个交易日）
+        if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=1):
             return cached.loc[start_ts:end_ts]
 
     # 下载（缓存缺失或不够新）。下载请求区间并与旧缓存并集后写回。
@@ -171,11 +184,10 @@ def load_ohlcv(ticker: str, start: str | None = None, end: str | None = None) ->
     end_ts = pd.Timestamp(end) if end else pd.Timestamp.today().normalize()
     start_ts = pd.Timestamp(start)
 
-    cached: pd.DataFrame | None = None
-    if path.exists():
-        cached = pd.read_parquet(path)
+    cached = _safe_read_parquet(path) if path.exists() else None
+    if cached is not None:
         cached.index = pd.to_datetime(cached.index)
-        if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=5):
+        if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=1):
             return cached.loc[start_ts:end_ts]
 
     df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
@@ -194,6 +206,41 @@ def load_ohlcv(ticker: str, start: str | None = None, end: str | None = None) ->
 
 
 # ---------------------------------------------------------------------------
+# 实时（近实时）报价 —— 盘中当前价，用于"现价"显示（不入回测/量化）
+# ---------------------------------------------------------------------------
+def live_quote(ticker: str) -> dict:
+    """返回当前报价快照（yfinance fast_info，免费源**约 15 分钟延迟**，非逐笔实时）。
+
+    仅供"现价"展示，**绝不入回测/量化**（量化用已结算日线）。取价失败回退到最近缓存收盘。"""
+    out = {"ticker": ticker, "price": float("nan"), "prev_close": float("nan"),
+           "change": float("nan"), "change_pct": float("nan"), "open": float("nan"),
+           "high": float("nan"), "low": float("nan"), "volume": None,
+           "ok": False, "delayed": True, "source": "yfinance 报价(约15分钟延迟)"}
+    try:
+        import yfinance as yf
+        fi = yf.Ticker(ticker).fast_info
+        price = float(fi.last_price)
+        prev = float(fi.previous_close)
+        out.update(price=price, prev_close=prev, change=price - prev,
+                   change_pct=(price / prev - 1.0) if prev else float("nan"),
+                   open=float(getattr(fi, "open", float("nan")) or float("nan")),
+                   high=float(getattr(fi, "day_high", float("nan")) or float("nan")),
+                   low=float(getattr(fi, "day_low", float("nan")) or float("nan")),
+                   volume=getattr(fi, "last_volume", None), ok=True)
+        return out
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # 回退：最近缓存收盘
+        s = _load_one_cached(ticker, "2024-01-01", None).dropna()
+        if len(s):
+            out.update(price=float(s.iloc[-1]), ok=True, delayed=True,
+                       source=f"缓存收盘 {s.index[-1].date()}（实时取价失败）")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 财报日期（补充规格 B / Phase F1，免费 yfinance）
 # ---------------------------------------------------------------------------
 def load_earnings_dates(ticker: str, limit: int = 80, refresh: bool = False) -> pd.DataFrame:
@@ -204,9 +251,10 @@ def load_earnings_dates(ticker: str, limit: int = 80, refresh: bool = False) -> 
     """
     path = _CACHE / f"earnings_{ticker.replace('/', '_').replace('^', '_')}.parquet"
     if path.exists() and not refresh:
-        df = pd.read_parquet(path)
-        df.index = pd.to_datetime(df.index)
-        return df.sort_index()
+        df = _safe_read_parquet(path)
+        if df is not None:
+            df.index = pd.to_datetime(df.index)
+            return df.sort_index()
 
     import yfinance as yf
 
@@ -293,8 +341,9 @@ def _load_fred_one(series_id: str, start: str, end: str | None) -> pd.Series:
     start_ts = pd.Timestamp(start)
 
     cached: pd.Series | None = None
-    if path.exists():
-        cached = pd.read_parquet(path).iloc[:, 0]
+    _cdf = _safe_read_parquet(path) if path.exists() else None
+    if _cdf is not None:
+        cached = _cdf.iloc[:, 0]
         cached.index = pd.to_datetime(cached.index)
         if cached.index.min() <= start_ts and cached.index.max() >= end_ts - pd.Timedelta(days=10):
             return cached.loc[start_ts:end_ts]

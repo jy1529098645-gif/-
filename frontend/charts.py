@@ -464,4 +464,5 @@ def equity_compare(equity: pd.DataFrame, title="策略 vs 持有 · 净值(归�
                         name=_names.get(col, col))
     fig.add_hline(y=1.0, line=dict(color="rgba(255,255,255,0.25)", width=1))
     fig.update_yaxes(type="log", title="净值(起点=1)")
+    fig.update_xaxes(rangeselector=_RANGE_BUTTONS)  # 时间范围切换（1M/3M/.../全部）
     return _style(fig, height=420, title=title)

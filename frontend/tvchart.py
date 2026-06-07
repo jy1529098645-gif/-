@@ -11,6 +11,59 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 _UP, _DN = "#2BE6A8", "#FF5C7A"
 
+# ---------------------------------------------------------------------------
+# 周期切换辅助（纯 pandas，不引入 streamlit）：时间范围 / K线粒度 / 标记吸附
+# ---------------------------------------------------------------------------
+PERIODS = ["1M", "3M", "6M", "1Y", "3Y", "全部"]
+TIMEFRAMES = ["日", "周", "月"]
+_PERIOD_OFFSET = {
+    "1M": pd.DateOffset(months=1), "3M": pd.DateOffset(months=3),
+    "6M": pd.DateOffset(months=6), "1Y": pd.DateOffset(years=1),
+    "3Y": pd.DateOffset(years=3),
+}
+_TF_RULE = {"日": None, "周": "W", "月": "ME"}
+_OHLC_AGG = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+
+
+def resample_ohlcv(df: pd.DataFrame, timeframe: str = "日") -> pd.DataFrame:
+    """把日线 OHLCV 聚合到 周/月 蜡烛。日线原样返回。"""
+    rule = _TF_RULE.get(timeframe)
+    if rule is None or df is None or df.empty:
+        return df
+    agg = {c: _OHLC_AGG[c] for c in _OHLC_AGG if c in df.columns}
+    out = df.resample(rule).agg(agg)
+    return out.dropna(subset=["close"]) if "close" in out.columns else out.dropna(how="all")
+
+
+def slice_period(df: pd.DataFrame, period: str = "全部") -> pd.DataFrame:
+    """按时间范围切片（相对数据最后一根 bar 往回推）。"""
+    off = _PERIOD_OFFSET.get(period)
+    if off is None or df is None or df.empty:
+        return df
+    return df.loc[df.index >= (df.index.max() - off)]
+
+
+def snap_markers_to_bars(trades: "pd.DataFrame | None", index: pd.DatetimeIndex) -> "pd.DataFrame | None":
+    """周/月聚合后，把每笔 entry/exit 日期吸附到重采样后存在的 bar，避免 lightweight-charts 丢标记。
+
+    日线（index 与原 trades 同粒度）下吸附是恒等映射，无副作用。
+    """
+    if trades is None or len(trades) == 0 or index is None or len(index) == 0:
+        return trades
+    idx = pd.DatetimeIndex(index).sort_values()
+
+    def _snap(ts):
+        d = pd.Timestamp(ts)
+        pos = idx.searchsorted(d, side="right") - 1   # 落到 ≤ d 的最近一根 bar
+        pos = max(0, pos)
+        return idx[pos]
+
+    out = trades.copy()
+    for col in ("entry_date", "exit_date"):
+        if col in out.columns:
+            out[col] = out[col].map(_snap)
+    return out
+
 
 def _candles(ohlcv: pd.DataFrame) -> list[dict]:
     df = ohlcv.dropna(subset=["open", "high", "low", "close"])

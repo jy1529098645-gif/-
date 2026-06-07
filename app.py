@@ -216,6 +216,63 @@ def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
 
 
 # ---------------------------------------------------------------------------
+# 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器
+# ---------------------------------------------------------------------------
+def _chart_period_controls(key: str, with_timeframe: bool = False,
+                           default_period: str = "全部", default_tf: str = "日"):
+    """渲染一行横向周期控件，返回 (period, timeframe)。key 用于隔离各图控件状态。"""
+    from frontend import tvchart as _tv
+    if with_timeframe:
+        c1, c2 = st.columns([3, 2])
+        period = c1.radio("时间范围", _tv.PERIODS, horizontal=True, label_visibility="collapsed",
+                          index=_tv.PERIODS.index(default_period), key=f"per_{key}")
+        tf = c2.radio("K线粒度", _tv.TIMEFRAMES, horizontal=True, label_visibility="collapsed",
+                      index=_tv.TIMEFRAMES.index(default_tf), key=f"tf_{key}")
+        return period, tf
+    period = st.radio("时间范围", _tv.PERIODS, horizontal=True, label_visibility="collapsed",
+                      index=_tv.PERIODS.index(default_period), key=f"per_{key}")
+    return period, "日"
+
+
+def render_tv_candles(ohlcv, trades=None, price_lines=None, key="tv", height=540, log=False,
+                      with_timeframe=True, caption=None):
+    """TradingView K 线 + 周期控件（时间范围 + 日/周/月）。聚合时把成交标记吸附到 bar。"""
+    from frontend import tvchart as _tv
+    period, tf = _chart_period_controls(key, with_timeframe=with_timeframe)
+    df = _tv.resample_ohlcv(ohlcv, tf)
+    df = _tv.slice_period(df, period)
+    tr = _tv.snap_markers_to_bars(trades, df.index) if (trades is not None and tf != "日") else trades
+    _tv.tv_candles(df, tr, price_lines=price_lines, key=key, height=height, log=log)
+    if tf != "日":
+        st.caption(f"⏱️ 当前 {tf}线 · 进出场标记按{tf}聚合周期对齐（非精确日）。")
+    elif caption:
+        st.caption(caption)
+
+
+def render_tv_line(series, markers=None, price_lines=None, key="tvl", height=460,
+                   color="#7C5CFC", log=True):
+    """TradingView 折线 + 时间范围切换（事件时间线等）。"""
+    from frontend import tvchart as _tv
+    period, _ = _chart_period_controls(key, with_timeframe=False)
+    s = _tv.slice_period(series.to_frame("v"), period)["v"]
+    mk = markers
+    if markers and period != "全部" and len(s):
+        lo = s.index.min().strftime("%Y-%m-%d")
+        mk = [m for m in markers if m.get("time", "") >= lo]
+    _tv.tv_line(s, markers=mk, price_lines=price_lines, key=key, height=height, color=color, log=log)
+
+
+def _chart_horizon(key: str, default_days: int, label: str = "持有期") -> int:
+    """per-chart 持有期下拉（默认跟随侧边栏「分析周期」），返回天数。用于由 horizon 驱动的图。"""
+    labels = list(_HZ)
+    days = [_HZ[l] for l in labels]
+    idx = days.index(default_days) if default_days in days else 0
+    lab = st.selectbox(label, labels, index=idx, key=f"hz_{key}",
+                       help="该图独立的远期收益持有期（默认跟随侧边栏「分析周期」）")
+    return _HZ[lab]
+
+
+# ---------------------------------------------------------------------------
 # 缓存的数据 / 计算
 # ---------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
@@ -457,6 +514,27 @@ def c_purged_cv(tickers: tuple, start: str, end: str, horizon: int = 21):
 def c_data_health(tickers: tuple, start: str, end: str):
     from analysis import data_quality as dq
     return dq.data_health(c_prices(tickers, start, end))
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def c_live_quote(ticker: str, _bucket: int = 0):
+    """近实时现价快照（缓存 30 秒）。_bucket 让盘中按分钟桶强制刷新。"""
+    from data import loader
+    return loader.live_quote(ticker)
+
+
+def is_market_open() -> bool:
+    """美股常规时段是否开盘（周一–五 9:30–16:00 美东，不含节假日）。"""
+    try:
+        from zoneinfo import ZoneInfo
+        import datetime as _d
+        now = _d.datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:
+            return False
+        mins = now.hour * 60 + now.minute
+        return 570 <= mins < 960
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -1094,8 +1172,7 @@ def page_rule():
         with st.spinner(f"{tk} K线 + 逐笔标记…"):
             ohlcv, str_trades = c_single_trades(specs, op, trailing, tp, int(time_stop), tk, start, end, cond_kind, int(cond_window), regime_kind, int(ma_exit))
         try:
-            from frontend import tvchart
-            tvchart.tv_candles(ohlcv, str_trades, key=f"tv_rule_{tk}", height=540, log=True)
+            render_tv_candles(ohlcv, str_trades, key=f"tv_rule_{tk}", height=540, log=True)
         except Exception:  # noqa: BLE001
             st.plotly_chart(ch.trade_map_candles(ohlcv, str_trades, title=f"{tk}　{rule_name}"), use_container_width=True, config=ch.CHART_CONFIG)
         st.caption("🖱️ TradingView 手感：滚轮缩放 · 拖动平移 · 十字光标(轴上显示价/时间) · 缩放自动适配 y。▲买 ▼卖（按盈亏着色）。仅复核规则，无画线工具/不标买卖点。")
@@ -1186,12 +1263,11 @@ def page_snapshot():
     a, b = st.columns([3, 1])
     with a:
         try:
-            from frontend import tvchart
             pls = [{"price": vp["poc"], "color": "#00D4FF", "title": "POC"},
                    {"price": vp["value_area"][0], "color": "#7C5CFC", "title": "VA低"},
                    {"price": vp["value_area"][1], "color": "#7C5CFC", "title": "VA高"}]
-            tvchart.tv_candles(ohlcv, None, price_lines=pls, key=f"tv_snap_{tk}", height=480, log=False)
-            st.caption("🖱️ TradingView 手感：滚轮缩放/拖动/十字光标。横线=POC 与价值区(70%)。")
+            render_tv_candles(ohlcv, None, price_lines=pls, key=f"tv_snap_{tk}", height=480, log=False,
+                              caption="🖱️ TradingView 手感：滚轮缩放/拖动/十字光标。横线=POC 与价值区(70%)。")
         except Exception:  # noqa: BLE001
             st.plotly_chart(ch.candle_with_levels(ohlcv, vp, title=f"{tk}　近{lookback}日 K线 + 筹码位"), use_container_width=True, config=ch.CHART_CONFIG)
     b.plotly_chart(ch.volume_profile_bars(vp, title="筹码分布"), use_container_width=True)
@@ -1281,7 +1357,6 @@ def page_events():
                    " · ".join(f"{i}({int(r['count'])}): {r['mean']:+.1%}" for i, r in top.iterrows()))
 
     try:
-        from frontend import tvchart
         pser = price.dropna()
         mk = []
         for _, r in ev.iterrows():
@@ -1292,7 +1367,7 @@ def page_events():
             txt = f"{r['label']}" + (f" {rr:+.0%}" if rr == rr else "")
             mk.append({"time": near.strftime("%Y-%m-%d"), "position": "aboveBar",
                        "color": col, "shape": "circle", "text": txt})
-        tvchart.tv_line(pser, markers=mk, key=f"tvev_{tk}", height=440, color="#9aa7bd", log=True)
+        render_tv_line(pser, markers=mk, key=f"tvev_{tk}", height=440, color="#9aa7bd", log=True)
         st.caption("🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标。圆点=事件(绿=财报/蓝=SEC)，鼠标悬浮看 5 日反应。")
     except Exception:  # noqa: BLE001
         st.plotly_chart(ch.event_timeline_chart(price, ev, title=f"{tk}　事件时间线（客观价格反应）"), use_container_width=True, config=ch.CHART_CONFIG)
@@ -1376,15 +1451,16 @@ def page_cockpit():
 
     # ---- 块1：条件价位带 ----
     with tabZ:
+        hz = _chart_horizon(f"zone_{asset}", horizon)
         with st.spinner("分桶各回撤价位带的历史远期收益分布…"):
-            z = c_zones(asset, zstart, end, horizon)
+            z = c_zones(asset, zstart, end, hz)
         from regime import entry_cockpit as ec
         from data import loader as _ld
         price = _ld.load_prices([asset], zstart, end)[asset]
 
         c1, c2 = st.columns([3, 2])
         c1.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
-        c2.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
+        c2.plotly_chart(ch.entry_zone_bars(z, hz), use_container_width=True)
 
         # 选一个价位带看校准结论 + 盈亏比/期望值卡片
         enough = z[z["enough"]]
@@ -1394,7 +1470,7 @@ def page_cockpit():
             zpick = st.selectbox("查看某价位带的校准结论", enough["zone"].tolist(),
                                  index=enough["zone"].tolist().index(default_zone) if default_zone in enough["zone"].tolist() else 0)
             row = enough[enough["zone"] == zpick].iloc[0]
-            st.markdown(f'<div class="verdict">{ec.format_zone_verdict(row, horizon)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="verdict">{ec.format_zone_verdict(row, hz)}</div>', unsafe_allow_html=True)
             kc = st.columns(5)
             kc[0].markdown(stat_card("价位带", f"{row['price_low']:.0f}–{row['price_high']:.0f}", row["zone"], "#FFD166"), unsafe_allow_html=True)
             kc[1].markdown(stat_card("远期收益中位", f"{row['median']:+.1%}", f"基准 {row['baseline_median']:+.1%}", "#2BE6A8", tip="远期收益"), unsafe_allow_html=True)
@@ -1809,7 +1885,27 @@ def page_panorama():
     # ---- 今日状态 ----
     st.markdown("#### 📍 今日状态")
     hc = st.columns(5)
-    hc[0].markdown(stat_card("现价", f"{b['price']:.1f}", b["date"], "#FFD166"), unsafe_allow_html=True)
+    # 现价：盘中近实时(yfinance≈15min延迟)，开盘时每 ~30 秒自动刷新；仅展示、不入量化
+    _mkt_open = is_market_open()
+
+    @st.fragment(run_every=("30s" if _mkt_open else None))
+    def _live_price(ticker=a, fallback=b):
+        import datetime as _d
+        bucket = int(_d.datetime.now().timestamp() // 30)
+        q = c_live_quote(ticker, bucket)
+        price = q["price"] if (q.get("ok") and q["price"] == q["price"]) else fallback["price"]
+        chg = q.get("change_pct")
+        if q.get("ok") and chg == chg:
+            col = "#2BE6A8" if chg >= 0 else "#FF5C7A"
+            sub = f"{q['change']:+.2f} ({chg:+.2%}) · {'🟢盘中' if _mkt_open else '⚪休市'}"
+        else:
+            col = "#FFD166"; sub = fallback["date"]
+        st.markdown(stat_card("现价", f"{price:.2f}", sub, col), unsafe_allow_html=True)
+        if q.get("ok") and q.get("delayed"):
+            st.caption("≈15min延迟·不入量化")
+
+    with hc[0]:
+        _live_price()
     hc[1].markdown(stat_card("距前高", f"{b['drawdown']:+.0%}", "回撤深度", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
     hc[2].markdown(stat_card("趋势", "均线上方" if b["trend"] == "up_trend" else "均线下方",
                              f"距200线 {b['trend_position']:+.0%}", "#2BE6A8", tip="regime"), unsafe_allow_html=True)
@@ -1822,6 +1918,9 @@ def page_panorama():
 
     # ---- 该在哪建仓：TradingView K线 + 价位带横线 + 建仓档 ----
     st.markdown("#### 🎯 该在什么价位/状态建仓")
+    # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
+    horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
+    z = c_zones(a, zstart, end, horizon)
     cL, cR = st.columns([3, 2])
     with cL:
         from frontend import tvchart
@@ -1834,8 +1933,8 @@ def page_panorama():
                            "title": ("▶ " if iscur else "") + str(r["zone"])})
         try:
             ohlcv_pan = _ld.load_ohlcv(a, zstart, end)
-            tvchart.tv_candles(ohlcv_pan, None, price_lines=zlines, key=f"tvpan_{a}", height=460, log=True)
-            st.caption("🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标读价。横线=各回撤价位带上沿(▶=当前所处带)。")
+            render_tv_candles(ohlcv_pan, None, price_lines=zlines, key=f"tvpan_{a}", height=460, log=True,
+                              caption="🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标读价。横线=各回撤价位带上沿(▶=当前所处带)。")
         except Exception:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
     cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
