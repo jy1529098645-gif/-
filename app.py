@@ -667,6 +667,15 @@ def c_zones(asset: str, start: str, end: str, horizon: int):
 
 
 @st.cache_data(show_spinner=False)
+def c_best_entry(asset: str, start: str, end: str, horizon: int):
+    from data import loader
+    from regime import entry_cockpit as ec
+    px = loader.load_prices([asset], start, end)[asset]
+    return ec.best_entry_zone(px, asset=asset, horizon=horizon, n_boot=400,
+                              single_name=(asset != "SPY"))
+
+
+@st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
     from data import loader
     from regime import entry_cockpit as ec
@@ -1457,11 +1466,12 @@ _HORIZON_OPTS = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (2
 @st.fragment
 def page_cockpit():
     st.markdown('<div class="hero-title">🛰️ 建仓作战室</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">最近几个月该在哪建仓/补仓？给的是<b>条件价位带的经验分布</b>'
-                '——价位区间 + 盈亏比 + 期望值 + N + CI + 超基准，外加<b>未来客观日程</b>与历史反应。'
-                '<b>不给目标价、不给单一概率</b>，校准而非预测。</div>', unsafe_allow_html=True)
-    st.warning("⚠️ 价位带是**区间+分布**不是买点；盈亏比/期望值基于历史独立事件，未来非平稳。"
-               "事件日程是**日历事实**，不预测财报好坏。本页只校准预期、不构成买卖建议。")
+    st.markdown('<div class="hero-sub">最近几个月该在哪建仓/补仓？顶部给出<b>🎯 最佳入场区 + 锚点价</b>'
+                '（按历史 reward/risk 排名、含置信分层），下方是各回撤档的<b>经验分布</b>'
+                '——价位区间 + 盈亏比 + 期望值 + N + CI + 超基准，外加<b>未来客观日程</b>与历史反应。</div>',
+                unsafe_allow_html=True)
+    st.warning("⚠️ 锚点价是「**若到达就分批行动**」的校准区间中值，**非预测、非保证会到、非买卖指令**；"
+               "CI 跨 0 自动降级低置信，无正超额档则转防守不硬给点；个股含幸存者偏差。仍**不给单一上涨概率**。")
 
     cc = st.columns([2, 3])
     asset = cc[0].selectbox("标的", _SPY_FIRST, index=0)
@@ -1493,6 +1503,28 @@ def page_cockpit():
         from regime import entry_cockpit as ec
         from data import loader as _ld
         price = _ld.load_prices([asset], zstart, end)[asset]
+
+        # —— 🎯 最佳入场区 + 锚点价（按历史 reward/risk 排名，含置信分层）——
+        bez = c_best_entry(asset, zstart, end, hz)
+        if bez.get("has_zone"):
+            band = bez["price_band"]
+            anc_label = "触发价" if band[0] is None else "锚点价"
+            band_s = (f"≤ {band[1]:.1f}" if band[0] is None else f"{band[0]:.1f}–{band[1]:.1f}")
+            tier_color = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
+            bc = st.columns(4)
+            dist = bez.get("anchor_distance", float("nan"))
+            bc[0].markdown(stat_card(f"🎯 {anc_label}", f"{bez['anchor_price']:.1f}",
+                                     f"距现价 {dist:+.1%}" if dist == dist else bez["zone_label"], tier_color), unsafe_allow_html=True)
+            bc[1].markdown(stat_card("最佳入场区", band_s, bez["zone_label"], "#FFD166"), unsafe_allow_html=True)
+            bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
+                                     f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
+            ci = bez["ci"]
+            bc[3].markdown(stat_card("置信", bez["tier"].replace("最佳入场区", "").strip("()") or "稳健",
+                                     f"N≈{bez['n_events']}·CI[{ci[0]:+.0%},{ci[1]:+.0%}]", tier_color, tip="CI"), unsafe_allow_html=True)
+            st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
+        st.write("")
 
         c1, c2 = st.columns([3, 2])
         c1.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)

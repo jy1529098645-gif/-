@@ -37,6 +37,33 @@ def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool =
             news_list.append({"date": str(r.get("date")), "title": r.get("title"),
                               "provider": r.get("provider"), "url": r.get("url")})
 
+    # 最佳入场区 + 锚点价（校准式，含置信分层）
+    best_entry = None
+    try:
+        from data import loader as _ld
+        from regime import entry_cockpit as _ec
+        _px = _ld.load_prices([ticker.upper()], start, None)[ticker.upper()]
+        _bez = _ec.best_entry_zone(_px, asset=ticker.upper(), horizon=horizon,
+                                   single_name=(ticker.upper() != "SPY"))
+        if _bez.get("has_zone"):
+            best_entry = {
+                "zone": _bez["zone_label"], "anchor_price": round(_bez["anchor_price"], 2),
+                "price_band": [None if _bez["price_band"][0] is None else round(_bez["price_band"][0], 2),
+                               round(_bez["price_band"][1], 2)],
+                "anchor_distance_pct": (round(_bez["anchor_distance"], 4)
+                                        if _bez.get("anchor_distance") == _bez.get("anchor_distance") else None),
+                "median_fwd": round(_bez["median_fwd"], 4), "excess_median": round(_bez["excess_median"], 4),
+                "reward_risk": (round(_bez["reward_risk"], 2) if _bez["reward_risk"] == _bez["reward_risk"] else None),
+                "win_rate": round(_bez["win_rate"], 3), "n_events": _bez["n_events"],
+                "ci": [round(_bez["ci"][0], 4), round(_bez["ci"][1], 4)],
+                "tier": _bez["tier"], "open_ended": _bez.get("open_ended", False),
+                "caveats": _bez["caveats"],
+            }
+        else:
+            best_entry = {"has_zone": False, "verdict": _bez["verdict"], "tier": "防守"}
+    except Exception:  # noqa: BLE001 —— 取价/历史不足时不阻断整份简报
+        best_entry = None
+
     out = {
         "ticker": b["ticker"], "as_of": b["date"], "horizon_days": horizon,
         "price": b["price"], "trailing_high": b["trailing_high"],
@@ -46,6 +73,7 @@ def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool =
         "engine_state_bucket": _bucket(b.get("engine_state")),
         "engine_value_bucket": _bucket(b.get("engine_value")),
         "momentum_trap": b.get("momentum_trap"),
+        "best_entry_zone": best_entry,
         "entry_tranches": [
             {"tier": t["tier"], "price": round(t["price"], 2), "confluence": t["what"],
              "target": round(t["target"], 2), "stop": round(t["stop"], 2),

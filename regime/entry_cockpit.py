@@ -1,17 +1,22 @@
 """建仓作战室（升级模块）——把「最近几个月该在哪建仓/补仓」做成**校准式**决策支持。
 
 铁律(贯穿)：校准而非预测 / 永远对比无条件基准 / 反过拟合优先。
-本模块**绝不**输出单一目标价或单一概率，只输出：条件价位带的**经验分布** + 盈亏比 + 期望值
-+ N(独立事件) + block bootstrap CI + 相对无条件基准的超额。未来事件只列**客观日程**与
-**历史反应分布**，不预测财报好坏（市场提前消化 = 量化财报前 drift 窗口，而非"已 price in"的判断)。
+输出：条件价位带的**经验分布** + 盈亏比 + 期望值 + N(独立事件) + block bootstrap CI +
+相对无条件基准的超额。未来事件只列**客观日程**与**历史反应分布**，不预测财报好坏。
 
-四块：
+五块：
   1. entry_zones        —— 距前高各回撤带 → 对应价位 + 历史远期收益分布/盈亏比/期望值/CI/超额。
+  1b. best_entry_zone   —— 从各档中**按 CI 下界(保守地板超额)排名选出最佳入场区 + 锚点价**。
   2. earnings_reaction_stats / upcoming_events —— 未来日程(财报/期权到期) + 历史财报前后 drift。
   3. ladder_plan_backtest —— 阶梯式分批建仓(在各回撤带补仓)历史回测 vs lump/DCA，带 CI。
   4. （整合页在 app.py: page_cockpit）
 
-DO NOT：不给"最佳买点 $X / 上涨概率 73%"；价位带是**区间 + 分布**，不是点。
+关于"最佳入场点"(2026 升级，用户明确要求)：best_entry_zone **会**给一个锚点价，但它是
+**校准式锚点**不是预测：(a) 它是历史 reward/risk 最优档的**价位区间中值**，区间一并给出，
+锚点只是区内代表；(b) 永远附 N / CI / 置信分层；CI 跨 0 → 降级"低置信"，开口深档 → 锚点
+改报**触发价**且强制低置信；没有任何档正超额 → **不硬给点**，转防守("观望/轻仓")；(c) 个股
+附幸存者偏差提醒。仍**不给**"上涨概率 73%"这类单一概率。锚点是「若到达就分批行动」的区间参考，
+非"会涨到/必反弹"。
 """
 from __future__ import annotations
 
@@ -177,6 +182,146 @@ def format_zone_verdict(row: pd.Series, horizon: int) -> str:
         f"相对无条件基准 {row['excess_median']*100:+.1f} 个点，基于 N≈{int(row['n_events'])} 个独立事件"
         f"（中位 95% CI [{row['ci_low']*100:+.1f}%, {row['ci_high']*100:+.1f}%]）{sig}。结论：{verdict}。"
     )
+
+
+# ===========================================================================
+# 块 1b：最佳入场区 + 锚点价（按历史 reward/risk 排名，诚实标注置信度）
+# ===========================================================================
+# 比 DEFAULT_BANDS 更深，覆盖"资本投降档"（深跌/急跌往往才是历史最优入场区）。
+DEEP_BANDS = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50)
+_LOW_POWER_EVENTS = 8  # 独立事件 <8 → 低功率，"最佳"降级为"历史最高倾斜(低置信)"
+
+
+def best_entry_zone(
+    prices: pd.DataFrame | pd.Series,
+    asset: str = "SPY",
+    horizon: int = 252,
+    bands: tuple[float, ...] = DEEP_BANDS,
+    lookback_high: int = 252,
+    n_boot: int = 400,
+    single_name: bool = True,
+) -> dict:
+    """从条件价位带中**排名选出最佳入场区**，并给出区内锚点价。
+
+    排名口径（诚实）：以每档中位远期收益的 **block bootstrap CI 下界** 为主排序键——
+    即"保守的地板超额"。这天然同时奖励"高超额"与"高可靠(CI 窄/不跨 0)"，避免被某个
+    样本极少、看着惊艳但 CI 跨 0 的深跌档骗到。规则：
+      - 候选 = 样本达标(n_days≥MIN_N) 且 中位超额>0 的档；
+      - 若存在 CI 下界>0 的档 → 取其中 CI 下界最高者 = **稳健最佳入场区**；
+      - 否则取中位超额最高者 = **历史最高倾斜档(低置信)**，并明确标注 CI 跨 0；
+      - 若没有任何档正超额 → 返回**防守裁决**（无最佳入场区，建议观望/轻仓），绝不硬凑买点。
+    锚点价 = 最佳档价位区间的中值（区间仍一并返回，提醒这是"区"不是"点"）。
+    single_name=True 时附幸存者偏差提醒（个股深跌可能是"价值陷阱"而非折价）。
+    """
+    zones = entry_zones(prices, asset=asset, horizon=horizon, bands=bands,
+                        lookback_high=lookback_high, n_boot=n_boot)
+    cur_price = zones.attrs.get("current_price", float("nan"))
+    cur_dd = zones.attrs.get("current_drawdown", float("nan"))
+    elig = zones[(zones["enough"]) & (zones["excess_median"] > 0)].copy()
+
+    base = {
+        "asset": asset, "horizon": horizon, "current_price": cur_price,
+        "current_drawdown": cur_dd, "current_high": zones.attrs.get("current_high", float("nan")),
+        "sample_start": zones.attrs.get("sample_start"), "sample_end": zones.attrs.get("sample_end"),
+        "zones": zones,
+    }
+
+    if elig.empty:
+        return {**base, "has_zone": False, "tier": "防守",
+                "verdict": ("当前**没有任何回撤档历史上跑赢无条件基准**——这只票/资产上"
+                            "「越跌越买」没有历史优势(可能是趋势破坏/价值陷阱)。不给最佳入场点，"
+                            "建议观望或仅极轻仓试探、严格止损。"),
+                "caveats": ["无正超额档：硬给买点=骗自己。"]}
+
+    # 选档：优先有界档(能给真实锚点中值)；开口的">X%"档只在没有有界正超额档时才用。
+    # 「稳健」口径必须看**超额**的 CI 下界 >0，即 ci_low > 基准中位——强势股每档绝对收益 CI
+    # 都 >0 会让 ci_low>0 形同虚设、把"超额≈0 的浅档"误判稳健；用基准做门槛才抓得住真 edge。
+    base_med = float(zones.attrs.get("baseline_median", 0.0))
+    robust = elig[elig["ci_low"] > base_med]
+    if not robust.empty:
+        pool, confident, key = robust, True, "ci_low"
+    else:
+        pool, confident, key = elig, False, "excess_median"
+    bounded = pool[pool["depth_hi"] < 1.0]
+    use = bounded if not bounded.empty else pool
+    best = use.loc[use[key].idxmax()]
+
+    open_ended = bool(best["depth_hi"] >= 1.0) or float(best["price_low"]) <= 0
+    if open_ended:
+        confident = False  # 开口深档无价格下限+样本常集中于单一历史阶段 → 强制降置信
+
+    n_ev = int(best["n_events"])
+    low_power = n_ev < _LOW_POWER_EVENTS
+    p_low, p_high = float(best["price_low"]), float(best["price_high"])
+    if open_ended:
+        anchor = p_high                  # 触发价：「跌到此价以下进入深跌档」，无中值
+        price_band = [None, p_high]
+    else:
+        anchor = (p_low + p_high) / 2.0  # 有界档：区间中值
+        price_band = [p_low, p_high]
+    dist_pct = (anchor / cur_price - 1.0) if cur_price == cur_price and cur_price else float("nan")
+
+    if confident and not low_power:
+        tier = "稳健最佳入场区"
+    elif confident and low_power:
+        tier = "最佳入场区(样本偏少)"
+    elif open_ended:
+        tier = "深跌触发区(开口·低置信)"
+    else:
+        tier = "历史最高倾斜档(低置信·CI跨0)"
+
+    caveats = []
+    if open_ended:
+        caveats.append("开口深跌档无价格下限，且样本常集中于单一历史阶段(如早期低价高增长)，"
+                       "锚点为触发价非中值，置信已下调。")
+    elif not confident:
+        caveats.append("该档中位收益 95% CI 跨 0：方向可能为正，但统计上不显著，按低置信对待。")
+    if low_power:
+        caveats.append(f"仅 ~{n_ev} 个独立事件，长周期下样本不足，别当确定性结论。")
+    if single_name:
+        caveats.append("个股深跌存在幸存者偏差：历史回升的样本天然偏多，下一个深跌可能是不回头的价值陷阱。")
+    caveats.append("锚点价是「**若到达就分批行动**」的参考"
+                   + ("触发价" if open_ended else "中值") + "，不是预测/不是保证会到。")
+
+    return {
+        **base, "has_zone": True, "confident": confident, "low_power": low_power,
+        "open_ended": open_ended,
+        "tier": tier, "zone_label": best["zone"],
+        "price_band": price_band, "anchor_price": anchor, "anchor_distance": dist_pct,
+        "median_fwd": float(best["median"]), "excess_median": float(best["excess_median"]),
+        "reward_risk": float(best["reward_risk"]), "win_rate": float(best["win_rate"]),
+        "expectancy": float(best["expectancy"]),
+        "ci": [float(best["ci_low"]), float(best["ci_high"])],
+        "n_events": n_ev, "n_days": int(best["n_days"]),
+        "is_current": bool(best["is_current"]), "caveats": caveats,
+    }
+
+
+def format_best_entry(bez: dict) -> str:
+    """把最佳入场区裁决渲染成一句话（含锚点价/区间/超额/盈亏比/N/CI/置信标注）。"""
+    if not bez.get("has_zone"):
+        return f"🛡️ {bez['verdict']}"
+    h_m = bez["horizon"] / 21
+    band = bez["price_band"]
+    rr = bez["reward_risk"]
+    rr_s = f"{rr:.2f}" if rr == rr else "—"
+    ci = bez["ci"]
+    dist = bez.get("anchor_distance", float("nan"))
+    dist_s = (f"，距现价 {dist:+.1%}" if dist == dist else "")
+    badge = {"稳健最佳入场区": "✅", "最佳入场区(样本偏少)": "🟡"}.get(bez["tier"], "🟠")
+    if band[0] is None:  # 开口深跌档：锚点是触发价，区间为"≤ 触发价"
+        anchor_label = "触发价"
+        band_s = f"≤ {band[1]:.1f}{dist_s}"
+    else:
+        anchor_label = "锚点价"
+        band_s = f"区间 {band[0]:.1f}–{band[1]:.1f}{dist_s}"
+    head = (f"{badge} 最佳入场区[{bez['zone_label']}]　{anchor_label} ≈ **{bez['anchor_price']:.1f}**"
+            f"（{band_s}）")
+    body = (f"｜历史 {h_m:.0f} 个月远期中位 {bez['median_fwd']*100:+.1f}%、"
+            f"超无条件基准 {bez['excess_median']*100:+.1f} 点、盈亏比 {rr_s}、胜率 {bez['win_rate']:.0%}、"
+            f"N≈{bez['n_events']} 独立事件、CI[{ci[0]*100:+.1f}%,{ci[1]*100:+.1f}%]｜{bez['tier']}")
+    tail = "　⚠️ " + " ".join(bez.get("caveats", []))
+    return head + body + tail
 
 
 # ===========================================================================
