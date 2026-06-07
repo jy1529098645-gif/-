@@ -1,0 +1,25 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# 密钥 / 本地配置（绝不提交）
+.streamlit/secrets.toml
+config.local.yaml
+.env
+
+# 数据缓存（保留目录，不提交内容）
+data/cache/*
+!data/cache/.gitkeep
+
+# SQLite（规则库 + 校准信号库，运行时生成）
+*.db
+data/*.db
+
+# 报告输出
+reports/*
+!reports/.gitkeep

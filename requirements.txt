@@ -1,0 +1,44 @@
+# 量化研究工具依赖
+# 注意：reloaded 系列，勿装 quantopian 原版（2020 后无维护）
+
+# 核心数据/计算
+pandas
+numpy
+scipy
+pyarrow                  # parquet 缓存引擎
+
+# 数据源
+yfinance
+pandas-datareader        # FRED 宏观
+
+# 回测 / 因子评估 / 绩效
+vectorbt                 # 向量化回测
+alphalens-reloaded       # 因子评估（-reloaded）
+quantstats               # 绩效 tear sheet
+
+# 画图
+matplotlib
+plotly
+mplfinance               # K 线进出场标记图（补充规格 A）
+seaborn                  # 相关热力图
+
+# 本地前端
+streamlit                # 交互式仪表盘（app.py）
+streamlit-lightweight-charts  # TradingView 官方开源图表引擎（K线交互）
+
+# 配置 / 进度 / 测试
+pyyaml
+tqdm
+pytest
+setuptools               # Python 3.13 移除了 distutils，pandas-datareader 需要此垫片
+
+# 可选（后期，默认注释）
+# zipline-reloaded
+# pandas-ta
+# pyportfolioopt
+# riskfolio-lib
+
+# 新闻正文抽取（多票简报「读正文要点」用）
+trafilatura>=2.0
+beautifulsoup4
+lxml
