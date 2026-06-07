@@ -127,5 +127,9 @@ def inject_css() -> str:
         content: ""; position: absolute; left: 14px; top: 132%; z-index: 9999;
         border: 6px solid transparent; border-bottom-color: rgba(124,92,252,0.5);
     }
+    /* 移动端：提示框不超出视口宽度 */
+    @media (max-width: 768px) {
+        .qterm:hover::after { max-width: 86vw !important; font-size: 0.78rem !important; }
+    }
     </style>
     """

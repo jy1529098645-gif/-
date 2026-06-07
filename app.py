@@ -30,7 +30,7 @@ from frontend import charts as ch
 from frontend import glossary as gl
 
 st.set_page_config(page_title="量化研究工具", page_icon="📊", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")  # auto：桌面展开 / 移动端自动收起，避免侧边栏全屏遮挡正文
 
 CFG = config.load_config()
 
@@ -126,6 +126,50 @@ st.markdown(
     section[data-testid="stSidebar"] { background:#0c1119; border-right:1px solid rgba(255,255,255,0.06);}
     #MainMenu, footer {visibility:hidden;}
     .stTabs [data-baseweb="tab-list"] { gap:4px; }
+
+    /* ===================== 移动端适配 ===================== */
+    /* 平板 / 大屏手机：≤768px —— 收紧留白、多列换行堆叠、标题与卡片缩放 */
+    @media (max-width: 768px) {
+        /* 主内容区留白收紧（wide 布局默认两侧留白在手机上过大）+ 顶部留位给 header/时钟 */
+        [data-testid="stMainBlockContainer"], .block-container {
+            padding-left: 0.7rem !important; padding-right: 0.7rem !important;
+            padding-top: 3.2rem !important;
+        }
+        /* 关键：横向列组在窄屏换行堆叠，而不是被挤成细长条 */
+        [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.55rem !important; }
+        [data-testid="stColumn"] {
+            min-width: calc(50% - 0.55rem) !important;
+            flex: 1 1 calc(50% - 0.55rem) !important;
+        }
+        /* 标题 / 文案 / 统计卡 缩放 */
+        .hero-title { font-size: 1.55rem !important; letter-spacing:-0.4px !important; }
+        .hero-sub   { font-size: 0.84rem !important; }
+        .stat-value { font-size: 1.25rem !important; }
+        .stat-label { font-size: 0.68rem !important; }
+        .glass      { padding: 12px 13px !important; border-radius: 13px !important; }
+        .verdict    { font-size: 0.88rem !important; padding: 10px 12px !important; }
+        /* Tab 列表横向滚动，避免标签过多换行错乱 */
+        .stTabs [data-baseweb="tab-list"] { overflow-x: auto !important; flex-wrap: nowrap !important; }
+        .stTabs [data-baseweb="tab"] { white-space: nowrap !important; }
+        /* 数据表 / 表格 横向可滚动 */
+        [data-testid="stDataFrame"], [data-testid="stTable"] { overflow-x: auto !important; }
+        [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
+        /* 右上角纽约时钟：缩小、避免遮挡 header，允许换行不溢出 */
+        #ny-clock {
+            font-size: 0.64rem !important; padding: 3px 7px !important;
+            top: 6px !important; right: 8px !important; max-width: 66vw !important;
+            line-height: 1.25 !important; white-space: normal !important;
+        }
+    }
+    /* 小屏手机：≤480px —— 列全部单列堆叠、标题进一步缩小 */
+    @media (max-width: 480px) {
+        [data-testid="stColumn"] { min-width: 100% !important; flex: 1 1 100% !important; }
+        .hero-title { font-size: 1.32rem !important; }
+        .hero-sub   { font-size: 0.8rem !important; }
+        [data-testid="stMainBlockContainer"], .block-container {
+            padding-left: 0.5rem !important; padding-right: 0.5rem !important;
+        }
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -413,6 +457,21 @@ def c_purged_cv(tickers: tuple, start: str, end: str, horizon: int = 21):
 def c_data_health(tickers: tuple, start: str, end: str):
     from analysis import data_quality as dq
     return dq.data_health(c_prices(tickers, start, end))
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def c_event_radar(ticker: str, today_iso: str, next_earnings: str | None, horizon: int = 45):
+    """事件雷达（全网自动抓 IPO/经济日历 + 规则日历 + 手填）。缓存 1 小时，避免重复联网/限流。"""
+    import datetime as _dtm
+    from analysis import event_radar as _er
+    today = _dtm.date.fromisoformat(today_iso)
+    earn = [{"date": next_earnings, "ticker": ticker}] if next_earnings else None
+    res = _er.upcoming(today, ticker=ticker, horizon_days=horizon, earnings=earn, include_web=True)
+    try:
+        res["news_leads"] = _er.fetch_event_news(ticker, limit=5)
+    except Exception:  # noqa: BLE001
+        res["news_leads"] = []
+    return res
 
 
 @st.cache_data(show_spinner=False)
@@ -1684,12 +1743,13 @@ def page_panorama():
                            f"长期{_bf._score_cn(_hz.get('long'))} → {_hz['action']}")
     st.write("")
 
-    # ---- 🛰️ 事件雷达（display-only 风险提醒，绝不入量化）----
+    # ---- 🛰️ 事件雷达（全网自动抓取，display-only 风险提醒，绝不入量化）----
     import datetime as _dtm
     from analysis import event_radar as _er
     _today = _dtm.date.today()
-    _earn = [{"date": b["next_earnings"], "ticker": a}] if b.get("next_earnings") else None
-    radar = _er.upcoming(_today, ticker=a, horizon_days=45, earnings=_earn)
+    with st.spinner("事件雷达：全网查询 IPO/经济日历…"):
+        radar = c_event_radar(a, _today.isoformat(), b.get("next_earnings"), 45)
+    _src_cn = {"auto": "规则", "web": "全网", "manual": "手填"}
     _sevcol = {"高": "#FF5C7A", "中": "#FFD166", "低": "#8A93A6"}
     _rc = "#FF5C7A" if radar["n_high"] else "#7C5CFC"
     chips = "".join(
@@ -1702,20 +1762,27 @@ def page_panorama():
         f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 6px;'
         f'background:linear-gradient(92deg,{_rc}1f,{_rc}08);border:1px solid {_rc}44;border-left:6px solid {_rc}">'
         f'<div style="font-size:0.8rem;color:#8A93A6;letter-spacing:0.5px">🛰️ 事件雷达 · 未来45天 '
-        f'（{radar["n_high"]} 项高风险）· <b>仅提醒、不入量化</b></div>'
+        f'（{radar["n_high"]} 项高风险 · {radar.get("n_web",0)} 项全网自动抓取）· <b>仅提醒、不入量化</b></div>'
         f'<div style="margin-top:7px">{chips or "<span style=\'color:#8A93A6\'>无登记事件</span>"}</div>'
         f'</div>', unsafe_allow_html=True)
-    with st.expander("🛰️ 事件雷达明细 + ➕ 添加你知道的特大事件（如 SpaceX 上市、并购、判决）"):
+    with st.expander("🛰️ 事件雷达明细（全网自动：IPO 日历 + 经济日历）+ 新闻线索"):
         st.caption("⚠️ 特大/一次性事件（巨型IPO抽流动性、并购、监管判决…）**无法回测、绝不进量化结果**；"
-                   "这里只把它们列成提醒，请你人工纳入仓位与风险判断。")
+                   "工具自动从 NASDAQ IPO 日历 + 经济日历抓取，列成提醒，请你人工纳入仓位与风险判断。")
         if radar["events"]:
             _rows = [{"日期": e["date"].isoformat(), "距今": f"{e['days_ahead']}天", "范围": e["scope"],
                       "类别": e["category"], "事件": e.get("title", "") or "—", "严重度": e["severity"],
-                      "盯什么/为什么重要": e["watch"], "来源": "自动" if e["source"] == "auto" else "手填"}
+                      "盯什么/为什么重要": e["watch"], "来源": _src_cn.get(e["source"], e["source"])}
                      for e in radar["events"]]
             st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        # 新闻里的前瞻事件线索（未核实，不进时间线）
+        leads = radar.get("news_leads") or []
+        if leads:
+            st.markdown("**📰 新闻里的事件线索（未核实，仅供顺藤摸瓜，不入量化）**")
+            for ld in leads:
+                t = f"[{ld['title']}]({ld['url']})" if ld.get("url") else ld.get("title", "")
+                st.markdown(f"- `{ld.get('date') or '—'}` {t} — *{ld.get('provider','')}*")
         with st.form(f"addevt_{a}", clear_on_submit=True):
-            st.markdown("**➕ 添加特大事件**")
+            st.markdown("**➕ 补充手填事件（自动没抓到的，可手动加）**")
             fc = st.columns([2, 3, 2, 2])
             ev_date = fc[0].date_input("日期", value=_today + _dtm.timedelta(days=7))
             ev_title = fc[1].text_input("事件", placeholder="例：SpaceX 上市")
