@@ -135,6 +135,20 @@ def analyst_report(ticker: str, price: pd.Series, info: dict, brief: dict | None
     sc = _scenarios(price, horizon)
     tgt = _g(info, "targetMeanPrice"); thi = _g(info, "targetHighPrice"); tlo = _g(info, "targetLowPrice")
     rec = info.get("recommendationKey"); n_an = _g(info, "numberOfAnalystOpinions")
+
+    # 卖方目标价 vs 引擎历史情景：揭示卖方是否系统性偏多
+    tgt_vs_engine = None
+    if isinstance(tgt, float) and sc["current"]:
+        implied = tgt / sc["current"] - 1.0
+        if implied > sc["ret_bull"]:
+            verdict_te = f"⚠️ 卖方目标隐含 {implied:+.0%}，**高于引擎历史牛市情景 {sc['ret_bull']:+.0%}**——卖方偏乐观，打折看"
+        elif implied > sc["ret_base"]:
+            verdict_te = f"卖方目标隐含 {implied:+.0%}，介于引擎基准({sc['ret_base']:+.0%})与牛市({sc['ret_bull']:+.0%})之间——偏乐观但不极端"
+        elif implied > 0:
+            verdict_te = f"卖方目标隐含 {implied:+.0%}，低于引擎基准({sc['ret_base']:+.0%})——卖方少见地保守"
+        else:
+            verdict_te = f"卖方目标隐含 {implied:+.0%}（低于现价）——卖方看空，罕见信号"
+        tgt_vs_engine = {"implied_return": implied, "verdict": verdict_te}
     beta = _g(info, "beta"); dy = _g(info, "dividendYield")
 
     # 催化剂
@@ -168,6 +182,7 @@ def analyst_report(ticker: str, price: pd.Series, info: dict, brief: dict | None
         "ticker": ticker, "thesis": thesis, "valuation": val, "growth": grw,
         "profitability": prof, "health": hlth, "scenarios": sc,
         "analyst_target": {"mean": tgt, "high": thi, "low": tlo, "rec": rec, "n": n_an},
+        "target_vs_engine": tgt_vs_engine,
         "beta": beta, "dividend_yield": dy, "catalysts": catalysts,
         "risks": risks or ["无突出风险标记"], "invalidations": invalidations,
         "disclaimer": "基本面=yfinance当前快照(含前视/重述偏差,仅供人读·不纳入量化)；情景=历史分布非预测；非投资建议。",
@@ -184,7 +199,9 @@ def format_report(r: dict) -> str:
     L.append(f"**财务健康**（{r['health']['grade']}）：" + "；".join(r["health"]["notes"] or ["数据不足"]))
     if isinstance(at.get("mean"), float):
         L.append(f"**卖方目标价**：均值 {at['mean']:.1f}（区间 {at.get('low','?')}–{at.get('high','?')}）"
-                 f"·评级 {at.get('rec','?')}（{at.get('n','?')}家）— *仅参考，卖方系统性偏多*")
+                 f"·评级 {at.get('rec','?')}（{at.get('n','?')}家）")
+        if r.get("target_vs_engine"):
+            L.append(f"  ↳ **卖方 vs 引擎情景**：{r['target_vs_engine']['verdict']}")
     L.append("")
     L.append(f"**量化情景**（未来 {int(sc['horizon']/21)} 个月，基于{sc['cond']} N={sc['n']}·胜率{sc['win_rate']:.0%}）：")
     L.append(f"- 🐂 牛 {sc['bull']:.1f}（{sc['ret_bull']:+.0%}）｜🎯 基准 {sc['base']:.1f}（{sc['ret_base']:+.0%}）｜🐻 熊 {sc['bear']:.1f}（{sc['ret_bear']:+.0%}）")

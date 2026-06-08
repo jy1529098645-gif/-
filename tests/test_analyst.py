@@ -54,6 +54,18 @@ def test_momentum_trap_defensive_thesis():
     assert "动量陷阱" in r["thesis"] or any("动量陷阱" in x for x in r["risks"])
 
 
+def test_target_vs_engine_flags_optimism():
+    # 目标价远高于现价(+60%)，大概率超过引擎牛市情景 → 应标"偏乐观"
+    info = dict(_INFO); info["targetMeanPrice"] = 200.0
+    px = _px()
+    px.iloc[-1] = 100.0
+    r = an.analyst_report("X", px, info, horizon=63)
+    tve = r.get("target_vs_engine")
+    assert tve is not None and "implied_return" in tve
+    md = an.format_report(r)
+    assert "卖方 vs 引擎" in md
+
+
 def test_empty_info_graceful():
     r = an.analyst_report("ZZZ", _px(), {}, brief={}, horizon=63)
     md = an.format_report(r)

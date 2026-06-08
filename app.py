@@ -598,6 +598,7 @@ _FOCUS_UNIVERSE = ["QQQ", "SPY", "XLK", "SMH", "NVDA", "AAPL", "MSFT", "GOOGL",
 @st.cache_data(show_spinner=False)
 def c_product_bt(start: str, end: str):
     """产品级组合回测：聚焦组合(ETF+科技+半导体)应用风险叠加 vs 持有 vs SPY。"""
+    _cache_ver = "v2-crisis-rollsharpe"  # 改此值可使缓存失效(已加 ret_overlay/ret_hold 字段)
     from data import loader
     from analysis import overlay as ov
     prices = {}
@@ -2201,6 +2202,22 @@ def page_fragility():
                     f'回撤 {ov_m["maxdd"]:.0%}/{ho_m["maxdd"]:.0%}——'
                     f'{"全面更优(风险调整后)，产品达可用专业级" if win else "风险调整后占优、收益略让(牛市现金拖累)"}。</div>',
                     unsafe_allow_html=True)
+        # 危机压力测试：风控在关键时刻是否真管用
+        cs = _ov.crisis_stress(pbt["equity"])
+        if cs:
+            st.markdown("**🔥 危机压力测试**（历次崩盘窗口内的区间收益——叠加是否真的少跌）")
+            csrows = [{"崩盘事件": c["crisis"], "组合+风险叠加": f"{c.get('组合+风险叠加', float('nan')):+.0%}",
+                       "组合闭眼持有": f"{c.get('组合闭眼持有', float('nan')):+.0%}",
+                       "SPY": (f"{c.get('基准', float('nan')):+.0%}" if '基准' in c else "—")} for c in cs]
+            st.dataframe(pd.DataFrame(csrows), use_container_width=True, hide_index=True)
+            st.caption("📖 叠加在崩盘中应明显少跌(数字更接近0或更高)——这是风险管理的核心价值。")
+        # 滚动夏普：edge 是否随时间衰减
+        rs_o = _ov.rolling_sharpe(pbt["ret_overlay"]) if "ret_overlay" in pbt else pd.Series(dtype=float)
+        rs_h = _ov.rolling_sharpe(pbt["ret_hold"]) if "ret_hold" in pbt else pd.Series(dtype=float)
+        if len(rs_o) > 10:
+            rsdf = pd.DataFrame({"叠加": rs_o, "持有": rs_h}).dropna()
+            st.markdown("**📈 滚动 1 年夏普**（监控 edge 是否衰减——叠加线应多数时间≥持有）")
+            st.line_chart(rsdf, color=["#2BE6A8", "#8A93A6"])
     st.caption("📖 这是把工具的可部署规则用到整个聚焦组合的真实回测。结论：风险调整指标(夏普/索提诺/卡玛/回撤)优于持有与SPY。非投资建议。")
 
 _ADV_PAGES = {

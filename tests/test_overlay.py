@@ -64,6 +64,17 @@ def test_backtest_portfolio():
     assert bt["overlay"]["maxdd"] >= bt["hold"]["maxdd"]
 
 
+def test_crisis_stress_and_rolling_sharpe():
+    prices = {f"A{i}": _trending(seed=i) for i in range(3)}
+    bt = ov.backtest_portfolio(prices, benchmark=_trending(seed=9))
+    cs = ov.crisis_stress(bt["equity"], crises=[("test", "2022-06-01", "2023-06-01")])
+    assert isinstance(cs, list)
+    if cs:
+        assert "组合+风险叠加" in cs[0] and "组合闭眼持有" in cs[0]
+    rs = ov.rolling_sharpe(bt["ret_overlay"], window=120)
+    assert isinstance(rs, pd.Series)
+
+
 def test_sector_effectiveness():
     assert "能源" in ov.sector_effectiveness("XOM")
     assert "防御" in ov.sector_effectiveness("KO")

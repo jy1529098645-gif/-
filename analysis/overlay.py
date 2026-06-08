@@ -119,6 +119,7 @@ def backtest_portfolio(prices: dict, fragile: pd.Series | None = None,
     port_ho = pd.concat(ho_rets, axis=1).mean(axis=1)
     out = {"available": True, "n_assets": len(ov_rets),
            "overlay": _stats(port_ov), "hold": _stats(port_ho),
+           "ret_overlay": port_ov, "ret_hold": port_ho,
            "equity": pd.DataFrame({"组合+风险叠加": (1 + port_ov.dropna()).cumprod(),
                                    "组合闭眼持有": (1 + port_ho.dropna()).cumprod()})}
     if benchmark is not None:
@@ -127,6 +128,37 @@ def backtest_portfolio(prices: dict, fragile: pd.Series | None = None,
         out["equity"]["基准"] = (1 + br.reindex(out["equity"].index).fillna(0)).cumprod()
     out["equity"] = out["equity"].dropna()
     return out
+
+
+# 历史重大回撤窗口（压力测试用）——证明风控在关键时刻是否真管用
+CRISES = [
+    ("2018Q4 加息恐慌", "2018-10-01", "2018-12-24"),
+    ("2020 COVID 崩盘", "2020-02-19", "2020-03-23"),
+    ("2022 加息熊市", "2022-01-03", "2022-10-12"),
+    ("2025 关税冲击", "2025-02-19", "2025-04-08"),
+]
+
+
+def crisis_stress(equity: pd.DataFrame, crises=CRISES) -> list:
+    """各历史崩盘窗口内，每条净值曲线的区间收益（看叠加是否真的少跌）。"""
+    rows = []
+    for name, s, e in crises:
+        seg = equity.loc[s:e]
+        if len(seg) < 5:
+            continue
+        row = {"crisis": name, "start": s, "end": e}
+        for col in equity.columns:
+            row[col] = float(seg[col].iloc[-1] / seg[col].iloc[0] - 1.0)
+        rows.append(row)
+    return rows
+
+
+def rolling_sharpe(ret: pd.Series, window: int = 252) -> pd.Series:
+    """滚动年化夏普——监控策略 edge 是否随时间衰减。"""
+    r = ret.dropna()
+    m = r.rolling(window).mean()
+    s = r.rolling(window).std()
+    return (m / s * np.sqrt(252)).dropna()
 
 
 def verdict(bt: dict) -> str:
