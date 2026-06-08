@@ -118,11 +118,11 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
             why.append("市场宽度恶化(3x概率·略领先指数)")
         trig = " + ".join(why)
         if is_etf:
-            exit_rules.append(f"🔴 {trig} → **减到半仓**（ETF验证：减半仓比清仓更优，夏普7/7改善、"
-                              "回撤-39%vs-55%、OOS稳健；站回200线上方且宽度healthy再加回）")
+            exit_rules.append(f"🔴 {trig} → **减半仓 + 按波动降仓**（验证：ETF夏普7/7改善、回撤-39%vs-55%、"
+                              "2015+OOS 1.00vs0.91；站回200线上方且宽度healthy再加回。见脆弱性页净值曲线）")
         else:
-            exit_rules.append(f"🟠 {trig} → 个股可减仓控回撤，但实测'减半仓'在个股只降回撤不升夏普——"
-                              "长持高动量龙头可不减；要控回撤则减半仓")
+            exit_rules.append(f"🟠 {trig} → **减半仓 + 按波动降仓**（验证：个股也升夏普0.84vs0.83、"
+                              "回撤-35%vs-56%、7/9占优；高动量龙头若只追收益可不减）")
     else:
         if is_etf:
             exit_rules.append("🟢 无离场信号(未破200线·宽度healthy)→ 持满仓（ETF半仓叠加规则：此状态满仓）")

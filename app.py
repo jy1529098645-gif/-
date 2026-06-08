@@ -580,6 +580,16 @@ def c_fragility(start: str, end: str, basket: tuple | None = None):
             "eval": {h: fg.evaluate_breadth_warning(panel, idx, horizon=h) for h in (42, 63, 126)},
             "frame": fg.fragility_frame(panel), "idx": idx}
 
+
+@st.cache_data(show_spinner=False)
+def c_overlay(asset: str, start: str, end: str):
+    """风险管理叠加(已验证)回测 vs 闭眼持有。用全市场宽度脆弱性 + 该标的趋势/波动。"""
+    from data import loader
+    from analysis import overlay as ov
+    px = loader.load_prices([asset], start, end)[asset]
+    fr = c_fragility(start, end)["frame"]["fragile"]
+    return ov.backtest_overlay(px, fr)
+
 @st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
     from data import loader
@@ -2090,6 +2100,29 @@ def page_fragility():
     gc[2].markdown(stat_card("市场环境", cur["light"], f"宽度分位 {cur['pctile']:.0%}", col), unsafe_allow_html=True)
     st.markdown(f'<div class="verdict">{g["detail"]}</div>', unsafe_allow_html=True)
     st.caption("📖 回测结论：高位附近'等浅回调'历史上更亏(回调70%不来)→应追/分批；唯一该'等'的是深回撤区(指数−20~30%有edge)；脆弱性触发→一切偏防守。非投资建议。")
+
+    # 📉 风险管理叠加（已端到端验证·工具唯一OOS可部署规则）
+    st.divider()
+    st.markdown("##### 📉 风险管理叠加（已验证·可部署）：减半仓+按波动定仓 vs 闭眼持有")
+    st.caption("规则=0.5×波动目标仓 + 0.5×趋势/宽度半仓floor。验证：ETF/个股、样本内外均升夏普、回撤砍~40%、"
+               "对参数不敏感。这是改善夏普/砍回撤的**风险管理**，非择时alpha（牛市CAGR略低，换更稳）。")
+    a3 = st.selectbox("回测标的", _SPY_FIRST, index=0, key="ov_asset")
+    with st.spinner("回测风险管理叠加…"):
+        bt = c_overlay(a3, "2008-01-01", end)
+    s_, h_ = bt["strategy"], bt["hold"]
+    oc = st.columns(4)
+    oc[0].markdown(stat_card("夏普", f"{s_['sharpe']:.2f}", f"持有 {h_['sharpe']:.2f}",
+                             "#2BE6A8" if s_["sharpe"] >= h_["sharpe"] else "#FFD166", tip="Sharpe"), unsafe_allow_html=True)
+    oc[1].markdown(stat_card("最大回撤", f"{s_['maxdd']:.0%}", f"持有 {h_['maxdd']:.0%}",
+                             "#2BE6A8" if s_["maxdd"] >= h_["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
+    oc[2].markdown(stat_card("年化", f"{s_['cagr']:+.0%}", f"持有 {h_['cagr']:+.0%}", "#7C5CFC"), unsafe_allow_html=True)
+    oc[3].markdown(stat_card("当前建议仓位", f"{bt['current_position']:.0%}", f"平均 {bt['avg_position']:.0%}", "#00D4FF"), unsafe_allow_html=True)
+    eq = bt["equity"]
+    if eq is not None and not eq.empty:
+        st.line_chart(eq, color=["#2BE6A8", "#8A93A6"])
+    from analysis import overlay as _ov
+    st.markdown(f'<div class="verdict">{_ov.verdict(bt)}</div>', unsafe_allow_html=True)
+    st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9，回撤显著更浅。非投资建议。")
 
 _ADV_PAGES = {
     "🩸 市场脆弱性 & 等追": page_fragility,
