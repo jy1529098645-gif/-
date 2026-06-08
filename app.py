@@ -34,7 +34,6 @@ st.set_page_config(page_title="量化研究工具", page_icon="📊", layout="wi
 
 CFG = config.load_config()
 
-
 # ---------------------------------------------------------------------------
 # 右上角实时纽约时间（JS 跳秒，注入父文档；不依赖 Streamlit rerun）
 # ---------------------------------------------------------------------------
@@ -73,7 +72,6 @@ def _ny_clock():
         """,
         height=32,
     )
-
 
 _ny_clock()
 
@@ -170,7 +168,6 @@ st.markdown(
 )
 st.markdown(gl.inject_css(), unsafe_allow_html=True)
 
-
 def run_gate(key: str, params: dict, label: str = "🚀 运行回测", hint: str = "配置好参数后点击运行，期间不会自动重算"):
     """运行门控：改参数不重算，只有点「运行」才用快照参数计算。返回快照 dict 或 None。
 
@@ -187,7 +184,6 @@ def run_gate(key: str, params: dict, label: str = "🚀 运行回测", hint: str
         c2.warning("⚠️ 参数已修改——点「运行」刷新结果（当前显示的是上次运行）")
     return run
 
-
 def _lazy_gate(key: str, label: str = "▶ 加载此分析（较重，按需运行）") -> bool:
     """惰性门控：Streamlit 的 Tab/expander 内容**每次都会执行**(折叠也算)，重计算会拖慢整页。
     用此门控让重模块只在点击后运行，且本会话内记住。返回 True=已激活。"""
@@ -199,7 +195,6 @@ def _lazy_gate(key: str, label: str = "▶ 加载此分析（较重，按需运�
         return True
     return False
 
-
 def _col_cfg(columns):
     """为数据表生成带悬浮释义的 column_config：列名照常显示，悬浮列头出含义。"""
     cfg = {}
@@ -208,7 +203,6 @@ def _col_cfg(columns):
         if h:
             cfg[c] = st.column_config.Column(c, help=h)
     return cfg
-
 
 def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
     """tip：术语 key，则标签变成可悬浮解释的术语。"""
@@ -219,7 +213,6 @@ def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
         f'<div class="stat-value" style="color:{color}">{value}</div>'
         f'<div class="hero-sub" style="font-size:.8rem">{sub}</div></div>'
     )
-
 
 # ---------------------------------------------------------------------------
 # 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器
@@ -239,7 +232,6 @@ def _chart_period_controls(key: str, with_timeframe: bool = False,
                       index=_tv.PERIODS.index(default_period), key=f"per_{key}")
     return period, "日"
 
-
 def render_tv_candles(ohlcv, trades=None, price_lines=None, key="tv", height=540, log=False,
                       with_timeframe=True, caption=None):
     """TradingView K 线 + 周期控件（时间范围 + 日/周/月）。聚合时把成交标记吸附到 bar。"""
@@ -254,7 +246,6 @@ def render_tv_candles(ohlcv, trades=None, price_lines=None, key="tv", height=540
     elif caption:
         st.caption(caption)
 
-
 def render_tv_line(series, markers=None, price_lines=None, key="tvl", height=460,
                    color="#7C5CFC", log=True):
     """TradingView 折线 + 时间范围切换（事件时间线等）。"""
@@ -267,7 +258,6 @@ def render_tv_line(series, markers=None, price_lines=None, key="tvl", height=460
         mk = [m for m in markers if m.get("time", "") >= lo]
     _tv.tv_line(s, markers=mk, price_lines=price_lines, key=key, height=height, color=color, log=log)
 
-
 def _chart_horizon(key: str, default_days: int, label: str = "持有期") -> int:
     """per-chart 持有期下拉（默认跟随侧边栏「分析周期」），返回天数。用于由 horizon 驱动的图。"""
     labels = list(_HZ)
@@ -277,7 +267,6 @@ def _chart_horizon(key: str, default_days: int, label: str = "持有期") -> int
                        help="该图独立的远期收益持有期（默认跟随侧边栏「分析周期」）")
     return _HZ[lab]
 
-
 # ---------------------------------------------------------------------------
 # 缓存的数据 / 计算
 # ---------------------------------------------------------------------------
@@ -286,18 +275,15 @@ def c_prices(tickers: tuple, start: str, end: str | None):
     from data import loader
     return loader.load_prices(list(tickers), start, end)
 
-
 @st.cache_data(show_spinner=False)
 def c_macro(start: str, end: str | None):
     from data import loader
     return loader.load_macro(start, end)
 
-
 @st.cache_data(show_spinner=False)
 def c_earnings(ticker: str):
     from data import loader
     return loader.load_earnings_dates(ticker, limit=80)
-
 
 @st.cache_data(show_spinner=False)
 def c_regime(asset: str, start: str, end: str, horizons: tuple):
@@ -309,7 +295,6 @@ def c_regime(asset: str, start: str, end: str, horizons: tuple):
     fp = cr.current_fingerprint(px, macro, asset=asset)
     return tab, fp
 
-
 @st.cache_data(show_spinner=False)
 def c_factor(factor_name: str, universe: str, start: str, end: str):
     from data import loader
@@ -319,7 +304,6 @@ def c_factor(factor_name: str, universe: str, start: str, end: str):
     px = loader.load_prices(tickers, start, end)
     fac = pf.REGISTRY[factor_name](px)
     return fe.evaluate_factor(fac, px, quantiles=5, periods=(1, 5, 21, 63))
-
 
 @st.cache_data(show_spinner=False)
 def c_factor_decay(factor_name: str, universe: str, start: str, end: str):
@@ -333,7 +317,6 @@ def c_factor_decay(factor_name: str, universe: str, start: str, end: str):
     decay = fe.ic_decay(fac, px, horizons=(1, 5, 21, 63, 126, 252))
     roll = fe.rolling_ic(fac, px, horizon=21, window=126)
     return {"decay": decay, "roll": roll, "verdict": fe.decay_verdict(decay)}
-
 
 @st.cache_data(show_spinner=False)
 def c_blend(factor_names: tuple, universe: str, start: str, end: str):
@@ -350,13 +333,11 @@ def c_blend(factor_names: tuple, universe: str, start: str, end: str):
     bt_res = bt.factor_quantile_backtest(composite, px, quantiles=5, long_short=True, n_boot=300)
     return ic, bt_res
 
-
 def _exit_spec(trailing, tp, time_stop, ma_exit=0):
     spec = {"trailing_stop": trailing, "take_profit": tp, "time_stop": int(time_stop)}
     if ma_exit and int(ma_exit) > 0:
         spec["ma_exit"] = int(ma_exit)
     return spec
-
 
 def _build_condition(cond_kind, cond_window, regime_kind):
     from evaluation import rule_eval as re
@@ -368,7 +349,6 @@ def _build_condition(cond_kind, cond_window, regime_kind):
     if not parts:
         return None
     return re.combine_conditions(*parts) if len(parts) > 1 else parts[0]
-
 
 @st.cache_data(show_spinner=False)
 def c_rule(specs: tuple, op, trailing, tp, time_stop, universe, start, end, cond_kind, cond_window, regime_kind, rule_name, ma_exit=0):
@@ -385,7 +365,6 @@ def c_rule(specs: tuple, op, trailing, tp, time_stop, universe, start, end, cond
     res["_verdict"] = re.format_rule_verdict(res)
     return res
 
-
 @st.cache_data(show_spinner=False)
 def c_gate(specs: tuple, op, trailing, tp, time_stop, universe, start, end, ma_exit=0,
            oos_sharpe_min: float = 1.0, max_dd_tol: float = 0.35):
@@ -400,7 +379,6 @@ def c_gate(specs: tuple, op, trailing, tp, time_stop, universe, start, end, ma_e
                            rule_name="gate", n_boot=250)
     return acc.acceptance_gate(res, entry, spec, tickers, start=start, end=end,
                                oos_sharpe_min=oos_sharpe_min, max_dd_tol=max_dd_tol)
-
 
 @st.cache_data(show_spinner=False)
 def c_single_trades(specs: tuple, op, trailing, tp, time_stop, ticker, start, end, cond_kind, cond_window, regime_kind, ma_exit=0):
@@ -419,7 +397,6 @@ def c_single_trades(specs: tuple, op, trailing, tp, time_stop, ticker, start, en
     trades = ex.extract_trades(pf, price)
     return ohlcv, trades
 
-
 @st.cache_data(show_spinner=False)
 def c_today_panel(asset: str, start: str, end: str):
     from data import loader
@@ -427,52 +404,10 @@ def c_today_panel(asset: str, start: str, end: str):
     px = loader.load_prices([asset], start, end)[asset]
     return ob.today_panel(px)
 
-
-@st.cache_data(show_spinner=False)
-def c_scan(tickers: tuple, start: str, end: str, horizon: int):
-    """信号扫描 + 由扫描结果推出的建仓/风险权重 + 七股今日综合。"""
-    from analysis import signal_scan as ss
-    df = ss.scan(list(tickers), start=start, end=end, horizon=horizon, n_boot=400)
-    ew = {r["signal"]: max(0.0, r["excess"]) for _, r in df[df.kind == "entry"].iterrows()}
-    rw = {r["signal"]: abs(min(0.0, r["excess"])) + abs(r["fwd_drawdown"]) for _, r in df[df.kind == "risk"].iterrows()}
-    cs = ss.cross_section_today(list(tickers), start, end, ew, rw)
-    return df, cs, tuple(sorted(ew.items())), tuple(sorted(rw.items()))
-
-
-@st.cache_data(show_spinner=False)
-def c_score_series(ticker: str, start: str, end: str, ew_items: tuple, rw_items: tuple):
-    from analysis import signal_scan as ss
-    return ss.score_series(ticker, start, end, dict(ew_items), dict(rw_items))
-
-
 @st.cache_data(show_spinner=False)
 def c_perf(ticker: str, start: str, end: str):
     from backtest import strategies as bt
     return bt.strategy_vs_hold(ticker, start, end)
-
-
-@st.cache_data(show_spinner=False)
-def c_alpha_beta(ticker: str, start: str, end: str):
-    """策略 与 持有 各自相对 SPY 的 α/β 分解。"""
-    from analysis import quant_edge as qe
-    pv = c_perf(ticker, start, end)
-    spy = c_prices(("SPY",), start, end)["SPY"].pct_change()
-    strat_ret = pv["equity"]["策略"].pct_change()
-    hold_ret = pv["equity"]["持有"].pct_change()
-    return {"strategy": qe.alpha_beta(strat_ret, spy), "hold": qe.alpha_beta(hold_ret, spy)}
-
-
-@st.cache_data(show_spinner=False)
-def c_factor_attr(ticker: str, start: str, end: str):
-    """策略收益的多因子(市场/动量/价值/小盘/低波)归因。"""
-    from analysis import quant_edge as qe
-    pv = c_perf(ticker, start, end)
-    strat_ret = pv["equity"]["策略"].pct_change()
-    etfs = tuple(dict.fromkeys(qe.FACTOR_ETFS.values()))
-    pxe = c_prices(etfs, start, end)
-    fp = {e: pxe[e] for e in etfs if e in pxe.columns}
-    return qe.factor_attribution(strat_ret, fp)
-
 
 @st.cache_data(show_spinner=False)
 def c_regime_overlay(ticker: str, start: str, end: str):
@@ -481,60 +416,20 @@ def c_regime_overlay(ticker: str, start: str, end: str):
     macro = c_macro("1990-01-01", end)
     return {"exposure": qe.regime_exposure(px, macro), "overlay": qe.vol_target_backtest(px)}
 
-
-@st.cache_data(show_spinner=False)
-def c_walkforward(ticker: str, start: str, end: str):
-    from analysis import quant_edge as qe
-    return qe.walkforward_oos(ticker, start, end)
-
-
 @st.cache_data(show_spinner=False)
 def c_pead(ticker: str, start: str, end: str):
     from analysis import quant_edge as qe
     return qe.pead_now(ticker, start, end)
-
-
-@st.cache_data(show_spinner=False)
-def c_cross_section(tickers: tuple, start: str, end: str):
-    from analysis import quant_edge as qe
-    px = c_prices(tickers, start, end)
-    return qe.cross_section_edge(px)
-
-
-@st.cache_data(show_spinner=False)
-def c_analogs(ticker: str, start: str, end: str, horizon: int):
-    from analysis import analogs as ag
-    px = c_prices((ticker,), start, end)[ticker]
-    macro = c_macro("1990-01-01", end)
-    return ag.historical_analogs(px, macro, ticker, horizon=horizon)
-
 
 @st.cache_data(show_spinner=False)
 def c_port_weights(tickers: tuple, start: str, end: str, method: str):
     from analysis import quant_edge as qe
     return qe.portfolio_weights(c_prices(tickers, start, end), method=method)
 
-
-@st.cache_data(show_spinner=False)
-def c_signal_decay(tickers: tuple, start: str, end: str):
-    from analysis import quant_edge as qe
-    return qe.signal_decay(c_prices(tickers, start, end))
-
-
-@st.cache_data(show_spinner=False)
-def c_purged_cv(tickers: tuple, start: str, end: str, horizon: int = 21):
-    """横截面动量因子的 purged+embargo CV 无泄漏 OOS IC。"""
-    from stats import purged_cv as pcv
-    px = c_prices(tickers, start, end).dropna(how="all").ffill()
-    score = px.pct_change(252).shift(21)  # 12-1 动量
-    return pcv.purged_cv_ic(score, px, horizon=horizon, n_splits=6, embargo=0.02)
-
-
 @st.cache_data(show_spinner=False)
 def c_data_health(tickers: tuple, start: str, end: str):
     from analysis import data_quality as dq
     return dq.data_health(c_prices(tickers, start, end))
-
 
 @st.cache_data(show_spinner=False, ttl=30)
 def c_live_quote(ticker: str, _bucket: int = 0):
@@ -552,7 +447,6 @@ def c_live_quote(ticker: str, _bucket: int = 0):
     return {"ticker": ticker, "price": float("nan"), "change": float("nan"),
             "change_pct": float("nan"), "ok": False, "delayed": True}
 
-
 def is_market_open() -> bool:
     """美股常规时段是否开盘（周一–五 9:30–16:00 美东，不含节假日）。"""
     try:
@@ -565,7 +459,6 @@ def is_market_open() -> bool:
         return 570 <= mins < 960
     except Exception:  # noqa: BLE001
         return False
-
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def c_event_radar(ticker: str, today_iso: str, next_earnings: str | None, horizon: int = 45):
@@ -581,7 +474,6 @@ def c_event_radar(ticker: str, today_iso: str, next_earnings: str | None, horizo
         res["news_leads"] = []
     return res
 
-
 @st.cache_data(show_spinner=False)
 def c_volume_profile(ticker: str, start: str, end: str, lookback: int):
     from data import loader
@@ -590,12 +482,10 @@ def c_volume_profile(ticker: str, start: str, end: str, lookback: int):
     vp = vpm.volume_profile(ohlcv, bins=50, lookback=lookback)
     return ohlcv.tail(lookback), vp
 
-
 @st.cache_data(show_spinner=False, ttl=900)
 def c_options(ticker: str):
     from data import options
     return options.options_snapshot(ticker)
-
 
 @st.cache_data(show_spinner=False)
 def c_events(ticker: str, start: str, end: str, forms: tuple, include_earnings: bool):
@@ -604,7 +494,6 @@ def c_events(ticker: str, start: str, end: str, forms: tuple, include_earnings: 
     ev = edgar.event_timeline(ticker, price, forms=list(forms) if forms else None,
                               horizons=(1, 5), include_earnings=include_earnings)
     return price, ev
-
 
 @st.cache_data(show_spinner=False)
 def c_overfit_check(specs: tuple, op, trailing, tp, time_stop, start, end):
@@ -615,7 +504,6 @@ def c_overfit_check(specs: tuple, op, trailing, tp, time_stop, start, end):
     deflated = rs.deflated_rule_sharpe(candidates=grid, start=start, end=end)
     wf = rs.walk_forward_rule(candidates=grid, start=start, end=end)
     return deflated, wf
-
 
 @st.cache_data(show_spinner=False)
 def c_single_equity(specs: tuple, op, trailing, tp, time_stop, ticker, start, end, cond_kind, cond_window, regime_kind):
@@ -632,13 +520,11 @@ def c_single_equity(specs: tuple, op, trailing, tp, time_stop, ticker, start, en
     rets = pf.returns()
     return rets
 
-
 def export_quantstats(rets, ticker, rule_name):
     import quantstats as qs
     out = str(Path(config.get_path("reports")) / f"{rule_name}_{ticker}_quantstats.html".replace("/", "_"))
     qs.reports.html(rets, output=out, title=f"{ticker} · {rule_name}", download_filename=out)
     return out
-
 
 @st.cache_data(show_spinner=False)
 def c_earnings_study(universe: str, start: str, end: str):
@@ -651,14 +537,12 @@ def c_earnings_study(universe: str, start: str, end: str):
     ic = ee.earnings_drift_ic(prices, edates, horizons=(1, 5, 21, 63), n_control=60)
     return study, ic
 
-
 @st.cache_data(show_spinner=False)
 def c_strategies(asset: str, start: str, end: str):
     from data import loader
     from backtest import strategies as bt
     px = loader.load_prices([asset], start, end)
     return bt.compare_entry_strategies(px, asset=asset, n_boot=400, start_step=63)
-
 
 # ---- 建仓作战室（升级模块）----
 @st.cache_data(show_spinner=False)
@@ -668,16 +552,6 @@ def c_zones(asset: str, start: str, end: str, horizon: int):
     px = loader.load_prices([asset], start, end)
     return ec.entry_zones(px, asset=asset, horizon=horizon, n_boot=400)
 
-
-@st.cache_data(show_spinner=False)
-def c_best_entry(asset: str, start: str, end: str, horizon: int):
-    from data import loader
-    from regime import entry_cockpit as ec
-    px = loader.load_prices([asset], start, end)[asset]
-    return ec.best_entry_zone(px, asset=asset, horizon=horizon, n_boot=400,
-                              single_name=(asset != "SPY"))
-
-
 @st.cache_data(show_spinner=False)
 def c_best_entry_scan(asset: str, start: str, end: str):
     """跨持有期(21/63/126/252)择优：自动挑置信度最高的入场点，避免长周期低置信埋没好结果。"""
@@ -686,13 +560,11 @@ def c_best_entry_scan(asset: str, start: str, end: str):
     px = loader.load_prices([asset], start, end)[asset]
     return ec.best_entry_across_horizons(px, asset=asset, single_name=(asset != "SPY"), n_boot=350)
 
-
 # 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
 _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
                    "JNJ", "LLY", "XOM", "CVX", "WMT", "HD", "PG", "KO", "CAT", "BA",
                    "DIS", "NFLX", "INTC", "CSCO", "ORCL", "CRM", "PEP", "MCD", "NKE", "ABT",
                    "TMO", "COST", "AMD", "QCOM", "TXN", "HON", "UNP", "LOW", "GS", "MS"]
-
 
 @st.cache_data(show_spinner=False)
 def c_fragility(start: str, end: str, basket: tuple | None = None):
@@ -708,7 +580,6 @@ def c_fragility(start: str, end: str, basket: tuple | None = None):
             "eval": {h: fg.evaluate_breadth_warning(panel, idx, horizon=h) for h in (42, 63, 126)},
             "frame": fg.fragility_frame(panel), "idx": idx}
 
-
 @st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
     from data import loader
@@ -721,14 +592,12 @@ def c_earnings_reaction(ticker: str, start: str, end: str):
     study = ee.earnings_event_study({ticker: price}, {ticker: edates}, pre=10, post=20, by_beat=True)
     return stats, upcoming, study
 
-
 @st.cache_data(show_spinner=False)
 def c_ladder(asset: str, start: str, end: str, bands: tuple, budget: float = 10000.0):
     from data import loader
     from regime import entry_cockpit as ec
     px = loader.load_prices([asset], start, end)
     return ec.ladder_plan_backtest(px, asset=asset, bands=bands, budget=budget, n_boot=500)
-
 
 @st.cache_data(show_spinner=False, ttl=1800)
 def c_brief(ticker: str, horizon: int, end: str, broad: bool = False):
@@ -738,7 +607,6 @@ def c_brief(ticker: str, horizon: int, end: str, broad: bool = False):
     sources = ("google", "yahoo", "gdelt") if broad else ("google", "yahoo")
     return bf.stock_brief(ticker, bstart, end, horizon=horizon, with_news=True, news_sources=sources)
 
-
 @st.cache_data(show_spinner=False, ttl=1800)
 def c_read_articles(ticker: str, broad: bool, end: str, limit: int = 5):
     """抓取该票前 limit 条新闻正文 + 抽关键句（慢，ttl 30 分钟）。"""
@@ -746,7 +614,6 @@ def c_read_articles(ticker: str, broad: bool, end: str, limit: int = 5):
     sources = ("google", "yahoo", "gdelt") if broad else ("google", "yahoo")
     df = nws.stock_news(ticker, limit=10, sources=sources)
     return nws.read_articles(df, limit=limit)
-
 
 # ---------------------------------------------------------------------------
 # 侧栏
@@ -832,7 +699,6 @@ with st.sidebar:
                 except Exception as _e:  # noqa: BLE001
                     st.error(f"恢复失败：{_e}")
 
-
 # ===========================================================================
 # 页面：信号挖掘（Phase G）
 # ===========================================================================
@@ -882,7 +748,6 @@ def page_overview():
         gcols = st.columns(2)
         for i, (k, v) in enumerate(items):
             gcols[i % 2].markdown(f"**{k}** — {v}")
-
 
 # ===========================================================================
 # 页面：建仓概率引擎
@@ -955,7 +820,6 @@ def page_regime():
         fp2["信用趋势"] = fp2["信用趋势"].map(lambda v: _cmap.get(v, v))
         st.dataframe(fp2.style.format({"距前高": "{:+.0%}"}), use_container_width=True)
         st.caption("把今天环境和历史几次大底当时并排，**供你对照**，不替你下结论。")
-
 
 # ===========================================================================
 # 页面：因子评估
@@ -1041,7 +905,6 @@ def page_factor():
     elif brun is not None and len(brun["sel"]) < 2:
         st.caption("至少选 2 个因子做组合。")
 
-
 # ===========================================================================
 # 页面：个股进出场规则
 # ===========================================================================
@@ -1074,7 +937,6 @@ def _load_saved_rule(name: str) -> bool:
         ss["cond_window"] = int(spec.get("cond_window", 20))
     return True
 
-
 def _signal_controls(slot: int, default: str):
     """渲染单个入场信号的控件，返回 (name, p1, p2)。"""
     sigmap = {"dip_from_high": "距高点回撤", "rsi_oversold": "RSI 超卖", "ma_cross": "均线金叉", "vol_regime": "波动率状态"}
@@ -1093,7 +955,6 @@ def _signal_controls(slot: int, default: str):
         p1 = cc[1].slider("窗口", 5, 60, 20, 1, key=f"p1_{slot}")
         p2 = 1.0 if cc[2].radio("状态", ["低波动", "高波动"], key=f"p2_{slot}") == "低波动" else 0.0
     return (name, float(p1), float(p2))
-
 
 @st.fragment
 def page_rule():
@@ -1289,7 +1150,6 @@ def page_rule():
                 except Exception as e:  # noqa: BLE001
                     st.warning(f"生成失败：{type(e).__name__}: {e}")
 
-
 # ===========================================================================
 # 页面：当前快照（Volume Profile + 期权，免费、仅展示、不可回测）
 # ===========================================================================
@@ -1347,7 +1207,6 @@ def page_snapshot():
         except Exception as e:  # noqa: BLE001
             st.warning(f"期权链拉取失败（可能无期权或网络限制）：{e}")
 
-
 # ===========================================================================
 # 页面：财报 PEAD
 # ===========================================================================
@@ -1381,7 +1240,6 @@ def page_earnings():
     st.markdown(f'<div class="verdict">{ic["note"]}</div>', unsafe_allow_html=True)
     st.caption("📖 看法：**领先 IC**=「上次财报超预期幅度」与「公布后 N 日涨幅」的相关性，正且显著=超预期后真有继续上涨的漂移；"
                "**p<0.05 才算显著**；**假对照≈0** 证明不是巧合。左图绿线(超预期)在财报日后高于红线(不及预期)=漂移存在。")
-
 
 # ===========================================================================
 # 页面：事件时间线（SEC EDGAR + 财报，免费，仅复盘）
@@ -1437,7 +1295,6 @@ def page_events():
     )
     st.caption("仅客观字段（事件类型/日期/价格反应）；事件的重要性/性质属主观判断，不入量化、不作买卖依据。")
 
-
 # ===========================================================================
 # 页面：建仓策略对比
 # ===========================================================================
@@ -1469,12 +1326,10 @@ def page_strategies():
     st.caption("📖 **比一次性多/少**=该分批法相对「一把全买」的资本回报差；**区间**跨 0=差异看不出。"
                "结论通常是：长期上涨的票里，**一次性买入往往胜过分批**(分批让闲钱空等)。")
 
-
 # ===========================================================================
 # 页面：建仓作战室（升级模块）—— 校准式：价位带分布 + 盈亏比/期望值 + 事件日程 + 阶梯布局
 # ===========================================================================
 _HORIZON_OPTS = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
-
 
 # ===========================================================================
 # 页面：多票作战简报（综合层）—— 一屏总览 + 每票建仓档 + 引擎桶 + 财报 + 免费新闻 + 自动权重
@@ -1500,7 +1355,6 @@ def _brief_overview_row(b: dict, live: dict | None = None) -> dict:
         "胜率": f"{be['win_rate']:.0%}" if be else "—",
         "下次财报": b.get("next_earnings") or "—",
     }
-
 
 @st.fragment
 def page_briefing():
@@ -1708,7 +1562,6 @@ def page_briefing():
     with st.expander("📖 预览 Markdown"):
         st.code(md, language="markdown")
 
-
 # ===========================================================================
 # 页面：个股全景分析（主页 —— 选股自动出全套）
 # ===========================================================================
@@ -1752,20 +1605,9 @@ def page_panorama():
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
 
-    # ---- 今日速读（醒目横幅）：与下方「操作预案」同源，避免重复结论 ----
+    # 操作预案数据（决策卡已是页面头部裁决；旧"今日速读"横幅已删，避免重复）
     from analysis.playbook import build_playbook
     pbk = build_playbook(b)
-    _conv = pbk["conviction"]                       # 如 "🔴 低（动量陷阱）"
-    _col = next((v for k, v in {"🔴": "#FF5C7A", "🟢": "#2BE6A8", "🟡": "#FFD166",
-                                "⚪": "#8A93A6"}.items() if _conv.startswith(k)), "#8A93A6")
-    st.markdown(
-        f'<div style="border-radius:16px;padding:18px 22px;margin:2px 0 16px;'
-        f'background:linear-gradient(92deg,{_col}26,{_col}08);border:1px solid {_col}55;border-left:7px solid {_col}">'
-        f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">今日速读 · 把握度 {_conv}</div>'
-        f'<div style="font-size:1.25rem;font-weight:800;color:#E6E9EF;line-height:1.45;margin-top:4px">{pbk["headline"]}</div>'
-        f'<div style="color:#8A93A6;font-size:0.82rem;margin-top:6px">依据：{pbk["conviction_basis"]}</div>'
-        f'<div style="color:#8A93A6;font-size:0.76rem;margin-top:5px">⚠️ <b>历史倾斜的校准</b>，不是预测、不是买卖指令；详细操作见下方「📋 操作预案」。</div>'
-        f'</div>', unsafe_allow_html=True)
 
     # ---- 证据等级 + 多周期对账 + 一致性/数据质量告警 ----
     for c in (b.get("consistency") or []):
@@ -2051,26 +1893,13 @@ def page_panorama():
         elif pd_now is not None:
             st.caption("📈 PEAD：当前不在财报后漂移窗口内（或该票同类财报样本不足）。")
 
-    # ---- 深入分析：12 个模块按主题收进 5 个 Tab（吸收原作战室/信号挖掘，三页合一）----
+    # ---- 深入分析：精简后只保留有 edge / 实用的模块，收进 3 个 Tab ----
     from regime import entry_cockpit as ec
 
     st.markdown("#### 📂 深入分析（按需展开）")
-    _T_ZONE, _T_RISK, _T_HIST, _T_EVENT, _T_TOOL = st.tabs(
-        ["💠 价位 & 方案", "📈 策略 & 风险", "🔬 历史 & 信号", "🗓️ 事件 & 账本", "🧰 工具 & 导出"])
-
-    with _T_HIST.expander("🔬 历史相似案例（当前状态在历史上的真实实例 · 可核对）"):
-      if _lazy_gate(f"analog_{a}"):
-        ana = c_analogs(a, "2008-01-01" if a != "SPY" else "1995-01-01", end, int(horizon))
-        st.markdown(f'<div class="verdict">{ana["summary"]}</div>', unsafe_allow_html=True)
-        cs = ana["cases"]
-        if cs is not None and len(cs):
-            disp = cs.copy()
-            disp["date"] = disp["date"].dt.date.astype(str)
-            disp = disp.rename(columns={"date": "历史日期", "price": "当时价",
-                                        "fwd_return": f"往后{horizon}日实现", "max_drawdown": "途中最大浮亏"})
-            st.dataframe(disp.style.format({"当时价": "{:.1f}", f"往后{horizon}日实现": "{:+.1%}", "途中最大浮亏": "{:+.1%}"}),
-                         use_container_width=True, hide_index=True)
-            st.caption("📖 这些是构成上方引擎分布的**真实历史日期**；是样本陈列，不代表'现在更像哪一次'。")
+    _T_ZONE, _T_RISK, _T_TOOL = st.tabs(["💠 价位 & 方案", "🛡️ 风险 & 事件", "🧰 工具 & 校准"])
+    _T_EVENT = _T_RISK      # 新闻归入「风险 & 事件」
+    _T_HIST = _T_TOOL       # 校准追踪归入「工具 & 校准」
 
     with _T_HIST.expander("🎯 校准追踪（记录此刻信号 · 事后比对'说的 vs 做到的'）"):
         from analysis import journal as jn
@@ -2109,22 +1938,6 @@ def page_panorama():
         st.markdown(f'<div class="verdict">{dh["summary"]}</div>', unsafe_allow_html=True)
         st.dataframe(dh["table"], use_container_width=True, hide_index=True)
         st.caption("📖 免费数据(yfinance)可能停更/缺口/未除权跳空——陈旧🔴或带⚠️的标的，其分析结论要打折看。仅体检、不改数据。")
-
-    with _T_EVENT.expander("🌐 全局多重检验账本（扣除挖掘后，还剩几个真显著）"):
-        from analysis import mt_ledger as _mt
-        rep = _mt.fdr_report(alpha=0.10)
-        if rep["n_tests"] == 0:
-            st.caption("账本为空。跑「📅 财报 PEAD」或本页「🏁 横截面相对排名」后，其 p 值会自动累计到这里做全局 FDR。")
-        else:
-            mc = st.columns(3)
-            mc[0].markdown(stat_card("累计检验数", f"{rep['n_tests']}", "跨页跨标的", "#7C5CFC", tip="数据窥探"), unsafe_allow_html=True)
-            mc[1].markdown(stat_card("未校正显著", f"{rep['n_sig_raw']}", "p<0.05", "#8A93A6"), unsafe_allow_html=True)
-            mc[2].markdown(stat_card("BH-FDR 后存活", f"{rep['n_sig_bh']}", f"阈值 p*≤{rep['p_star']:.3f}",
-                                     "#2BE6A8" if rep["n_sig_bh"] > 0 else "#FF5C7A", tip="FDR"), unsafe_allow_html=True)
-            st.caption(f"📖 {rep['note']}")
-            tb = rep["table"][["family", "name", "p_value", "显著_未校正", "显著_BH"]].rename(
-                columns={"family": "类别", "name": "检验", "p_value": "p值", "显著_未校正": "未校正", "显著_BH": "BH存活"})
-            st.dataframe(tb.style.format({"p值": "{:.4f}"}), use_container_width=True, hide_index=True)
 
     with _T_ZONE.expander("💠 各价位带明细（盈亏比 / 期望值 / 超额）"):
         enough = z[z["enough"]] if "enough" in z.columns else z.iloc[0:0]
@@ -2183,80 +1996,6 @@ def page_panorama():
                        "“建仓期最深浮亏”是投钱过程中净值相对自身峰值的最深回撤（你要扛的痛）；"
                        "“跑赢一次性”是历史上该方案期末回报高于一次性的窗口比例。**非预测、非投资建议**。")
 
-    with _T_HIST.expander("🔎 各状态下建仓/风险的历史表现（哪种状态进场更好）"):
-      if _lazy_gate(f"scan1_{a}"):
-        from analysis import signal_scan as _ssm
-        sc_df, _cs, ew_items, rw_items = c_scan((a,), "2012-01-01", end, int(horizon))
-        disp, summary = _ssm.humanize_scan(sc_df)
-        st.markdown(f'<div class="verdict">{summary}</div>', unsafe_allow_html=True)
-        st.dataframe(disp, use_container_width=True, hide_index=True, column_config=_col_cfg(disp.columns))
-        st.caption("📖 列名可鼠标悬浮看含义（比闭眼买多/少 · 95%可信区间 · 结论 · 进场后典型浮亏）。")
-        sdf = c_score_series(a, "2012-01-01", end, ew_items, rw_items).dropna(subset=["建仓分", "风险分"])
-        if not sdf.empty:
-            st.markdown("**建仓分 / 风险分 走势（0–100 历史分位，非预测）**")
-            st.plotly_chart(ch.score_timeseries(sdf, a), use_container_width=True, config=ch.CHART_CONFIG)
-
-    with _T_RISK.expander("📊 策略 vs 持有 · 年化 / 夏普 / 回撤对照"):
-      if _lazy_gate(f"perf_{a}"):
-        pv = c_perf(a, "2014-01-01", end)
-        s_, h_ = pv["strategy"], pv["hold"]
-        pc = st.columns(4)
-        dlt = s_["cagr"] - h_["cagr"]
-        pc[0].markdown(stat_card("策略年化", f"{s_['cagr']:+.0%}", f"持有 {h_['cagr']:+.0%}（差 {dlt:+.0%}）",
-                                 "#2BE6A8" if dlt >= 0 else "#FFD166"), unsafe_allow_html=True)
-        pc[1].markdown(stat_card("策略夏普", f"{s_['sharpe']:.2f}", f"持有 {h_['sharpe']:.2f}",
-                                 "#2BE6A8" if s_["sharpe"] >= h_["sharpe"] else "#8A93A6", tip="Sharpe"), unsafe_allow_html=True)
-        pc[2].markdown(stat_card("策略最大回撤", f"{s_['maxdd']:.0%}", f"持有 {h_['maxdd']:.0%}",
-                                 "#2BE6A8" if s_["maxdd"] >= h_["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-        im = s_.get("in_market", float("nan"))
-        pc[3].markdown(stat_card("在场时间", f"{im:.0%}" if im == im else "—", "其余时间持现金", "#7C5CFC"), unsafe_allow_html=True)
-        st.plotly_chart(ch.equity_compare(pv["equity"]), use_container_width=True, config=ch.CHART_CONFIG)
-        verdict = ("策略年化更高" if dlt > 0.01 else ("两者相当" if abs(dlt) <= 0.01 else "策略年化更低(空仓拖累)"))
-        risk = "回撤更小、拿得更稳" if s_["maxdd"] > h_["maxdd"] else "回撤未改善"
-        st.caption(f"📖 样本 {pv['sample']}（含费用）。本策略=深跌买入×让利润奔跑，仅约 {im:.0%} 时间在场。"
-                   f"结论：{verdict}，但通常**{risk}**。这是后视镜回测(选股偏差)，**非预测**；我们已验证它**未显著跑赢持有**。")
-
-        # α/β 分解：到底有没有真超额，还是纯 beta
-        st.markdown("**🔬 Alpha / Beta 分解（收益里有多少是真本事、多少是市场给的）**")
-        ab = c_alpha_beta(a, "2014-01-01", end)
-        sab, hab = ab["strategy"], ab["hold"]
-        abc = st.columns(3)
-        _ac = "#2BE6A8" if sab["alpha_significant"] and sab["alpha_ann"] > 0 else "#FFD166"
-        abc[0].markdown(stat_card("策略年化α", f"{sab['alpha_ann']:+.1%}",
-                                  f"CI[{sab['alpha_ann_ci'][0]:+.0%},{sab['alpha_ann_ci'][1]:+.0%}]"
-                                  + ("·显著" if sab["alpha_significant"] else "·跨0"), _ac), unsafe_allow_html=True)
-        abc[1].markdown(stat_card("策略β", f"{sab['beta']:.2f}", f"R²={sab['r2']:.0%}", "#00D4FF"), unsafe_allow_html=True)
-        abc[2].markdown(stat_card("持有年化α", f"{hab['alpha_ann']:+.1%}",
-                                  "显著" if hab["alpha_significant"] else "跨0(纯beta)", "#8A93A6"), unsafe_allow_html=True)
-        st.caption(f"📖 把每日收益对 SPY 回归：α=扣掉市场后的真超额、β=市场敏感度。**策略**：{sab['verdict']}")
-
-        # 多因子归因（市场 + 动量/价值/小盘/低波 风格）
-        fa = c_factor_attr(a, "2014-01-01", end)
-        if fa.get("n", 0) >= 120:
-            st.markdown("**🧬 多因子归因（收益拆成 市场β + 风格倾斜 + 真α）**")
-            bt = fa["betas"]
-            fac_order = [k for k in ("市场", "动量", "价值", "小盘", "低波") if k in bt]
-            fc = st.columns(len(fac_order) + 1)
-            _ac = "#2BE6A8" if fa["alpha_significant"] and fa["alpha_ann"] > 0 else "#FFD166"
-            fc[0].markdown(stat_card("年化α(扣风格)", f"{fa['alpha_ann']:+.1%}",
-                                     ("显著" if fa["alpha_significant"] else "跨0") + f"·R²{fa['r2']:.0%}", _ac), unsafe_allow_html=True)
-            for col, k in zip(fc[1:], fac_order):
-                col.markdown(stat_card(f"{k}β", f"{bt[k]:+.2f}", "暴露", "#00D4FF" if k == "市场" else "#7C5CFC"), unsafe_allow_html=True)
-            st.caption(f"📖 {fa['verdict']}（风格用免费 ETF 代理：MTUM/IWD/IWM/USMV 相对 SPY 的超额；多 2013+ 上市）")
-        else:
-            st.caption(f"🧬 多因子归因：{fa.get('verdict','样本不足')}")
-
-        # Walk-forward OOS：edge 是否跨期稳定（过拟合自检）
-        wf = c_walkforward(a, "2010-01-01", end)
-        if wf.get("n_windows"):
-            st.markdown("**🧪 Walk-forward 样本外自检（参数固定 → 看优势是否只来自某一段）**")
-            wfc = st.columns(3)
-            wfc[0].markdown(stat_card("OOS 跑赢持有比例", f"{wf['beat_rate']:.0%}",
-                                      f"{wf['n_windows']} 段样本外", "#2BE6A8" if wf["beat_rate"] > 0.5 else "#FFD166"), unsafe_allow_html=True)
-            wfc[1].markdown(stat_card("OOS 策略年化(中位)", f"{wf['strat_cagr_median']:+.0%}", "各样本外窗口", "#7C5CFC"), unsafe_allow_html=True)
-            wfc[2].markdown(stat_card("OOS 持有年化(中位)", f"{wf['hold_cagr_median']:+.0%}", "同期对照", "#8A93A6"), unsafe_allow_html=True)
-            st.caption(f"📖 {wf['note']}")
-
     with _T_RISK.expander("🛡️ Regime 风险加权暴露（高波动/避险环境自动降仓 · 改善回撤）"):
       if _lazy_gate(f"regime_{a}"):
         ro = c_regime_overlay(a, "2014-01-01", end)
@@ -2281,79 +2020,6 @@ def page_panorama():
         st.caption("📖 波动目标=按近期波动反比缩放仓位(平静加、动荡减，上限不加杠杆)。常以**更低回撤换更稳夏普**，"
                    "年化可能略低——这是风控 edge，不是择时预测。")
 
-    with _T_RISK.expander("🏁 横截面相对排名 edge（同组谁更强 · 动量+低波多空 · deflated Sharpe）"):
-        peers_cs = tuple(t for t in _TICKER_GROUPS[grp] if t != "SPY")[:12]
-        if len(peers_cs) >= 5:
-            if st.button("运行横截面回测", key=f"runcs_{a}"):
-                with st.spinner("横截面多空分位回测 + 多重检验折扣…"):
-                    cse = c_cross_section(peers_cs, "2015-01-01", end)
-                csc = st.columns(3)
-                csc[0].markdown(stat_card("多空夏普", f"{cse['sharpe']:.2f}",
-                                          f"CI[{cse['sharpe_ci_low']:.2f},{cse['sharpe_ci_high']:.2f}]",
-                                          "#2BE6A8" if (cse['sharpe_ci_low'] > 0) else "#8A93A6", tip="Sharpe"), unsafe_allow_html=True)
-                csc[1].markdown(stat_card("年化收益", f"{cse['ann_return']:+.0%}", "多顶分位/空底分位", "#7C5CFC"), unsafe_allow_html=True)
-                csc[2].markdown(stat_card("deflated 概率", f"{cse['deflated_sharpe_prob']:.0%}",
-                                          "稳健" if cse["robust"] else "未达0.95", "#2BE6A8" if cse["robust"] else "#FFD166", tip="deflated Sharpe"), unsafe_allow_html=True)
-                # IC + Newey-West t（自相关稳健显著性）
-                nwt = cse.get("ic_t_newey_west", float("nan"))
-                ic_m = cse.get("ic_mean", float("nan"))
-                ncs = st.columns(2)
-                ncs[0].markdown(stat_card("因子 IC(均)", f"{ic_m:.3f}", f"{cse.get('ic_n_periods',0)} 期·已beta中性化", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
-                ncs[1].markdown(stat_card("IC 的 |t| (Newey-West)", f"{abs(nwt):.2f}" if nwt == nwt else "—",
-                                          "显著(>2)" if (nwt == nwt and abs(nwt) > 2) else "不显著", "#2BE6A8" if (nwt == nwt and abs(nwt) > 2) else "#FF5C7A", tip="IR"), unsafe_allow_html=True)
-                # Purged & Embargo CV：无标签泄漏的 OOS IC（比 walk-forward 更严）
-                pcv_r = c_purged_cv(peers_cs, "2015-01-01", end)
-                if pcv_r.get("n_folds", 0) >= 2:
-                    pcc = st.columns(2)
-                    pcc[0].markdown(stat_card("Purged-CV OOS IC", f"{pcv_r['mean_oos_ic']:.3f}",
-                                              f"{pcv_r['n_folds']} 折·无标签泄漏", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
-                    pt = pcv_r.get("t_across_folds", float("nan"))
-                    pcc[1].markdown(stat_card("跨折 |t|", f"{abs(pt):.2f}" if pt == pt else "—",
-                                              "稳健(>2)" if (pt == pt and abs(pt) > 2) else "不稳健",
-                                              "#2BE6A8" if (pt == pt and abs(pt) > 2) else "#FF5C7A"), unsafe_allow_html=True)
-                    st.caption(f"📖 {pcv_r['note']}")
-                # 记入全局多重检验账本（IC 的 NW p 值）
-                try:
-                    from analysis import mt_ledger as _mt
-                    from scipy.stats import norm as _norm
-                    if nwt == nwt:
-                        _p = float(2 * (1 - _norm.cdf(abs(nwt))))
-                        _mt.log_test("横截面因子", f"{grp}·动量低波", _p, stat=nwt)
-                except Exception:  # noqa: BLE001
-                    pass
-                st.caption(f"📖 {cse['edge_note']}（标的：{', '.join(peers_cs)}）")
-                # 信号衰减监控
-                dec = c_signal_decay(peers_cs, "2015-01-01", end)
-                if dec.get("recent_ic") == dec.get("recent_ic"):
-                    dc = st.columns(3)
-                    dc[0].markdown(stat_card("前半段 IC", f"{dec['early_ic']:.3f}", "动量因子", "#8A93A6", tip="IC"), unsafe_allow_html=True)
-                    dc[1].markdown(stat_card("近半段 IC", f"{dec['recent_ic']:.3f}", "衰减?" + ("是⚠️" if dec["decayed"] else "否"),
-                                             "#FF5C7A" if dec["decayed"] else "#2BE6A8", tip="IC"), unsafe_allow_html=True)
-                    yic = dec.get("ic_yearly")
-                    if yic is not None and len(yic):
-                        dc[2].markdown(stat_card("最新年度 IC", f"{yic.iloc[-1]:.3f}", f"{yic.index[-1]}", "#7C5CFC", tip="IC"), unsafe_allow_html=True)
-                    st.caption(f"📖 {dec['note']}")
-        else:
-            st.caption("该组标的不足 5 只，无法做横截面相对排名。")
-
-    with _T_ZONE.expander("📦 筹码分布（Volume Profile / POC）"):
-      if _lazy_gate(f"vp_{a}"):
-        ohlcv, vpf = c_volume_profile(a, "2015-01-01", end, 252)
-        st.plotly_chart(ch.volume_profile_bars(vpf, title=f"{a} 筹码分布"), use_container_width=True, config=ch.CHART_CONFIG)
-
-    with _T_RISK.expander(f"🛰️ 同板块今日对比（{grp} · 建仓分 / 风险分排名）"):
-      if _lazy_gate(f"peers_{a}"):
-        peers = tuple(t for t in _TICKER_GROUPS[grp] if t != "SPY")[:8]
-        if len(peers) >= 2:
-            _df, cs7, _ew, _rw = c_scan(peers, "2012-01-01", end, int(horizon))
-            st.dataframe(cs7.style.background_gradient(subset=["建仓分"], cmap="Greens")
-                         .background_gradient(subset=["风险分"], cmap="Reds")
-                         .format({"建仓分": "{:.0f}", "风险分": "{:.0f}", "现价": "{:.1f}"}),
-                         use_container_width=True, hide_index=True, column_config=_col_cfg(cs7.columns))
-            st.caption("建仓分高 + 风险分低 = 历史上相对更值得关注的建仓时机倾斜。**非买卖指令**。")
-        else:
-            st.caption("该板块标的太少，无法横向对比。")
-
     nw = b.get("news")
     if nw is not None and len(nw):
         with _T_EVENT.expander("🗞️ 最近新闻（免费 · 仅线索 · 不入量化）"):
@@ -2365,7 +2031,6 @@ def page_panorama():
     from analysis import briefing as bf
     md = bf.render_markdown([b], bf.auto_weights([b]), horizon)
     st.download_button("📄 导出该股分析(Markdown)", md, file_name=f"{a}_analysis_{end}.md", mime="text/markdown")
-
 
 # ---------------------------------------------------------------------------
 # 路由（三视图）
@@ -2425,7 +2090,6 @@ def page_fragility():
     gc[2].markdown(stat_card("市场环境", cur["light"], f"宽度分位 {cur['pctile']:.0%}", col), unsafe_allow_html=True)
     st.markdown(f'<div class="verdict">{g["detail"]}</div>', unsafe_allow_html=True)
     st.caption("📖 回测结论：高位附近'等浅回调'历史上更亏(回调70%不来)→应追/分批；唯一该'等'的是深回撤区(指数−20~30%有edge)；脆弱性触发→一切偏防守。非投资建议。")
-
 
 _ADV_PAGES = {
     "🩸 市场脆弱性 & 等追": page_fragility,
