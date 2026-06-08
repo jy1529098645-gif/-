@@ -1643,13 +1643,21 @@ def page_panorama():
         _lvl = (f"入场参考 ≈ <b>{_e['anchor']:.1f}</b>（{_e['zone']}·持有~{_e['horizon_months']}月·"
                 f"{'✅稳健' if _e.get('confident') else '低置信'}）"
                 if _e and _e.get("anchor") == _e.get("anchor") else "入场参考：当前无统计稳健点位，按区间分批")
+        # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）
+        try:
+            from analysis import overlay as _ov2
+            _posnow = float(_ov2.risk_managed_position(price, c_fragility(zstart, end)["frame"]["fragile"]).iloc[-1])
+            _possz = f"📊 当前建议仓位 <b>{_posnow:.0%}</b>（风险叠加规则：满仓100%基准上按趋势/波动/宽度缩放）"
+        except Exception:  # noqa: BLE001
+            _possz = ""
         st.markdown(
             f'<div style="border-radius:16px;padding:18px 22px;margin:2px 0 14px;'
             f'background:linear-gradient(92deg,{_cc}26,{_cc}08);border:1px solid {_cc}66;border-left:8px solid {_cc}">'
             f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">🎯 决策卡 · {a}（距前高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
             f'<div style="font-size:1.3rem;font-weight:800;color:#E6E9EF;line-height:1.4;margin-top:4px">{_card["state"]}　{_card["action"]}</div>'
             f'<div style="color:#BFD8FF;font-size:0.9rem;margin-top:8px">📍 {_lvl}</div>'
-            f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:6px">📈 入场后：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</div>'
+            + (f'<div style="color:#2BE6A8;font-size:0.9rem;margin-top:5px">{_possz}</div>' if _possz else "")
+            + f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:6px">📈 入场后：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</div>'
             f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:4px">🚪 离场：{"；".join(_card["exit_rules"])}</div>'
             f'</div>', unsafe_allow_html=True)
     except Exception as _e:  # noqa: BLE001
@@ -1872,10 +1880,18 @@ def page_panorama():
             zlines.append({"price": float(r["price_high"]),
                            "color": "#00D4FF" if iscur else "rgba(138,147,166,0.6)",
                            "title": ("▶ " if iscur else "") + str(r["zone"])})
+        # 叠加换手位：POC + 价值区(高换手带) —— 与价位带一起看支撑/压力
+        try:
+            _, _vpk = c_volume_profile(a, "2015-01-01", end, 252)
+            zlines.append({"price": float(_vpk["poc"]), "color": "#FF9F45", "title": "POC换手密集"})
+            zlines.append({"price": float(_vpk["value_area"][0]), "color": "rgba(255,159,69,0.45)", "title": "价值区低"})
+            zlines.append({"price": float(_vpk["value_area"][1]), "color": "rgba(255,159,69,0.45)", "title": "价值区高"})
+        except Exception:  # noqa: BLE001
+            pass
         try:
             ohlcv_pan = _ld.load_ohlcv(a, zstart, end)
             render_tv_candles(ohlcv_pan, None, price_lines=zlines, key=f"tvpan_{a}", height=460, log=True,
-                              caption="🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标读价。横线=各回撤价位带上沿(▶=当前所处带)。")
+                              caption="🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标读价。蓝/灰线=回撤价位带(▶=当前)，橙线=POC换手密集价/价值区。")
         except Exception:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
     cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
