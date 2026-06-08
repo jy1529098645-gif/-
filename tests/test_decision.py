@@ -61,6 +61,23 @@ def test_format_card_with_entry():
     assert "入场参考" in s and "123.4" in s
 
 
+def test_etf_trend_break_says_half_position():
+    # ETF 跌破200线 → 应给"减到半仓"(经验证的规则)，而非清仓
+    px = pd.Series(np.linspace(200, 130, 400),
+                   index=pd.date_range("2022-01-01", periods=400, freq="B"))  # 持续下行→破200线
+    c = dc.decision_card("SPY", px, {"has_zone": False}, fragile_now=False)
+    assert c["trend_broken"] is True
+    assert any("半仓" in r for r in c["exit_rules"])
+
+
+def test_single_stock_trend_break_not_forced_half():
+    px = pd.Series(np.linspace(200, 130, 400),
+                   index=pd.date_range("2022-01-01", periods=400, freq="B"))
+    c = dc.decision_card("CRM", px, {"has_zone": False}, fragile_now=False)
+    # 个股口径：诚实说减半仓只降回撤不升夏普
+    assert any("个股" in r or "不升夏普" in r for r in c["exit_rules"])
+
+
 def test_leveraged_etf_decay_warning():
     c = dc.decision_card("TQQQ", _px(-0.05), {"has_zone": False}, fragile_now=False)
     assert any("衰减" in r or "杠杆" in r for r in c["exit_rules"])

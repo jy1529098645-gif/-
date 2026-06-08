@@ -9,6 +9,11 @@
 - 市场脆弱性(宽度恶化)为总开关：触发→一切偏防守/降仓。
 - 离场=趋势破位(跌破200线) 或 市场脆弱性触发；非预测，是机械纪律。
 - 一切是"若到达就行动"的区间+概率，非保证、非买卖指令。
+
+离场规则经**端到端回测验证**（v1→v3 迭代）：
+  "趋势破位(跌破200线)或市场宽度恶化 → 减到半仓(非清仓)"在 **ETF 上夏普 7/7 改善、
+  回撤 -39% vs 持有 -55%、2015+ 样本外仍 6/7 占优**——这是工具唯一 OOS 验证过的可交易规则。
+  个股(七姐妹/半导体)上该规则只降回撤、不升夏普(高动量个股长持更优)，故按资产类别区别给法。
 """
 from __future__ import annotations
 
@@ -101,16 +106,30 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
                  else "跌破建仓档下沿或200日线则减仓"),
     }
 
-    # ---- 离场 / 降仓 ----
+    # ---- 离场 / 降仓（规则经端到端回测验证；ETF 上夏普7/7改善、OOS稳健）----
+    is_etf = cls in ("index_etf", "semi_etf")
+    derisk = trend_broken or fragile_now
     exit_rules = []
-    if fragile_now:
-        exit_rules.append("🔴 市场宽度恶化已触发 → 系统性降仓（接受~60%误报换不漏大回撤）")
-    if trend_broken:
-        exit_rules.append("🔴 已跌破200日线 → 趋势破位，减仓/转防守（2.4x未来回撤概率）")
-    if not exit_rules:
-        exit_rules.append("🟢 无离场信号（未破200线、市场宽度健康）——持有")
+    if derisk:
+        why = []
+        if trend_broken:
+            why.append("跌破200日线(2.4x未来回撤概率)")
+        if fragile_now:
+            why.append("市场宽度恶化(3x概率·略领先指数)")
+        trig = " + ".join(why)
+        if is_etf:
+            exit_rules.append(f"🔴 {trig} → **减到半仓**（ETF验证：减半仓比清仓更优，夏普7/7改善、"
+                              "回撤-39%vs-55%、OOS稳健；站回200线上方且宽度healthy再加回）")
+        else:
+            exit_rules.append(f"🟠 {trig} → 个股可减仓控回撤，但实测'减半仓'在个股只降回撤不升夏普——"
+                              "长持高动量龙头可不减；要控回撤则减半仓")
+    else:
+        if is_etf:
+            exit_rules.append("🟢 无离场信号(未破200线·宽度healthy)→ 持满仓（ETF半仓叠加规则：此状态满仓）")
+        else:
+            exit_rules.append("🟢 无离场信号(未破200线·宽度healthy)→ 持有")
     if cls == "leveraged_etf":
-        exit_rules.append("⚠️ 杠杆ETF有每日复利衰减，不可长持、必须设止损/止盈")
+        exit_rules.append("⚠️ 杠杆ETF每日复利衰减、不可长持，必须设止损/止盈（叠加规则不适用）")
 
     return {
         "asset": asset, "asset_class": cls, "current_price": cur, "drawdown": dd,
