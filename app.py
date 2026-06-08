@@ -1729,6 +1729,29 @@ def page_panorama():
         from data import loader as _ld
         price = _ld.load_prices([a], zstart, end)[a]
 
+    # ===== 🎯 决策卡（合成：现在该做什么 / 入场点 / 入场后 / 离场）—— 页面第一眼 =====
+    try:
+        from analysis import decision as _dec
+        _bezc = c_best_entry_scan(a, zstart, end)
+        _mkt = c_fragility(zstart, end).get("cur", {})
+        _card = _dec.decision_card(a, price, _bezc, _mkt.get("fragile", False), _mkt.get("light", ""))
+        _cc = _card["color"]
+        _e = _card.get("entry")
+        _lvl = (f"入场参考 ≈ <b>{_e['anchor']:.1f}</b>（{_e['zone']}·持有~{_e['horizon_months']}月·"
+                f"{'✅稳健' if _e.get('confident') else '低置信'}）"
+                if _e and _e.get("anchor") == _e.get("anchor") else "入场参考：当前无统计稳健点位，按区间分批")
+        st.markdown(
+            f'<div style="border-radius:16px;padding:18px 22px;margin:2px 0 14px;'
+            f'background:linear-gradient(92deg,{_cc}26,{_cc}08);border:1px solid {_cc}66;border-left:8px solid {_cc}">'
+            f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">🎯 决策卡 · {a}（距前高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
+            f'<div style="font-size:1.3rem;font-weight:800;color:#E6E9EF;line-height:1.4;margin-top:4px">{_card["state"]}　{_card["action"]}</div>'
+            f'<div style="color:#BFD8FF;font-size:0.9rem;margin-top:8px">📍 {_lvl}</div>'
+            f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:6px">📈 入场后：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</div>'
+            f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:4px">🚪 离场：{"；".join(_card["exit_rules"])}</div>'
+            f'</div>', unsafe_allow_html=True)
+    except Exception as _e:  # noqa: BLE001
+        st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
+
     # ---- 今日速读（醒目横幅）：与下方「操作预案」同源，避免重复结论 ----
     from analysis.playbook import build_playbook
     pbk = build_playbook(b)
