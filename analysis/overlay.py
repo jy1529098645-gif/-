@@ -42,12 +42,18 @@ def risk_managed_position(px: pd.Series, fragile: pd.Series | None = None,
 def _stats(ret: pd.Series) -> dict:
     ret = ret.dropna()
     if len(ret) < 60:
-        return {"cagr": float("nan"), "sharpe": float("nan"), "maxdd": float("nan")}
+        return {k: float("nan") for k in ("cagr", "vol", "sharpe", "sortino", "maxdd", "calmar")}
     eq = (1 + ret).cumprod()
     yrs = len(ret) / 252
-    return {"cagr": float(eq.iloc[-1] ** (1 / yrs) - 1),
-            "sharpe": float(ret.mean() / ret.std() * np.sqrt(252)) if ret.std() > 0 else float("nan"),
-            "maxdd": float((eq / eq.cummax() - 1).min())}
+    cagr = float(eq.iloc[-1] ** (1 / yrs) - 1)
+    vol = float(ret.std() * np.sqrt(252))
+    sharpe = float(ret.mean() / ret.std() * np.sqrt(252)) if ret.std() > 0 else float("nan")
+    dn = ret[ret < 0].std()
+    sortino = float(ret.mean() * 252 / (dn * np.sqrt(252))) if dn and dn > 0 else float("nan")
+    mdd = float((eq / eq.cummax() - 1).min())
+    calmar = float(cagr / abs(mdd)) if mdd < 0 else float("nan")
+    return {"cagr": cagr, "vol": vol, "sharpe": sharpe, "sortino": sortino,
+            "maxdd": mdd, "calmar": calmar}
 
 
 def backtest_overlay(px: pd.Series, fragile: pd.Series | None = None,
@@ -86,6 +92,41 @@ def sector_effectiveness(asset: str) -> str:
     if a in _DEFENSIVE:
         return "ℹ️ 防御板块(消费/公用)：本就低波，叠加**主要砍回撤**，夏普提升有限。"
     return "✅ 高beta/周期/科技/ETF：叠加历史上**升夏普+砍回撤**，是适用的主战场。"
+
+
+def backtest_portfolio(prices: dict, fragile: pd.Series | None = None,
+                       benchmark: pd.Series | None = None,
+                       target_vol: float = TARGET_VOL, blend: float = BLEND,
+                       cost: float = COST) -> dict:
+    """产品级组合回测：等权聚焦组合，逐标的应用风险管理叠加 vs 闭眼持有(+可选基准)。
+
+    prices: {ticker: 价格Series}; benchmark: 基准价格Series(如SPY)。
+    返回各方案净值曲线 + 完整指标(夏普/索提诺/卡玛/回撤)。
+    """
+    ov_rets, ho_rets = [], []
+    for t, px in prices.items():
+        px = px.dropna()
+        if len(px) < 252:
+            continue
+        r = px.pct_change()
+        pos = risk_managed_position(px, fragile, target_vol, blend).shift(1).fillna(0)
+        turn = pos.diff().abs().fillna(0)
+        ov_rets.append((pos * r - turn * cost).rename(t))
+        ho_rets.append(r.rename(t))
+    if not ov_rets:
+        return {"available": False}
+    port_ov = pd.concat(ov_rets, axis=1).mean(axis=1)
+    port_ho = pd.concat(ho_rets, axis=1).mean(axis=1)
+    out = {"available": True, "n_assets": len(ov_rets),
+           "overlay": _stats(port_ov), "hold": _stats(port_ho),
+           "equity": pd.DataFrame({"组合+风险叠加": (1 + port_ov.dropna()).cumprod(),
+                                   "组合闭眼持有": (1 + port_ho.dropna()).cumprod()})}
+    if benchmark is not None:
+        br = benchmark.pct_change()
+        out["benchmark"] = _stats(br)
+        out["equity"]["基准"] = (1 + br.reindex(out["equity"].index).fillna(0)).cumprod()
+    out["equity"] = out["equity"].dropna()
+    return out
 
 
 def verdict(bt: dict) -> str:

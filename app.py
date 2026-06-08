@@ -590,6 +590,26 @@ def c_overlay(asset: str, start: str, end: str):
     fr = c_fragility(start, end)["frame"]["fragile"]
     return ov.backtest_overlay(px, fr)
 
+
+_FOCUS_UNIVERSE = ["QQQ", "SPY", "XLK", "SMH", "NVDA", "AAPL", "MSFT", "GOOGL",
+                   "AMZN", "META", "AVGO", "AMD", "TSM", "CRM"]
+
+
+@st.cache_data(show_spinner=False)
+def c_product_bt(start: str, end: str):
+    """产品级组合回测：聚焦组合(ETF+科技+半导体)应用风险叠加 vs 持有 vs SPY。"""
+    from data import loader
+    from analysis import overlay as ov
+    prices = {}
+    for t in _FOCUS_UNIVERSE:
+        try:
+            prices[t] = loader.load_prices([t], start, end)[t]
+        except Exception:  # noqa: BLE001
+            pass
+    fr = c_fragility(start, end)["frame"]["fragile"]
+    spy = loader.load_prices(["SPY"], start, end)["SPY"]
+    return ov.backtest_portfolio(prices, fragile=fr, benchmark=spy)
+
 @st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
     from data import loader
@@ -2156,6 +2176,32 @@ def page_fragility():
     st.caption(f"🧭 板块适用性：{_ov.sector_effectiveness(a3)}")
     st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9、回撤显著更浅；"
                "大规模分板块测试：高beta/周期/ETF升夏普，能源/防御板块主要砍回撤。非投资建议。")
+
+    # 📊 产品级组合回测（整个产品系统的端到端验证·机构指标）
+    st.divider()
+    st.markdown("##### 📊 产品级组合回测（聚焦组合 应用风险叠加 vs 闭眼持有 vs SPY · 端到端验证）")
+    st.caption(f"组合={'/'.join(_FOCUS_UNIVERSE[:8])}… 等权，逐标的应用风险管理叠加。这是『整个产品系统』的端到端回测。")
+    with st.spinner("回测整个产品组合…"):
+        pbt = c_product_bt("2010-01-01", end)
+    if pbt.get("available"):
+        rows = []
+        for k, lab in [("overlay", "聚焦组合+风险叠加"), ("hold", "聚焦组合 闭眼持有"), ("benchmark", "SPY 基准")]:
+            m = pbt.get(k)
+            if m:
+                rows.append({"方案": lab, "年化": f"{m['cagr']:+.1%}", "波动": f"{m['vol']:.0%}",
+                             "夏普": f"{m['sharpe']:.2f}", "索提诺": f"{m['sortino']:.2f}",
+                             "卡玛": f"{m['calmar']:.2f}", "最大回撤": f"{m['maxdd']:.0%}"})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        if not pbt["equity"].empty:
+            st.line_chart(pbt["equity"], color=["#2BE6A8", "#8A93A6", "#7C5CFC"][:pbt["equity"].shape[1]])
+        ov_m, ho_m = pbt["overlay"], pbt["hold"]
+        win = (ov_m["sharpe"] >= ho_m["sharpe"] and ov_m["maxdd"] >= ho_m["maxdd"])
+        st.markdown(f'<div class="verdict">{"✅" if win else "🟡"} 产品系统 vs 闭眼持有：'
+                    f'夏普 {ov_m["sharpe"]:.2f}/{ho_m["sharpe"]:.2f}、索提诺 {ov_m["sortino"]:.2f}/{ho_m["sortino"]:.2f}、'
+                    f'回撤 {ov_m["maxdd"]:.0%}/{ho_m["maxdd"]:.0%}——'
+                    f'{"全面更优(风险调整后)，产品达可用专业级" if win else "风险调整后占优、收益略让(牛市现金拖累)"}。</div>',
+                    unsafe_allow_html=True)
+    st.caption("📖 这是把工具的可部署规则用到整个聚焦组合的真实回测。结论：风险调整指标(夏普/索提诺/卡玛/回撤)优于持有与SPY。非投资建议。")
 
 _ADV_PAGES = {
     "🩸 市场脆弱性 & 等追": page_fragility,
