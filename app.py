@@ -695,15 +695,18 @@ _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC"
 
 
 @st.cache_data(show_spinner=False)
-def c_fragility(start: str, end: str):
-    """市场脆弱性(宽度恶化)：当前读数 + 实测预警力 + 历史序列。"""
+def c_fragility(start: str, end: str, basket: tuple | None = None):
+    """板块脆弱性(宽度恶化)：当前读数 + 实测预警力 + 历史序列。basket=None→全市场40大盘。"""
     from data import loader
     from analysis import fragility as fg
-    panel = loader.load_prices(_BREADTH_BASKET, start, end)
-    spy = loader.load_prices(["SPY"], start, end)["SPY"]
+    names = list(basket) if basket else _BREADTH_BASKET
+    panel = loader.load_prices(names, start, end)
+    # 板块用等权指数作回撤目标；全市场用 SPY
+    idx = (loader.load_prices(["SPY"], start, end)["SPY"] if basket is None
+           else panel.ffill().pct_change().mean(axis=1).add(1).cumprod())
     return {"cur": fg.current_fragility(panel),
-            "eval": {h: fg.evaluate_breadth_warning(panel, spy, horizon=h) for h in (42, 63, 126)},
-            "frame": fg.fragility_frame(panel), "spy": spy}
+            "eval": {h: fg.evaluate_breadth_warning(panel, idx, horizon=h) for h in (42, 63, 126)},
+            "frame": fg.fragility_frame(panel), "idx": idx}
 
 
 @st.cache_data(show_spinner=False)
@@ -752,10 +755,20 @@ MAG7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
 # 分组股票池（好找）
 _TICKER_GROUPS = {
     "🌟 七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
-    "🎬 流媒体/其他大盘": ["NFLX", "DIS", "UBER", "PLTR"],
+    "🖥️ 科技股": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "ORCL", "CRM", "ADBE", "NOW",
+                "INTU", "AMD", "PLTR", "UBER", "NFLX", "QCOM", "TXN", "AVGO", "CSCO", "IBM"],
     "🔌 半导体": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "ARM", "SMCI", "MRVL"],
+    "🎬 流媒体/其他大盘": ["NFLX", "DIS", "UBER", "PLTR"],
     "⚡ 杠杆ETF(3x)": ["TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "TNA"],
     "📈 指数ETF": ["SPY", "QQQ", "DIA", "IWM"],
+}
+# 脆弱性面板可选的板块宽度篮子（板块级 de-risk 信号；半导体实测 lift 2.85x@42日）
+_FRAGILITY_BASKETS = {
+    "全市场(40大盘)": None,  # None=用 _BREADTH_BASKET
+    "🔌 半导体": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "MRVL"],
+    "🖥️ 科技股": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "ORCL", "CRM", "ADBE", "NOW",
+                "INTU", "AMD", "QCOM", "TXN", "AVGO", "CSCO"],
+    "🌟 七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
 }
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
@@ -823,60 +836,6 @@ with st.sidebar:
 # ===========================================================================
 # 页面：信号挖掘（Phase G）
 # ===========================================================================
-def page_signals():
-    st.markdown('<div class="hero-title">🔎 信号挖掘</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">量化对比各<b>建仓/止盈状态</b>的远期超额——带 N、block bootstrap CI、'
-                '和<b>多重检验 FDR 校正</b>。<b>只校准不预测</b>，分数是历史分位倾斜，非买卖指令。</div>', unsafe_allow_html=True)
-    st.write("")
-
-    uni = st.radio("票池", ["mag7", "spy_demo", "diversified", "sp500"], horizontal=True,
-                   format_func=lambda u: {"mag7": "七姐妹(样本大)", "spy_demo": "SPY+成分股",
-                                          "diversified": "宽池(降选股偏差)", "sp500": "标普500(全)"}.get(u, u))
-    horizon = _HORIZON_OPTS[st.selectbox("远期收益周期", list(_HORIZON_OPTS), index=2)]
-    run = run_gate("signals", {"uni": uni, "h": horizon}, label="🚀 运行信号扫描",
-                   hint="扫描约 20–40 秒：跨票池化 + bootstrap CI + FDR 校正。")
-    if run is None:
-        return
-
-    from data import loader
-    tickers = tuple(loader.load_universe(run["uni"]))
-    with st.spinner("扫描信号 + bootstrap + FDR…"):
-        scan_df, cs, ew_items, rw_items = c_scan(tickers, "2012-01-01", end, int(run["h"]))
-
-    # 七股今日综合（G6）
-    st.markdown("#### 🛰️ 今日综合（建仓分 / 风险分，0–100 历史分位）")
-    st.dataframe(cs.style.background_gradient(subset=["建仓分"], cmap="Greens")
-                 .background_gradient(subset=["风险分"], cmap="Reds")
-                 .format({"建仓分": "{:.0f}", "风险分": "{:.0f}", "现价": "{:.1f}"}),
-                 use_container_width=True, hide_index=True)
-    st.caption("建仓分高+风险分低 = 历史上相对更值得关注的建仓时机倾斜。**非买卖指令**。")
-
-    # 信号扫描表（人话）+ 超额图（G1/G5）
-    st.markdown("#### 📡 各状态下建仓/风险的历史表现")
-    from analysis import signal_scan as _ssm
-    disp, summary = _ssm.humanize_scan(scan_df)
-    st.markdown(f'<div class="verdict">{summary}</div>', unsafe_allow_html=True)
-    st.dataframe(disp, use_container_width=True, hide_index=True)
-    st.caption("📖 看法：**比闭眼买多/少**=该状态进场比随便买入持有多赚(或少赚)；"
-               "**95%可信区间**跨 0=统计上分不清、别当真；**结论** ✅稳健>🟡边缘>⚪不显著；"
-               "**进场后典型浮亏**=进场后短期常见最深浮亏，越深越颠簸。")
-    st.plotly_chart(ch.signal_excess(scan_df), use_container_width=True, config=ch.CHART_CONFIG)
-
-    # 单股建仓分/风险分时序（G2/G3）
-    st.markdown("#### 📈 单股建仓分 / 风险分 时序")
-    tk = st.selectbox("标的", list(tickers), index=min(4, len(tickers) - 1))
-    sdf = c_score_series(tk, "2012-01-01", end, ew_items, rw_items).dropna(subset=["建仓分", "风险分"])
-    if not sdf.empty:
-        last = sdf.iloc[-1]
-        sc = st.columns(3)
-        bcol = "#2BE6A8" if last["建仓分"] >= 60 else "#8A93A6"
-        rcol = "#FF5C7A" if last["风险分"] >= 60 else "#8A93A6"
-        sc[0].markdown(stat_card("今日建仓分", f"{last['建仓分']:.0f}", "0–100 历史分位", bcol), unsafe_allow_html=True)
-        sc[1].markdown(stat_card("今日风险分", f"{last['风险分']:.0f}", "近期下行风险环境", rcol), unsafe_allow_html=True)
-        sc[2].markdown(stat_card("现价", f"{last['price']:.1f}", str(sdf.index[-1].date()), "#7C5CFC"), unsafe_allow_html=True)
-        st.plotly_chart(ch.score_timeseries(sdf, tk), use_container_width=True, config=ch.CHART_CONFIG)
-
-
 # ===========================================================================
 # 页面：概览
 # ===========================================================================
@@ -1517,156 +1476,6 @@ def page_strategies():
 _HORIZON_OPTS = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
 
-@st.fragment
-def page_cockpit():
-    st.markdown('<div class="hero-title">🛰️ 建仓作战室</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">最近几个月该在哪建仓/补仓？顶部给出<b>🎯 最佳入场区 + 锚点价</b>'
-                '（按历史 reward/risk 排名、含置信分层），下方是各回撤档的<b>经验分布</b>'
-                '——价位区间 + 盈亏比 + 期望值 + N + CI + 超基准，外加<b>未来客观日程</b>与历史反应。</div>',
-                unsafe_allow_html=True)
-    st.warning("⚠️ 锚点价是「**若到达就分批行动**」的校准区间中值，**非预测、非保证会到、非买卖指令**；"
-               "CI 跨 0 自动降级低置信，无正超额档则转防守不硬给点；个股含幸存者偏差。仍**不给单一上涨概率**。")
-
-    cc = st.columns([2, 3])
-    asset = cc[0].selectbox("标的", _SPY_FIRST, index=0)
-    horizon = _HORIZON_OPTS[cc[1].selectbox("持有/校准周期", list(_HORIZON_OPTS), index=2,
-                                            help=gl.help_for("远期收益"))]
-    zstart = "1995-01-01" if asset == "SPY" else "2008-01-01"
-
-    # 今日状态
-    tp = c_today_panel(asset, zstart, end)
-    pc = st.columns(4)
-    pc[0].markdown(stat_card("现价", f"{tp['drawdown']:.0%} 距前高",
-                             f"{tp['date'].date()}", "#FFD166", tip="回撤"), unsafe_allow_html=True)
-    pc[1].markdown(stat_card("趋势位置", "均线上方" if tp["trend_state"] == "up_trend" else "均线下方",
-                             f"距200日线 {tp['trend_position']:+.1%}", "#2BE6A8", tip="regime"), unsafe_allow_html=True)
-    vp = tp["vol_percentile"]
-    pc[2].markdown(stat_card("波动状态", {"low_vol": "低波动", "mid_vol": "中波动", "high_vol": "高波动"}.get(tp["vol_state"], "—"),
-                             f"年化{tp['realized_vol']:.0%}·分位{vp:.0%}" if vp == vp else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
-    pc[3].markdown(stat_card("回撤状态", "回撤中" if tp["drawdown_state"] == "in_drawdown" else "近高点",
-                             "免费数据·不可预测未来", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-    st.write("")
-
-    tabZ, tabE, tabL = st.tabs(["💠 条件价位带 + 盈亏比", "🗓️ 未来事件 + 提前消化", "🪜 阶梯式建仓布局"])
-
-    # ---- 块1：条件价位带 ----
-    with tabZ:
-        hz = _chart_horizon(f"zone_{asset}", horizon)
-        with st.spinner("分桶各回撤价位带的历史远期收益分布…"):
-            z = c_zones(asset, zstart, end, hz)
-        from regime import entry_cockpit as ec
-        from data import loader as _ld
-        price = _ld.load_prices([asset], zstart, end)[asset]
-
-        # —— 🎯 最佳入场区 + 锚点价（按历史 reward/risk 排名，含置信分层）——
-        bez = c_best_entry(asset, zstart, end, hz)
-        if bez.get("has_zone"):
-            band = bez["price_band"]
-            anc_label = "触发价" if band[0] is None else "锚点价"
-            band_s = (f"≤ {band[1]:.1f}" if band[0] is None else f"{band[0]:.1f}–{band[1]:.1f}")
-            tier_color = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
-            bc = st.columns(4)
-            dist = bez.get("anchor_distance", float("nan"))
-            bc[0].markdown(stat_card(f"🎯 {anc_label}", f"{bez['anchor_price']:.1f}",
-                                     f"距现价 {dist:+.1%}" if dist == dist else bez["zone_label"], tier_color), unsafe_allow_html=True)
-            bc[1].markdown(stat_card("最佳入场区", band_s, bez["zone_label"], "#FFD166"), unsafe_allow_html=True)
-            bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
-                                     f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
-            ci = bez["ci"]
-            bc[3].markdown(stat_card("置信", bez["tier"].replace("最佳入场区", "").strip("()") or "稳健",
-                                     f"N≈{bez['n_events']}·CI[{ci[0]:+.0%},{ci[1]:+.0%}]", tier_color, tip="CI"), unsafe_allow_html=True)
-            st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-        st.write("")
-
-        c1, c2 = st.columns([3, 2])
-        c1.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
-        c2.plotly_chart(ch.entry_zone_bars(z, hz), use_container_width=True)
-
-        # 选一个价位带看校准结论 + 盈亏比/期望值卡片
-        enough = z[z["enough"]]
-        if not enough.empty:
-            cur_idx = z.index[z["is_current"]]
-            default_zone = z.loc[cur_idx[0], "zone"] if len(cur_idx) and z.loc[cur_idx[0], "enough"] else enough.iloc[0]["zone"]
-            zpick = st.selectbox("查看某价位带的校准结论", enough["zone"].tolist(),
-                                 index=enough["zone"].tolist().index(default_zone) if default_zone in enough["zone"].tolist() else 0)
-            row = enough[enough["zone"] == zpick].iloc[0]
-            st.markdown(f'<div class="verdict">{ec.format_zone_verdict(row, hz)}</div>', unsafe_allow_html=True)
-            kc = st.columns(5)
-            kc[0].markdown(stat_card("价位带", f"{row['price_low']:.0f}–{row['price_high']:.0f}", row["zone"], "#FFD166"), unsafe_allow_html=True)
-            kc[1].markdown(stat_card("远期收益中位", f"{row['median']:+.1%}", f"基准 {row['baseline_median']:+.1%}", "#2BE6A8", tip="远期收益"), unsafe_allow_html=True)
-            rr = row["reward_risk"]
-            kc[2].markdown(stat_card("盈亏比", f"{rr:.2f}" if rr == rr else "—", "中位收益 / 中位浮亏", "#7C5CFC", tip="盈亏比"), unsafe_allow_html=True)
-            ecol = "#2BE6A8" if row["expectancy"] > 0 else "#FF5C7A"
-            kc[3].markdown(stat_card("期望值", f"{row['expectancy']:+.1%}", f"胜率 {row['win_rate']:.0%}", ecol, tip="期望值"), unsafe_allow_html=True)
-            xcol = "#2BE6A8" if (row["ci_low"] > 0 or row["ci_high"] < 0) else "#8A93A6"
-            kc[4].markdown(stat_card("超额(vs基准)", f"{row['excess_median']:+.1%}", f"N≈{int(row['n_events'])}·CI[{row['ci_low']:+.0%},{row['ci_high']:+.0%}]", xcol, tip="超额"), unsafe_allow_html=True)
-        st.write("")
-        st.markdown("##### 各价位带明细")
-        show = z[["zone", "price_low", "price_high", "n_events", "win_rate", "median",
-                  "p10", "reward_risk", "expectancy", "excess_median", "ci_low", "ci_high"]].copy()
-        show = show.rename(columns={"zone": "价位带", "price_low": "价位低", "price_high": "价位高",
-                                    "n_events": "N", "win_rate": "胜率", "median": "中位", "p10": "10分位",
-                                    "reward_risk": "盈亏比", "expectancy": "期望值", "excess_median": "超额",
-                                    "ci_low": "CI下", "ci_high": "CI上"})
-        st.dataframe(show.style.format({"价位低": "{:.0f}", "价位高": "{:.0f}", "胜率": "{:.0%}",
-                                        "中位": "{:+.1%}", "10分位": "{:+.1%}", "盈亏比": "{:.2f}",
-                                        "期望值": "{:+.1%}", "超额": "{:+.1%}", "CI下": "{:+.1%}", "CI上": "{:+.1%}"},
-                                       na_rep="样本不足"), use_container_width=True, hide_index=True)
-        st.caption(f"样本期 {z.attrs['sample_start']}~{z.attrs['sample_end']}。{z.attrs['disclaimer']}")
-
-    # ---- 块2：未来事件 + 提前消化 ----
-    with tabE:
-        if asset == "SPY":
-            st.info("SPY 为 ETF，无公司财报事件。个股(七姐妹)才有财报日程与 PEAD 反应分布。")
-        else:
-            with st.spinner("拉取财报日程 + 历史财报反应分布…"):
-                estats, upcoming, study = c_earnings_reaction(asset, zstart, end)
-            st.markdown(f"##### 🗓️ 未来客观日程（截至 {upcoming.attrs.get('as_of','')}，日历事实非预测）")
-            st.dataframe(upcoming, use_container_width=True, hide_index=True)
-            st.write("")
-            st.markdown("##### 📊 历史财报反应分布（不预测下次好坏）")
-            ec_ = st.columns(4)
-            dm = estats["day_abs_move"]
-            ec_[0].markdown(stat_card("财报日典型波动", f"±{dm['median']:.1%}", f"90分位 ±{dm['p90']:.1%}·N={dm['n']}", "#FF5C7A"), unsafe_allow_html=True)
-            pdft = estats["pre_drift"]
-            ec_[1].markdown(stat_card("财报前 drift(提前消化)", f"{pdft['median']:+.1%}", f"{estats['pre']}日·[{pdft['p10']:+.0%},{pdft['p90']:+.0%}]", "#00D4FF", tip="提前消化"), unsafe_allow_html=True)
-            pb = estats["post_beat"]
-            ec_[2].markdown(stat_card("财报后·超预期", f"{pb['median']:+.1%}", f"{estats['post']}日·N={pb['n']}", "#2BE6A8", tip="PEAD"), unsafe_allow_html=True)
-            pm = estats["post_miss"]
-            ec_[3].markdown(stat_card("财报后·不及预期", f"{pm['median']:+.1%}", f"{estats['post']}日·N={pm['n']}", "#FF5C7A", tip="PEAD"), unsafe_allow_html=True)
-            st.plotly_chart(ch.event_study(study, title=f"{asset} 财报前后累计收益结构"), use_container_width=True, config=ch.CHART_CONFIG)
-            st.caption(estats["note"] + " 「财报前 drift」即量化你说的『市场提前消化基本面』——但它是历史分布，非对下次的判断。")
-
-    # ---- 块3：阶梯式建仓布局 ----
-    with tabL:
-        st.markdown("中长期布局：把预算分成若干档，**距前高每跌一档补一档**，未触发的在窗口末补齐。"
-                    "历史滚动回测对比一次性(lump)/定投(DCA)，看哪种**布局**的资本回报分布更优。")
-        bands_pick = st.multiselect("补仓触发档（距前高回撤）",
-                                    ["5%", "10%", "15%", "20%", "25%", "30%"],
-                                    default=["10%", "20%", "30%"])
-        bands = tuple(int(b.rstrip("%")) / 100 for b in bands_pick)
-        run = run_gate("ladder", {"asset": asset, "bands": bands}, label="🚀 运行阶梯布局回测",
-                       hint="选好补仓档后点运行——滚动多窗口 + bootstrap 约 10–20 秒。")
-        if run is not None and bands:
-            with st.spinner("滚动窗口模拟 阶梯 vs lump vs DCA + bootstrap…"):
-                res = c_ladder(run["asset"], "1995-01-01" if run["asset"] == "SPY" else "2008-01-01", end, run["bands"])
-            st.markdown(f'<div class="hero-sub">{res["note"]}</div>', unsafe_allow_html=True)
-            st.plotly_chart(ch.strategy_compare(res["per_strategy"], title="布局资本回报中位 + 95% CI"), use_container_width=True, config=ch.CHART_CONFIG)
-            rows = []
-            for k, v in res["vs_lump_sum"].items():
-                rows.append({"布局": {"dca": "定投 DCA", "ladder": "阶梯补仓"}.get(k, k),
-                             "相对一次性中位差": v["median_diff"], "CI下": v["ci_low"], "CI上": v["ci_high"],
-                             "跑赢一次性比例": v["beats_lump_rate"], "显著": "✅" if v["significant"] else "—"})
-            st.dataframe(pd.DataFrame(rows).style.format({"相对一次性中位差": "{:+.1%}", "CI下": "{:+.1%}",
-                                                          "CI上": "{:+.1%}", "跑赢一次性比例": "{:.0%}"}),
-                         use_container_width=True, hide_index=True)
-            st.caption("CI 不跨 0 才算显著差异。注意：长期上行市场里一次性投入常胜过分批——阶梯/定投的价值更多在**降低择时风险与浮亏**，不一定提高期望收益。")
-        elif run is not None and not bands:
-            st.caption("至少选一个补仓档。")
-
-
 # ===========================================================================
 # 页面：多票作战简报（综合层）—— 一屏总览 + 每票建仓档 + 引擎桶 + 财报 + 免费新闻 + 自动权重
 # ===========================================================================
@@ -2109,6 +1918,21 @@ def page_panorama():
                            "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
     except Exception as _e:  # noqa: BLE001
         st.caption(f"🎯 最佳入场区暂不可用（{type(_e).__name__}）——其余分析不受影响。若刚更新代码，请在 Streamlit 后台 Reboot 清缓存。")
+
+    # 整合：市场环境(脆弱性) + 等/追操作（一行看清"现在该追/等/防守"）
+    try:
+        from analysis import fragility as fg
+        _curfz = c_fragility(zstart, end).get("cur", {})
+        _cd = float(price.iloc[-1] / price.rolling(252, min_periods=120).max().iloc[-1] - 1.0) if len(price) > 120 else 0.0
+        _wc = fg.wait_or_chase(_cd, fragile_now=_curfz.get("fragile", False), is_index=(a in ("SPY", "QQQ", "DIA", "IWM")))
+        _mc = st.columns([1, 3])
+        _mc[0].markdown(stat_card("市场环境", _curfz.get("light", "—"),
+                                  f"宽度分位 {_curfz.get('pctile', float('nan')):.0%}" if _curfz.get("pctile") == _curfz.get("pctile") else "—",
+                                  "#FF5C7A" if _curfz.get("fragile") else "#2BE6A8", tip="脆弱"), unsafe_allow_html=True)
+        _mc[1].markdown(f'<div class="verdict">🧭 没到位怎么办（现价距前高 {_cd:+.1%}）：'
+                        f'<b>{_wc["action"]}</b> — {_wc["detail"]}</div>', unsafe_allow_html=True)
+    except Exception:  # noqa: BLE001
+        pass
     st.write("")
 
     cL, cR = st.columns([3, 2])
@@ -2527,10 +2351,13 @@ def page_fragility():
     from analysis import fragility as fg
     st.markdown('<div class="hero-title">🩸 市场脆弱性 & 等追指南</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-sub">非主流信号 <b>宽度恶化</b>（% 个股在自身200线上方跌到历史低分位）'
-                '——经网格迭代选定 MA200/15% 分位，常<b>领先于指数破位</b>。这是<b>降仓开关</b>不是崩盘预言。</div>',
-                unsafe_allow_html=True)
-    with st.spinner("计算全市场宽度信号…"):
-        fzz = c_fragility("2005-01-01", end)
+                '——经网格迭代选定 MA200/15% 分位，常<b>领先于指数破位</b>。这是<b>降仓开关</b>不是崩盘预言。'
+                '半导体专属信号实测 lift 2.85x@42日。</div>', unsafe_allow_html=True)
+    bk_name = st.selectbox("板块宽度", list(_FRAGILITY_BASKETS), index=0,
+                           help="选板块看其专属宽度脆弱性——半导体/科技板块的 de-risk 信号比全市场更贴该板块")
+    bk = _FRAGILITY_BASKETS[bk_name]
+    with st.spinner(f"计算{bk_name}宽度信号…"):
+        fzz = c_fragility("2005-01-01", end, tuple(bk) if bk else None)
     cur, ev = fzz["cur"], fzz["eval"]
     if not cur.get("available"):
         st.warning("数据不足，无法计算。"); return
