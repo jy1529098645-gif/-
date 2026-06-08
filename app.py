@@ -638,6 +638,7 @@ _TICKER_GROUPS = {
     "🎬 流媒体/其他大盘": ["NFLX", "DIS", "UBER", "PLTR"],
     "⚡ 杠杆ETF(3x)": ["TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "TNA"],
     "📈 指数ETF": ["SPY", "QQQ", "DIA", "IWM"],
+    "🧩 行业ETF": ["XLK", "SMH", "XLC", "XLY", "XLF", "XLV", "XLE", "XLI", "XLP", "XLU", "XLB", "XLRE"],
 }
 # 脆弱性面板可选的板块宽度篮子（板块级 de-risk 信号；半导体实测 lift 2.85x@42日）
 _FRAGILITY_BASKETS = {
@@ -2122,7 +2123,9 @@ def page_fragility():
         st.line_chart(eq, color=["#2BE6A8", "#8A93A6"])
     from analysis import overlay as _ov
     st.markdown(f'<div class="verdict">{_ov.verdict(bt)}</div>', unsafe_allow_html=True)
-    st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9，回撤显著更浅。非投资建议。")
+    st.caption(f"🧭 板块适用性：{_ov.sector_effectiveness(a3)}")
+    st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9、回撤显著更浅；"
+               "大规模分板块测试：高beta/周期/ETF升夏普，能源/防御板块主要砍回撤。非投资建议。")
 
 _ADV_PAGES = {
     "🩸 市场脆弱性 & 等追": page_fragility,

@@ -47,6 +47,13 @@ def test_verdict_string():
     assert "风险管理叠加" in v and "夏普" in v
 
 
+def test_sector_effectiveness():
+    assert "能源" in ov.sector_effectiveness("XOM")
+    assert "防御" in ov.sector_effectiveness("KO")
+    assert "升夏普" in ov.sector_effectiveness("NVDA")
+    assert "升夏普" in ov.sector_effectiveness("XLK")
+
+
 def test_param_insensitive_runs():
     px = _trending()
     for tv in (0.12, 0.15, 0.20):

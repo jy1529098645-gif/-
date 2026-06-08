@@ -71,6 +71,23 @@ def backtest_overlay(px: pd.Series, fragile: pd.Series | None = None,
     }
 
 
+# 大规模分板块回测结论：叠加在高beta/周期板块+ETF 升夏普；能源(商品·均值回归)与防御板块
+# (必需消费/公用/部分医疗)只砍回撤、夏普≈持平。分板块精调 vol 目标不稳健(过拟合)→统一用全局15%。
+_ENERGY = {"XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "XLE"}
+_DEFENSIVE = {"PG", "KO", "PEP", "WMT", "COST", "MO", "MDLZ", "CL", "NEE", "DUK", "SO", "D",
+              "AEP", "XLP", "XLU"}
+
+
+def sector_effectiveness(asset: str) -> str:
+    """该标的所属板块上，风险管理叠加的实测有效性(大规模回测结论)。"""
+    a = asset.upper()
+    if a in _ENERGY:
+        return "⚠️ 能源板块：商品驱动+均值回归，叠加**主要用于砍回撤**，夏普≈持平甚至略降，趋势规则慎用。"
+    if a in _DEFENSIVE:
+        return "ℹ️ 防御板块(消费/公用)：本就低波，叠加**主要砍回撤**，夏普提升有限。"
+    return "✅ 高beta/周期/科技/ETF：叠加历史上**升夏普+砍回撤**，是适用的主战场。"
+
+
 def verdict(bt: dict) -> str:
     """一句话裁决。"""
     s, h = bt["strategy"], bt["hold"]
