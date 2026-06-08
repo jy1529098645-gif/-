@@ -2022,6 +2022,21 @@ def page_panorama():
                      use_container_width=True, hide_index=True, column_config=_col_cfg(show.columns))
         st.caption("📖 列名可悬浮看含义。每个回撤区间对应一段价位，给该状态历史远期收益分布；区间+分布，不是目标价。")
 
+    with _T_ZONE.expander("📦 筹码分布 / 换手位（Volume Profile · POC 高换手价 · 价值区）"):
+        try:
+            _ohlcv_vp, _vp = c_volume_profile(a, "2015-01-01", end, 252)
+            _cur = float(price.iloc[-1]); _poc = float(_vp["poc"])
+            _rel = "上方（POC=支撑）" if _cur >= _poc else "下方（POC=压力）"
+            cvp = st.columns(3)
+            cvp[0].markdown(stat_card("POC 最高换手价", f"{_poc:.1f}", f"现价在其{_rel}", "#00D4FF", tip="POC"), unsafe_allow_html=True)
+            cvp[1].markdown(stat_card("高换手价值区(70%)", f"{_vp['value_area'][0]:.0f}–{_vp['value_area'][1]:.0f}", "成交最集中带", "#7C5CFC", tip="Volume Profile"), unsafe_allow_html=True)
+            cvp[2].markdown(stat_card("现价 vs POC", f"{_cur:.1f}", f"距POC {(_cur/_poc-1):+.1%}", "#FFD166"), unsafe_allow_html=True)
+            st.plotly_chart(ch.volume_profile_bars(_vp, title=f"{a} 筹码分布（近1年日线）"), use_container_width=True, config=ch.CHART_CONFIG)
+            st.caption("📖 横轴=该价位累计成交量(换手)。**POC=换手最密价位**(强支撑/压力磁吸)；**价值区=70%成交集中带**(辨别主力换手区)。"
+                       "现价上穿POC→其转为支撑；下破→转为压力。日线均摊近似·仅辅助·非信号·不入量化。")
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"筹码分布暂不可用（{type(_e).__name__}）——可能该标的 OHLCV 数据不足。")
+
     with _T_ZONE.expander("🪜 建仓方案模拟器：一次性 vs 定投 vs 越跌越补（该怎么把钱投进去）"):
         st.caption("回答一个具体问题：**我要把一笔钱投进这只票，是一次性、还是分批/越跌越补更好？** "
                    "用历史滚动窗口对比三种方案的**回报**与**建仓期最深浮亏(痛感)**，给可执行结论。")
