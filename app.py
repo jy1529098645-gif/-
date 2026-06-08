@@ -641,12 +641,23 @@ def c_brief(ticker: str, horizon: int, end: str, broad: bool = False):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def c_fund_info(ticker: str):
-    """取全面基本面字段(体检后)供分析师视角用。ttl 1 小时。失败返回 {}。"""
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info or {}
-    except Exception:  # noqa: BLE001
-        return {}
+    """取全面基本面字段(体检后)供分析师视角用。ttl 1 小时。
+
+    重试 3 次防 yfinance 瞬时限流；**取不到则抛错(不缓存空)**，下次重试，避免把限流空值缓存1小时。
+    """
+    import time as _t
+    import yfinance as yf
+    info = {}
+    for _i in range(3):
+        try:
+            info = yf.Ticker(ticker).info or {}
+        except Exception:  # noqa: BLE001
+            info = {}
+        if info and info.get("trailingPE") is not None or (info and len(info) > 30):
+            break
+        _t.sleep(0.8)
+    if not info or len(info) < 20:
+        raise RuntimeError(f"yfinance 暂未返回 {ticker} 基本面(限流)，已不缓存空值，稍后重试")
     from analysis.engine_discipline import sanity_check_fundamentals
     from analysis.analyst import FULL_FIELDS
     chk = sanity_check_fundamentals(info)
@@ -1665,15 +1676,17 @@ def page_panorama():
 
     # 📝 分析师视角（全面基本面 + 量化情景 + 失效条件 · 研报式叙事，不纳入量化）
     with st.expander("📝 分析师视角（全面基本面 · 量化情景 · 催化剂 · 失效条件）", expanded=False):
-        try:
-            from analysis import analyst as _an
-            _info = c_fund_info(a)
-            _rep = _an.analyst_report(a, price, _info, b, horizon)
-            st.markdown(_an.format_report(_rep))
-            st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
-                       "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
-        except Exception as _e:  # noqa: BLE001
-            st.caption(f"分析师视角暂不可用（{type(_e).__name__}）。")
+        # 按需加载：避免每次 panorama 渲染都并发 yfinance .info 撞限流(导致"数据不足")
+        if _lazy_gate(f"analyst_{a}", "▶ 生成分析师报告（取实时基本面）"):
+            try:
+                from analysis import analyst as _an
+                _info = c_fund_info(a)
+                _rep = _an.analyst_report(a, price, _info, b, horizon)
+                st.markdown(_an.format_report(_rep))
+                st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
+                           "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
+            except Exception as _e:  # noqa: BLE001
+                st.warning(f"基本面暂未取到（yfinance 限流）：{_e}。请**再点一次**按钮重试（已不缓存空值）。")
 
     # 操作预案数据（决策卡已是页面头部裁决；旧"今日速读"横幅已删，避免重复）
     from analysis.playbook import build_playbook
