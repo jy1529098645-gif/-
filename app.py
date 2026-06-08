@@ -687,6 +687,25 @@ def c_best_entry_scan(asset: str, start: str, end: str):
     return ec.best_entry_across_horizons(px, asset=asset, single_name=(asset != "SPY"), n_boot=350)
 
 
+# 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
+_BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
+                   "JNJ", "LLY", "XOM", "CVX", "WMT", "HD", "PG", "KO", "CAT", "BA",
+                   "DIS", "NFLX", "INTC", "CSCO", "ORCL", "CRM", "PEP", "MCD", "NKE", "ABT",
+                   "TMO", "COST", "AMD", "QCOM", "TXN", "HON", "UNP", "LOW", "GS", "MS"]
+
+
+@st.cache_data(show_spinner=False)
+def c_fragility(start: str, end: str):
+    """市场脆弱性(宽度恶化)：当前读数 + 实测预警力 + 历史序列。"""
+    from data import loader
+    from analysis import fragility as fg
+    panel = loader.load_prices(_BREADTH_BASKET, start, end)
+    spy = loader.load_prices(["SPY"], start, end)["SPY"]
+    return {"cur": fg.current_fragility(panel),
+            "eval": {h: fg.evaluate_breadth_warning(panel, spy, horizon=h) for h in (42, 63, 126)},
+            "frame": fg.fragility_frame(panel), "spy": spy}
+
+
 @st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
     from data import loader
@@ -741,7 +760,7 @@ _TICKER_GROUPS = {
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
+_ADV_NAMES = ["🩸 市场脆弱性 & 等追", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
               "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
@@ -2504,7 +2523,62 @@ def page_panorama():
 # ---------------------------------------------------------------------------
 # 路由（三视图）
 # ---------------------------------------------------------------------------
+def page_fragility():
+    from analysis import fragility as fg
+    st.markdown('<div class="hero-title">🩸 市场脆弱性 & 等追指南</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">非主流信号 <b>宽度恶化</b>（% 个股在自身200线上方跌到历史低分位）'
+                '——经网格迭代选定 MA200/15% 分位，常<b>领先于指数破位</b>。这是<b>降仓开关</b>不是崩盘预言。</div>',
+                unsafe_allow_html=True)
+    with st.spinner("计算全市场宽度信号…"):
+        fzz = c_fragility("2005-01-01", end)
+    cur, ev = fzz["cur"], fzz["eval"]
+    if not cur.get("available"):
+        st.warning("数据不足，无法计算。"); return
+    cc = st.columns(4)
+    col = "#FF5C7A" if cur["fragile"] else "#2BE6A8"
+    cc[0].markdown(stat_card("当前状态", cur["light"], f"截至 {cur['date']}", col), unsafe_allow_html=True)
+    cc[1].markdown(stat_card("市场宽度", f"{cur['breadth']:.0%}", "个股在自身200线上方", "#00D4FF"), unsafe_allow_html=True)
+    cc[2].markdown(stat_card("宽度历史分位", f"{cur['pctile']:.0%}", f"<{cur['thresh']:.0%} 触发预警", col, tip="分位"), unsafe_allow_html=True)
+    e63 = ev.get(63, {})
+    cc[3].markdown(stat_card("信号预警力", f"{e63.get('lift', float('nan')):.2f}x" if e63.get("lift") == e63.get("lift") else "—",
+                             f"未来63日大跌概率(误报{e63.get('fp', 0):.0%})", "#7C5CFC", tip="lift"), unsafe_allow_html=True)
+    st.markdown(f'<div class="verdict">{"🔴 宽度恶化已触发——历史上未来3个月大跌概率约为平时的 "+format(e63.get("lift",0),".1f")+" 倍，建议系统性降仓（注意：约 60% 是假警报，这是降仓开关非崩盘预言）。" if cur["fragile"] else "🟢 市场宽度健康，无脆弱性预警——不必因此降仓。"}</div>',
+                unsafe_allow_html=True)
+    # 实测预警力表
+    st.markdown("##### 📊 该信号的实测预警力（历史回测，目标=未来H日内跌≥10%）")
+    rows = []
+    for h, r in ev.items():
+        if "lift" in r:
+            rows.append({"持有期": f"{h}日", "基率": f"{r['base']:.0%}", "触发后命中": f"{r['cond']:.0%}",
+                         "提升(lift)": f"{r['lift']:.2f}x", "召回": f"{r['recall']:.0%}", "误报率": f"{r['fp']:.0%}"})
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("📖 lift>1=有预警价值；误报率高=会频繁假警报（用作降仓开关，接受假警报换'漏不掉真回撤'）。")
+    # 宽度分位 vs SPY 历史
+    fr_df = fzz["frame"].dropna()
+    if not fr_df.empty:
+        st.markdown("##### 宽度历史分位走势（越低越脆弱）")
+        st.line_chart(fr_df[["pctile"]].rename(columns={"pctile": "宽度分位"}), color="#FF9F45")
+
+    # 等 / 追 指南
+    st.divider()
+    st.markdown("##### 🧭 等还是追？（输入标的，按当前回撤 + 市场脆弱性给操作指南）")
+    a2 = st.selectbox("标的", _SPY_FIRST, index=0, key="wc_asset")
+    from data import loader as _ld
+    px2 = _ld.load_prices([a2], "2010-01-01", end)[a2].dropna()
+    hi = px2.rolling(252, min_periods=120).max()
+    cur_dd = float(px2.iloc[-1] / hi.iloc[-1] - 1.0)
+    g = fg.wait_or_chase(cur_dd, fragile_now=cur["fragile"], is_index=(a2 in ("SPY", "QQQ", "DIA", "IWM")))
+    gc = st.columns(3)
+    gc[0].markdown(stat_card("现价距前高", f"{cur_dd:+.1%}", a2, "#FFD166"), unsafe_allow_html=True)
+    gc[1].markdown(stat_card("操作", g["action"], g["headline"], "#FF5C7A" if g["fragile"] else "#2BE6A8"), unsafe_allow_html=True)
+    gc[2].markdown(stat_card("市场环境", cur["light"], f"宽度分位 {cur['pctile']:.0%}", col), unsafe_allow_html=True)
+    st.markdown(f'<div class="verdict">{g["detail"]}</div>', unsafe_allow_html=True)
+    st.caption("📖 回测结论：高位附近'等浅回调'历史上更亏(回调70%不来)→应追/分批；唯一该'等'的是深回撤区(指数−20~30%有edge)；脆弱性触发→一切偏防守。非投资建议。")
+
+
 _ADV_PAGES = {
+    "🩸 市场脆弱性 & 等追": page_fragility,
     "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,
     "📈 当前快照": page_snapshot, "🗞️ 事件时间线": page_events, "📅 财报 PEAD": page_earnings,
     "💰 建仓策略对比": page_strategies, "ℹ️ 关于/术语": page_overview,
