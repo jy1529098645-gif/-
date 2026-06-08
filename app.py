@@ -1674,24 +1674,12 @@ def page_panorama():
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
 
-    # 📝 分析师视角（全面基本面 + 量化情景 + 失效条件 · 研报式叙事，不纳入量化）
-    with st.expander("📝 分析师视角（全面基本面 · 量化情景 · 催化剂 · 失效条件）", expanded=False):
-        # 按需加载：避免每次 panorama 渲染都并发 yfinance .info 撞限流(导致"数据不足")
-        if _lazy_gate(f"analyst_{a}", "▶ 生成分析师报告（取实时基本面）"):
-            try:
-                from analysis import analyst as _an
-                _info = c_fund_info(a)
-                _rep = _an.analyst_report(a, price, _info, b, horizon)
-                st.markdown(_an.format_report(_rep))
-                st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
-                           "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
-            except Exception as _e:  # noqa: BLE001
-                st.warning(f"基本面暂未取到（yfinance 限流）：{_e}。请**再点一次**按钮重试（已不缓存空值）。")
-
+    st.divider()
     # 操作预案数据（决策卡已是页面头部裁决；旧"今日速读"横幅已删，避免重复）
     from analysis.playbook import build_playbook
     pbk = build_playbook(b)
 
+    # ========== 第二区：当前状态（证据等级 + 今日状态 + 多周期）==========
     # ---- 证据等级 + 多周期对账 + 一致性/数据质量告警 ----
     for c in (b.get("consistency") or []):
         st.markdown(f'<div class="verdict">🚧 <b>一致性告警</b>：{c["message"]}</div>', unsafe_allow_html=True)
@@ -1949,48 +1937,56 @@ def page_panorama():
     st.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
     st.write("")
 
-    # ---- 多引擎结论 ----
-    st.markdown("#### 🧠 多引擎校准（不同视角的历史倾斜）　💡 标题/数值可悬浮看含义")
-    ec_cols = st.columns(3)
-    for col, key, label in [(ec_cols[0], "engine_state", "当前状态桶"),
-                            (ec_cols[1], "engine_value", "估值低位桶(买便宜)"),
-                            (ec_cols[2], "engine_best", "最优倾斜桶")]:
-        e = b.get(key)
-        if e:
-            c = "#2BE6A8" if e["excess"] > 0 else "#8A93A6"
-            sub = f"超额{e['excess']:+.1%}·胜率{e['win_rate']:.0%}{'·显著' if e.get('significant') else ''}"
-            col.markdown(stat_card(f"{label}", f"{e['median']:+.1%}", sub, c, tip="状态桶"), unsafe_allow_html=True)
-    st.write("")
+    # ========== 第四区：深入分析（全部收进 Tab，保持主区简洁）==========
+    from regime import entry_cockpit as ec
+    st.divider()
+    st.markdown("#### 📂 深入分析（按需展开）")
+    _T_FUND, _T_ZONE, _T_RISK, _T_TOOL = st.tabs(
+        ["📊 基本面 & 情景", "💠 价位 & 方案", "🛡️ 风险 & 事件", "🧰 工具 & 校准"])
+    _T_EVENT = _T_RISK      # 新闻/事件归入「风险 & 事件」
+    _T_HIST = _T_TOOL       # 校准追踪归入「工具 & 校准」
 
-    # ---- 财报反应 ----
+    # ── 📊 基本面 & 情景：分析师视角 + 多引擎 + 财报反应 ──
+    with _T_FUND.expander("📝 分析师视角（全面基本面 · 量化情景 · 催化剂 · 失效条件）", expanded=True):
+        if _lazy_gate(f"analyst_{a}", "▶ 生成分析师报告（取实时基本面）"):
+            try:
+                from analysis import analyst as _an
+                _info = c_fund_info(a)
+                _rep = _an.analyst_report(a, price, _info, b, horizon)
+                st.markdown(_an.format_report(_rep))
+                st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
+                           "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
+            except Exception as _e:  # noqa: BLE001
+                st.warning(f"基本面暂未取到（yfinance 限流）：{_e}。请**再点一次**按钮重试（已不缓存空值）。")
+    with _T_FUND.expander("🧠 多引擎校准（不同视角的历史倾斜）", expanded=True):
+        ec_cols = st.columns(3)
+        for col, key, label in [(ec_cols[0], "engine_state", "当前状态桶"),
+                                (ec_cols[1], "engine_value", "估值低位桶(买便宜)"),
+                                (ec_cols[2], "engine_best", "最优倾斜桶")]:
+            e = b.get(key)
+            if e:
+                c = "#2BE6A8" if e["excess"] > 0 else "#8A93A6"
+                sub = f"超额{e['excess']:+.1%}·胜率{e['win_rate']:.0%}{'·显著' if e.get('significant') else ''}"
+                col.markdown(stat_card(f"{label}", f"{e['median']:+.1%}", sub, c, tip="状态桶"), unsafe_allow_html=True)
     esr = b.get("earnings_stats")
     if esr and esr.get("n_events"):
-        st.markdown("#### 📅 财报反应（历史）")
-        st.caption(f"历史 {esr['n_events']} 次：财报日典型波动 ±{esr['day_abs_move']['median']:.1%}；"
-                   f"财报前 {esr['pre']} 日 drift 中位 {esr['pre_drift']['median']:+.1%}（市场提前消化）；"
-                   f"财报后 {esr['post']} 日 超预期 {esr['post_beat']['median']:+.1%} / 不及 {esr['post_miss']['median']:+.1%}。")
-        up = b.get("upcoming")
-        if up is not None and len(up):
-            st.dataframe(up, use_container_width=True, hide_index=True, column_config=_col_cfg(up.columns))
-        # PEAD：当前是否处在"已验证的财报后漂移窗口"
-        try:
-            pd_now = c_pead(a, "2010-01-01", end)
-        except Exception:  # noqa: BLE001
-            pd_now = None
-        if pd_now and pd_now.get("actionable"):
-            st.markdown(f'<div class="verdict">📈 <b>财报后漂移(PEAD · 工具唯一通过安慰剂检验的免费信号)</b><br>'
-                        f'{pd_now["verdict"]}<br><span style="color:#8A93A6;font-size:0.82rem">{pd_now["note"]}</span></div>',
-                        unsafe_allow_html=True)
-        elif pd_now is not None:
-            st.caption("📈 PEAD：当前不在财报后漂移窗口内（或该票同类财报样本不足）。")
-
-    # ---- 深入分析：精简后只保留有 edge / 实用的模块，收进 3 个 Tab ----
-    from regime import entry_cockpit as ec
-
-    st.markdown("#### 📂 深入分析（按需展开）")
-    _T_ZONE, _T_RISK, _T_TOOL = st.tabs(["💠 价位 & 方案", "🛡️ 风险 & 事件", "🧰 工具 & 校准"])
-    _T_EVENT = _T_RISK      # 新闻归入「风险 & 事件」
-    _T_HIST = _T_TOOL       # 校准追踪归入「工具 & 校准」
+        with _T_FUND.expander("📅 财报反应（历史）+ PEAD", expanded=True):
+            st.caption(f"历史 {esr['n_events']} 次：财报日典型波动 ±{esr['day_abs_move']['median']:.1%}；"
+                       f"财报前 {esr['pre']} 日 drift 中位 {esr['pre_drift']['median']:+.1%}（市场提前消化）；"
+                       f"财报后 {esr['post']} 日 超预期 {esr['post_beat']['median']:+.1%} / 不及 {esr['post_miss']['median']:+.1%}。")
+            up = b.get("upcoming")
+            if up is not None and len(up):
+                st.dataframe(up, use_container_width=True, hide_index=True, column_config=_col_cfg(up.columns))
+            try:
+                pd_now = c_pead(a, "2010-01-01", end)
+            except Exception:  # noqa: BLE001
+                pd_now = None
+            if pd_now and pd_now.get("actionable"):
+                st.markdown(f'<div class="verdict">📈 <b>财报后漂移(PEAD · 工具唯一通过安慰剂检验的免费信号)</b><br>'
+                            f'{pd_now["verdict"]}<br><span style="color:#8A93A6;font-size:0.82rem">{pd_now["note"]}</span></div>',
+                            unsafe_allow_html=True)
+            elif pd_now is not None:
+                st.caption("📈 PEAD：当前不在财报后漂移窗口内（或该票同类财报样本不足）。")
 
     with _T_HIST.expander("🎯 校准追踪（记录此刻信号 · 事后比对'说的 vs 做到的'）"):
         from analysis import journal as jn
