@@ -617,6 +617,24 @@ def c_brief(ticker: str, horizon: int, end: str, broad: bool = False):
     sources = ("google", "yahoo", "gdelt") if broad else ("google", "yahoo")
     return bf.stock_brief(ticker, bstart, end, horizon=horizon, with_news=True, news_sources=sources)
 
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def c_fund_info(ticker: str):
+    """取全面基本面字段(体检后)供分析师视角用。ttl 1 小时。失败返回 {}。"""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    from analysis.engine_discipline import sanity_check_fundamentals
+    from analysis.analyst import FULL_FIELDS
+    chk = sanity_check_fundamentals(info)
+    merged = dict(info); merged.update(chk["clean"])
+    for k in chk["suspicious"]:
+        merged.pop(k, None)
+    return {k: merged.get(k) for k in FULL_FIELDS}
+
+
 @st.cache_data(show_spinner=False, ttl=1800)
 def c_read_articles(ticker: str, broad: bool, end: str, limit: int = 5):
     """抓取该票前 limit 条新闻正文 + 抽关键句（慢，ttl 30 分钟）。"""
@@ -1615,6 +1633,18 @@ def page_panorama():
             f'</div>', unsafe_allow_html=True)
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
+
+    # 📝 分析师视角（全面基本面 + 量化情景 + 失效条件 · 研报式叙事，不纳入量化）
+    with st.expander("📝 分析师视角（全面基本面 · 量化情景 · 催化剂 · 失效条件）", expanded=False):
+        try:
+            from analysis import analyst as _an
+            _info = c_fund_info(a)
+            _rep = _an.analyst_report(a, price, _info, b, horizon)
+            st.markdown(_an.format_report(_rep))
+            st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
+                       "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"分析师视角暂不可用（{type(_e).__name__}）。")
 
     # 操作预案数据（决策卡已是页面头部裁决；旧"今日速读"横幅已删，避免重复）
     from analysis.playbook import build_playbook
