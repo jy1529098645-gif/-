@@ -153,6 +153,36 @@ def crisis_stress(equity: pd.DataFrame, crises=CRISES) -> list:
     return rows
 
 
+def stability_stats(ret: pd.Series) -> dict:
+    """稳定性画像：年化/波动/最大回撤/最差年/正收益月占比/滚动1年正收益占比/最长水下(月)。"""
+    ret = ret.dropna()
+    if len(ret) < 60:
+        return {}
+    eq = (1 + ret).cumprod(); yrs = len(ret) / 252
+    yr = ret.groupby(ret.index.year).apply(lambda x: (1 + x).prod() - 1)
+    mo = ret.resample("ME").apply(lambda x: (1 + x).prod() - 1) if hasattr(ret.index, "freq") or True else ret
+    try:
+        mo = ret.resample("ME").apply(lambda x: (1 + x).prod() - 1)
+    except Exception:  # noqa: BLE001
+        mo = ret.resample("M").apply(lambda x: (1 + x).prod() - 1)
+    roll1y = eq.pct_change(252).dropna()
+    dd = eq / eq.cummax() - 1
+    uw = (dd < -0.05).astype(int)
+    longest = cur = 0
+    for u in uw:
+        cur = cur + 1 if u else 0
+        longest = max(longest, cur)
+    return {
+        "cagr": float(eq.iloc[-1] ** (1 / yrs) - 1),
+        "vol": float(ret.std() * np.sqrt(252)),
+        "maxdd": float(dd.min()),
+        "worst_year": float(yr.min()),
+        "pos_months": float((mo > 0).mean()),
+        "pos_roll1y": float((roll1y > 0).mean()) if len(roll1y) else float("nan"),
+        "longest_underwater_m": int(longest // 21),
+    }
+
+
 def rolling_sharpe(ret: pd.Series, window: int = 252) -> pd.Series:
     """滚动年化夏普——监控策略 edge 是否随时间衰减。"""
     r = ret.dropna()

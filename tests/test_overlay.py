@@ -64,6 +64,14 @@ def test_backtest_portfolio():
     assert bt["overlay"]["maxdd"] >= bt["hold"]["maxdd"]
 
 
+def test_stability_stats():
+    s = ov.stability_stats(_trending().pct_change())
+    for k in ("cagr", "vol", "maxdd", "worst_year", "pos_months", "pos_roll1y", "longest_underwater_m"):
+        assert k in s
+    assert 0 <= s["pos_months"] <= 1
+    assert s["maxdd"] <= 0
+
+
 def test_crisis_stress_and_rolling_sharpe():
     prices = {f"A{i}": _trending(seed=i) for i in range(3)}
     bt = ov.backtest_portfolio(prices, benchmark=_trending(seed=9))

@@ -593,6 +593,32 @@ def c_overlay(asset: str, start: str, end: str):
 
 _FOCUS_UNIVERSE = ["QQQ", "SPY", "XLK", "SMH", "NVDA", "AAPL", "MSFT", "GOOGL",
                    "AMZN", "META", "AVGO", "AMD", "TSM", "CRM"]
+# 稳健度档 → 风险叠加目标波动（保守=更稳更低仓，激进=更高仓）。贯穿决策卡仓位+稳定面板。
+_PROFILE_VOL = {"保守": 0.10, "均衡": 0.15, "激进": 0.20}
+
+
+_STABLE_UNIVERSES = {
+    "仅指数(SPY/QQQ/DIA)": ["SPY", "QQQ", "DIA"],
+    "聚焦科技/半导体": _FOCUS_UNIVERSE,
+    "七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
+}
+
+
+@st.cache_data(show_spinner=False)
+def c_stability(uni_key: str, target_vol: float, start: str, end: str):
+    """稳定配置回测：选定组合+目标波动，叠加 vs 持有 的稳定性画像 + 净值。"""
+    from data import loader
+    from analysis import overlay as ov
+    prices = {}
+    for t in _STABLE_UNIVERSES.get(uni_key, _FOCUS_UNIVERSE):
+        try:
+            prices[t] = loader.load_prices([t], start, end)[t]
+        except Exception:  # noqa: BLE001
+            pass
+    fr = c_fragility(start, end)["frame"]["fragile"]
+    bt = ov.backtest_portfolio(prices, fragile=fr, target_vol=target_vol)
+    return {"overlay": ov.stability_stats(bt["ret_overlay"]),
+            "hold": ov.stability_stats(bt["ret_hold"]), "equity": bt["equity"]}
 
 
 @st.cache_data(show_spinner=False)
@@ -701,7 +727,7 @@ _FRAGILITY_BASKETS = {
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🩸 市场脆弱性 & 等追", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
+_ADV_NAMES = ["🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
               "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
@@ -1635,6 +1661,14 @@ def page_panorama():
     st.markdown('<div class="hero-sub">选股即自动生成：今日状态 · 该在哪建仓(价位带/建仓档) · 引擎结论 · 财报日程与反应 · 信号。'
                 '<b>只校准不预测，给的是历史分布+区间+CI，不是目标价/买卖指令。</b></div>', unsafe_allow_html=True)
     st.caption("💡 阅读提示：卡片标题与表格列名带虚线下划线/可**鼠标悬浮**看专业名词含义；数值照常显示。")
+    with st.expander("ℹ️ 30 秒上手：这页怎么看", expanded=False):
+        st.markdown(
+            "1. **🎯 决策卡**（最上）= 一眼结论：现在该 **追/等/建仓/防守**、入场参考价、**建议仓位%**、入场后与离场规则。\n"
+            "2. **当前状态** = 证据等级 + 今日价格/趋势/波动 + 未来事件雷达。\n"
+            "3. **在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档 + 没到位时『等/追』。\n"
+            "4. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
+            "5. 侧栏 **🧭 风险偏好** 决定你的稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。\n"
+            "> 重计算项默认收起、点『▶』才算，避免卡顿。一切是历史校准+概率，非买卖指令。")
     st.write("")
 
     with st.spinner(f"正在生成 {a} 全景分析（首次约 10 秒，之后秒开）…"):
@@ -1657,8 +1691,11 @@ def page_panorama():
         # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）
         try:
             from analysis import overlay as _ov2
-            _posnow = float(_ov2.risk_managed_position(price, c_fragility(zstart, end)["frame"]["fragile"]).iloc[-1])
-            _possz = f"📊 当前建议仓位 <b>{_posnow:.0%}</b>（风险叠加规则：满仓100%基准上按趋势/波动/宽度缩放）"
+            _tvol = _PROFILE_VOL.get(gl_profile, 0.15)
+            _posnow = float(_ov2.risk_managed_position(price, c_fragility(zstart, end)["frame"]["fragile"],
+                                                       target_vol=_tvol).iloc[-1])
+            _possz = (f"📊 当前建议仓位 <b>{_posnow:.0%}</b>（{gl_profile}档·目标波动{_tvol:.0%}；"
+                      f"满仓100%基准上按趋势/波动/宽度缩放，侧栏可调稳健度）")
         except Exception:  # noqa: BLE001
             _possz = ""
         st.markdown(
@@ -2139,10 +2176,34 @@ def page_panorama():
 # ---------------------------------------------------------------------------
 def page_fragility():
     from analysis import fragility as fg
-    st.markdown('<div class="hero-title">🩸 市场脆弱性 & 等追指南</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">非主流信号 <b>宽度恶化</b>（% 个股在自身200线上方跌到历史低分位）'
-                '——经网格迭代选定 MA200/15% 分位，常<b>领先于指数破位</b>。这是<b>降仓开关</b>不是崩盘预言。'
-                '半导体专属信号实测 lift 2.85x@42日。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-title">🛡️ 稳定配置 & 市场风险</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">为<b>稳定收益</b>而设：选你的组合 + 稳健度（目标波动），看回测的稳定性画像'
+                '（波动/回撤/最差年/滚动1年正收益）。下方是市场脆弱性预警与等/追指南。</div>', unsafe_allow_html=True)
+
+    # ===== 🛡️ 稳定配置（可调目标波动，按你的稳健度）=====
+    sc1, sc2 = st.columns([2, 3])
+    _uni = sc1.selectbox("组合", list(_STABLE_UNIVERSES), index=0,
+                         help="仅指数最稳；聚焦科技/半导体收益高些波动大些")
+    _defv = int(_PROFILE_VOL.get(gl_profile, 0.15) * 100)
+    _tv = sc2.slider("稳健度 = 目标年化波动（越低越稳，仓位越保守）", 8, 25, _defv, 1,
+                     help=f"侧栏稳健度『{gl_profile}』默认 {_defv}%；这里可临时覆盖") / 100.0
+    with st.spinner("回测稳定配置…"):
+        stab = c_stability(_uni, _tv, "2010-01-01", end)
+    o, h = stab["overlay"], stab["hold"]
+    if o:
+        mc = st.columns(5)
+        mc[0].markdown(stat_card("年化", f"{o['cagr']:+.0%}", f"持有 {h['cagr']:+.0%}", "#7C5CFC"), unsafe_allow_html=True)
+        mc[1].markdown(stat_card("波动", f"{o['vol']:.0%}", f"持有 {h['vol']:.0%}", "#00D4FF", tip="波动"), unsafe_allow_html=True)
+        mc[2].markdown(stat_card("最大回撤", f"{o['maxdd']:.0%}", f"持有 {h['maxdd']:.0%}",
+                                 "#2BE6A8" if o["maxdd"] >= h["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
+        mc[3].markdown(stat_card("最差年", f"{o['worst_year']:+.0%}", f"持有 {h['worst_year']:+.0%}", "#FFD166"), unsafe_allow_html=True)
+        mc[4].markdown(stat_card("滚动1年正收益", f"{o['pos_roll1y']:.0%}", "任意时点持有1年赚钱概率", "#2BE6A8"), unsafe_allow_html=True)
+        st.line_chart(stab["equity"], color=["#2BE6A8", "#8A93A6"])
+        st.caption(f"📖 {_uni} · 目标波动{_tv:.0%}：绿=稳定配置(风险叠加)，灰=闭眼持有。"
+                   f"最长水下 {o['longest_underwater_m']} 个月、{o['pos_months']:.0%} 的月份为正。"
+                   "调低目标波动→更稳、回撤更浅、收益略低。**这是为稳定收益设计的核心配置**。非投资建议。")
+    st.divider()
+    st.markdown("##### 🩸 市场脆弱性预警（宽度恶化·降仓开关）")
     bk_name = st.selectbox("板块宽度", list(_FRAGILITY_BASKETS), index=0,
                            help="选板块看其专属宽度脆弱性——半导体/科技板块的 de-risk 信号比全市场更贴该板块")
     bk = _FRAGILITY_BASKETS[bk_name]
@@ -2261,7 +2322,7 @@ def page_fragility():
     st.caption("📖 这是把工具的可部署规则用到整个聚焦组合的真实回测。结论：风险调整指标(夏普/索提诺/卡玛/回撤)优于持有与SPY。非投资建议。")
 
 _ADV_PAGES = {
-    "🩸 市场脆弱性 & 等追": page_fragility,
+    "🛡️ 稳定配置 & 风险": page_fragility,
     "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,
     "📈 当前快照": page_snapshot, "🗞️ 事件时间线": page_events, "📅 财报 PEAD": page_earnings,
     "💰 建仓策略对比": page_strategies, "ℹ️ 关于/术语": page_overview,
