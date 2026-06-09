@@ -214,6 +214,17 @@ CHART_CONFIG = {
                                "drawclosedpath", "drawcircle", "drawrect", "eraseshape"],
 }
 
+# TradingView 手感配置：滚轮缩放、双击复位、工具栏仅悬浮出现(平时干净)、只留平移/缩放/复位
+TV_CONFIG = {
+    "scrollZoom": True,
+    "displaylogo": False,
+    "displayModeBar": "hover",
+    "doubleClick": "reset",
+    "modeBarButtonsToRemove": ["lasso2d", "select2d", "zoomIn2d", "zoomOut2d", "toggleSpikelines",
+                               "hoverClosestCartesian", "hoverCompareCartesian",
+                               "drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"],
+}
+
 
 def _apply_tv(fig: go.Figure, height: int, title: str) -> go.Figure:
     """TradingView 式手感：暗色 + 十字光标(crosshair) + 拖动平移 + 统一悬浮。"""
@@ -224,12 +235,13 @@ def _apply_tv(fig: go.Figure, height: int, title: str) -> go.Figure:
         title=dict(text=title, x=0.01, font=dict(size=14)),
         hovermode="x unified", dragmode="pan",
         legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=1.06, x=0.18, font=dict(size=10)),
-        spikedistance=-1,
+        spikedistance=-1, hoverdistance=1,
     )
-    fig.update_xaxes(gridcolor=C["grid"], showspikes=True, spikemode="across",
-                     spikesnap="cursor", spikecolor="rgba(255,255,255,0.45)", spikethickness=1, spikedash="dot")
-    fig.update_yaxes(gridcolor=C["grid"], showspikes=True, spikesnap="cursor",
-                     spikecolor="rgba(255,255,255,0.45)", spikethickness=1, spikedash="dot")
+    # TradingView 式十字光标：贴光标的虚线 + 轴上价/时标签（spikemode across+marker）
+    fig.update_xaxes(gridcolor=C["grid"], showspikes=True, spikemode="across+marker",
+                     spikesnap="cursor", spikecolor="rgba(0,212,255,0.7)", spikethickness=1, spikedash="dot")
+    fig.update_yaxes(gridcolor=C["grid"], showspikes=True, spikemode="across+marker", spikesnap="cursor",
+                     spikecolor="rgba(0,212,255,0.7)", spikethickness=1, spikedash="dot")
     return fig
 
 

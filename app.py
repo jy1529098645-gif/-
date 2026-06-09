@@ -2059,16 +2059,17 @@ def page_panorama():
                 _, _vp_chart = c_volume_profile(a, "2015-01-01", end, 252)
             except Exception:  # noqa: BLE001
                 _vp_chart = None
-        # Plotly 主图：可靠绘制阴影/横线（lightweight-charts 不支持 priceLine，故弃用）
+        # Plotly 主图（TradingView 手感：滚轮缩放/拖动平移/十字光标贴价）—— 可靠绘制阴影/横线
         try:
             ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
             st.plotly_chart(
                 ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
                                         show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
                                         title=f"{a} · K线 + 图层", logy=False),
-                use_container_width=True, config=ch.CHART_CONFIG)
-            st.caption("🖱️ 滚轮缩放·拖动平移·十字光标读价（顶部按钮切时间范围）。**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；"
-                       "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层。")
+                use_container_width=True, config=ch.TV_CONFIG)
+            st.caption("🖱️ **滚轮缩放·拖动平移·十字光标贴价读数**（双击复位；顶部按钮切时间范围）。"
+                       "**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；蓝/灰虚线=回撤价位带(▶=当前)；"
+                       "橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
         except Exception as _ce:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
             st.caption(f"主图降级（{type(_ce).__name__}）。")
