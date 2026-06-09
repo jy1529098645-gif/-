@@ -2041,16 +2041,17 @@ def page_panorama():
 
     with _T_HIST.expander("🎯 校准追踪（记录此刻信号 · 事后比对'说的 vs 做到的'）"):
         from analysis import journal as jn
-        st.caption("把当前状态/引擎预期落库，待 horizon 走完后用真实价格回填，检验工具到底准不准（自验证闭环）。")
-        if st.button("📝 记录当前信号到校准库", key=f"logsig_{a}"):
-            ok = jn.log_from_brief(b)
-            st.success("已记录。" if ok else "今天该标的/周期已记录过（去重）。")
+        st.caption("🗂️ **已自动留痕**：每天打开标的就记录当日指导；走完 horizon 后用真实价格回填，"
+                   "**标注每条判断对/错**，长期检验工具准不准（自验证闭环）。想全自动(不打开也记)见下方说明。")
         try:
             sig_df = jn.load_signals()
             ev = jn.evaluate(sig_df) if len(sig_df) else sig_df
             cal = jn.calibration_summary(ev) if len(sig_df) else {"n_total": 0, "n_matured": 0}
             cc = st.columns(4)
-            cc[0].markdown(stat_card("累计信号", f"{cal.get('n_total',0)}", "已记录", "#7C5CFC"), unsafe_allow_html=True)
+            _acc = cal.get("accuracy", float("nan"))
+            cc[0].markdown(stat_card("📊 判断准确率", f"{_acc:.0%}" if _acc == _acc else "—",
+                                     f"{cal.get('n_judged',0)} 条可判·累计 {cal.get('n_total',0)}",
+                                     "#2BE6A8" if (_acc == _acc and _acc >= 0.5) else "#FFD166", tip="校准"), unsafe_allow_html=True)
             cc[1].markdown(stat_card("已成熟", f"{cal.get('n_matured',0)}", "走完horizon可评", "#00D4FF"), unsafe_allow_html=True)
             if cal.get("n_matured"):
                 rh, pw = cal.get("realized_hit", float("nan")), cal.get("pred_win_rate_mean", float("nan"))
@@ -2058,14 +2059,25 @@ def page_panorama():
                                          "#2BE6A8" if (rh == rh and pw == pw and abs(rh - pw) < 0.12) else "#FFD166"), unsafe_allow_html=True)
                 cc[3].markdown(stat_card("实现超额(均)", f"{cal.get('realized_excess_mean',float('nan')):+.1%}", f"Brier {cal.get('brier',float('nan')):.2f}",
                                          "#2BE6A8" if cal.get("realized_excess_mean", 0) > 0 else "#FF5C7A"), unsafe_allow_html=True)
-                if cal.get("by_grade"):
-                    st.dataframe(pd.DataFrame(cal["by_grade"]).rename(columns={
-                        "grade": "证据等级", "n": "样本", "realized_hit": "实现命中率", "realized_excess": "实现超额"})
-                        .style.format({"实现命中率": "{:.0%}", "实现超额": "{:+.1%}"}, na_rep="—"),
-                        use_container_width=True, hide_index=True)
+                # 逐条近期已成熟信号 + 判断对/错标注
+                _m = ev[ev["matured"] == True].copy() if "matured" in ev.columns else pd.DataFrame()  # noqa: E712
+                if not _m.empty:
+                    _m["判断"] = _m["correct"].map({1.0: "✅对", 0.0: "❌错"}).fillna("—")
+                    _disp = _m.sort_values("signal_date", ascending=False).head(12)[
+                        ["ticker", "signal_date", "horizon", "grade", "pred_excess", "realized_excess", "判断"]].rename(
+                        columns={"ticker": "标的", "signal_date": "信号日", "horizon": "周期", "grade": "等级",
+                                 "pred_excess": "预测超额", "realized_excess": "实现超额"})
+                    _disp["信号日"] = pd.to_datetime(_disp["信号日"]).dt.date.astype(str)
+                    st.dataframe(_disp.style.format({"预测超额": "{:+.1%}", "实现超额": "{:+.1%}"}, na_rep="—"),
+                                 use_container_width=True, hide_index=True)
                 st.caption(f"📖 {cal.get('note','')}")
             else:
-                st.caption("尚无成熟信号（需等 horizon 走完）。先点上面按钮持续记录，工具会越用越知道自己准不准。")
+                st.caption("尚无成熟信号（需等 horizon 走完，信号才能评对错）——留痕会持续积累。")
+            with st.expander("⚙️ 开启全自动每日追踪（不打开 app 也记录）"):
+                st.markdown("跑一次或挂 Windows 定时任务（美股收盘后）：\n"
+                            "```\n.venv\\Scripts\\python -m scripts.daily_track\n```\n"
+                            "或双击 **run_daily_track.bat**；注册每日任务见 README『每日自动追踪』。"
+                            "它会给关注清单留痕 + 回填评估历史准确率。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"校准库读取失败：{_e}")
 

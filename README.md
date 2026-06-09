@@ -205,3 +205,23 @@ print(res['note']); print(res['vs_lump_sum'])
 PEAD 关键结论（七姐妹 371 个财报事件，免费数据）：盈利超预期 → 公布后漂移，领先 IC h=1/5/21 = 0.13/0.15/0.10（置换 p<0.05 显著），h=63 衰减不显著；蒙特卡洛假财报日对照平均 IC≈0。
 
 总测试：**97 passed**（`.venv/Scripts/python -m pytest`）。前端 [app.py](app.py) + [frontend/](frontend/)（charts/glossary/store/report）。路线图见 [ROADMAP.md](ROADMAP.md)。
+
+## 🗂️ 每日自动追踪（验证工具长期有效性）
+
+工具的指导每天随行情变。为了**客观验证它准不准**，内置自验证闭环：
+
+- **自动留痕**：每天打开标的即静默记录当日指导（决策状态/建议仓位/入场锚点/引擎预测胜率·按 标的+日期+周期 去重）。
+- **回填评估**：信号走完 horizon 后，用真实价格算实现收益，**逐条标注判断对/错**，汇总准确率 / 实现命中率 vs 预测 / Brier / 实现超额。看 `个股分析 → 深入分析 → 工具&校准 → 🎯校准追踪`。
+- **全自动（不打开 app 也记）**：跑 `python -m scripts.daily_track`（或双击 `run_daily_track.bat`）。已注册 Windows 每日任务 `QuantLabDailyTrack`（17:10 运行）；如需改时间：
+  ```
+  schtasks /Change /TN QuantLabDailyTrack /ST 16:30
+  ```
+  删除：`schtasks /Delete /TN QuantLabDailyTrack /F`
+
+> 准确率需时间积累（信号要走完 horizon 才能评对错）。用得越久，越知道工具到底有没有用。
+
+## 📐 工具的 Alpha / Beta（实测）
+
+- **系统(聚焦组合+风险叠加) vs SPY**：α 年化 **+8.1%**(显著)、β **0.75**——但大头是"持有科技"的选股红利。
+- **风险叠加本身 vs 同组闭眼持有**：α **+2.2%**(显著)、β **0.61**——这才是工具**自身**的真增量(小幅正alpha + 大幅降beta=风险调整后更优)。
+- 诚实口径：工具不是高 alpha 引擎，价值在"小真 alpha + 砍一半 beta/回撤"。

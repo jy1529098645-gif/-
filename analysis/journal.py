@@ -113,9 +113,19 @@ def evaluate(df: pd.DataFrame, prices: dict[str, pd.Series] | None = None,
                 if r.get("baseline_median") == r.get("baseline_median"):
                     rexc = float(rr - r["baseline_median"])
                 matured = True
+        # 判断是否准确：引擎方向(看涨buckets pred_excess>0)与实现方向是否一致
+        correct = np.nan
+        if matured:
+            pe = r.get("pred_excess"); trap = bool(r.get("momentum_trap"))
+            if trap:  # 动量陷阱=防守判断, 实现≤基准(rexc≤0)才算"判对(成功避险)"
+                correct = float(rexc <= 0) if rexc == rexc else np.nan
+            elif pe == pe and pe is not None:
+                correct = float((pe > 0) == (rexc > 0)) if rexc == rexc else np.nan
+            elif rr == rr:
+                correct = float(rr > 0)  # 无超额口径则看绝对方向
         d = r.to_dict()
-        d.update({"matured": matured, "realized_return": rr,
-                  "realized_pos": rpos, "realized_excess": rexc})
+        d.update({"matured": matured, "realized_return": rr, "realized_pos": rpos,
+                  "realized_excess": rexc, "correct": correct})
         rows.append(d)
     return pd.DataFrame(rows)
 
@@ -152,8 +162,11 @@ def calibration_summary(ev: pd.DataFrame) -> dict:
                          "realized_hit": float(grp["realized_pos"].mean()),
                          "realized_excess": float(grp["realized_excess"].mean()) if grp["realized_excess"].notna().any() else float("nan")})
 
+    accuracy = float(m["correct"].mean()) if "correct" in m.columns and m["correct"].notna().any() else float("nan")
+    n_judged = int(m["correct"].notna().sum()) if "correct" in m.columns else 0
     return {
         "n_total": int(len(ev)), "n_matured": n_mat,
+        "accuracy": accuracy, "n_judged": n_judged,
         "realized_hit": realized_hit, "pred_win_rate_mean": pred_mean,
         "realized_excess_mean": realized_excess, "brier": brier,
         "reliability": bins, "by_grade": by_grade,
