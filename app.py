@@ -1657,18 +1657,18 @@ def page_panorama():
     horizon = gl_horizon
     zstart = "1995-01-01" if a == "SPY" else "2008-01-01"
 
-    st.markdown(f'<div class="hero-title">📊 {a} · 全景分析</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">选股即自动生成：今日状态 · 该在哪建仓(价位带/建仓档) · 引擎结论 · 财报日程与反应 · 信号。'
-                '<b>只校准不预测，给的是历史分布+区间+CI，不是目标价/买卖指令。</b></div>', unsafe_allow_html=True)
-    st.caption("💡 阅读提示：卡片标题与表格列名带虚线下划线/可**鼠标悬浮**看专业名词含义；数值照常显示。")
-    with st.expander("ℹ️ 30 秒上手：这页怎么看", expanded=False):
+    st.markdown(f'<div class="hero-title">📊 {a} · 现在怎么做</div>', unsafe_allow_html=True)
+    st.caption("⚡ **顶部 = 现在该做什么**（行动 · 建议仓位 · 入场价 · 操作预案）；往下才是当前盘面、建仓价位与深入分析。"
+               "只校准不预测，给的是历史分布+区间+概率，**非目标价/买卖指令**。卡片标题/列名可**鼠标悬浮**看名词含义。")
+    with st.expander("ℹ️ 30 秒上手 / 这页怎么看", expanded=False):
         st.markdown(
-            "1. **🎯 决策卡**（最上）= 一眼结论：现在该 **追/等/建仓/防守**、入场参考价、**建议仓位%**、入场后与离场规则。\n"
-            "2. **当前状态** = 证据等级 + 今日价格/趋势/波动 + 未来事件雷达。\n"
-            "3. **在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档 + 没到位时『等/追』。\n"
-            "4. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
-            "5. 侧栏 **🧭 风险偏好** 决定你的稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。\n"
-            "> 重计算项默认收起、点『▶』才算，避免卡顿。一切是历史校准+概率，非买卖指令。")
+            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 入场参考价 + 持有周期。\n"
+            "2. **📋 操作预案**（紧跟其后）= 具体怎么建仓、涨了/跌了/到时间/触发风控 各自怎么操作。\n"
+            "3. **🧭 当前状态** = 证据等级 + 今日价格/趋势/波动 + 未来事件雷达。\n"
+            "4. **🎯 该在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
+            "5. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
+            "> 侧栏 **🧭 风险偏好** 决定稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。"
+            "重计算项默认收起、点『▶』才算。一切是历史校准+概率，非买卖指令。")
     st.write("")
 
     with st.spinner(f"正在生成 {a} 全景分析（首次约 10 秒，之后秒开）…"):
@@ -1700,14 +1700,32 @@ def page_panorama():
         except Exception:  # noqa: BLE001
             _possz = ""
         st.markdown(
-            f'<div style="border-radius:16px;padding:18px 22px;margin:2px 0 14px;'
-            f'background:linear-gradient(92deg,{_cc}26,{_cc}08);border:1px solid {_cc}66;border-left:8px solid {_cc}">'
-            f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">🎯 决策卡 · {a}（距前高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
-            f'<div style="font-size:1.3rem;font-weight:800;color:#E6E9EF;line-height:1.4;margin-top:4px">{_card["state"]}　{_card["action"]}</div>'
-            f'<div style="color:#BFD8FF;font-size:0.9rem;margin-top:8px">📍 {_lvl}</div>'
-            + (f'<div style="color:#2BE6A8;font-size:0.9rem;margin-top:5px">{_possz}</div>' if _possz else "")
-            + f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:6px">📈 入场后：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</div>'
-            f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:4px">🚪 离场：{"；".join(_card["exit_rules"])}</div>'
+            f'<div style="border-radius:16px;padding:20px 24px 16px;margin:2px 0 12px;'
+            f'background:linear-gradient(92deg,{_cc}2e,{_cc}08);border:1px solid {_cc}66;border-left:9px solid {_cc}">'
+            f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">🎯 现在怎么做 · {a}（距前高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
+            f'<div style="font-size:1.6rem;font-weight:800;color:#F0F3F8;line-height:1.35;margin-top:6px">{_card["state"]}　▸　{_card["action"]}</div>'
+            f'</div>', unsafe_allow_html=True)
+        # 三个最该看的数字：建议仓位 / 入场参考价 / 持有周期 —— 放大、最醒目
+        _mt = st.columns(3)
+        if _posnow is not None:
+            _pos_col = "#2BE6A8" if _posnow >= 0.66 else ("#FFD166" if _posnow >= 0.33 else "#FF9F45")
+            _mt[0].markdown(stat_card("📊 现在该持多少仓", f"{_posnow:.0%}",
+                                      f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·满仓100%为基准", _pos_col), unsafe_allow_html=True)
+        else:
+            _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", "#8A93A6"), unsafe_allow_html=True)
+        if _e and _e.get("anchor") == _e.get("anchor"):
+            _ecol = "#2BE6A8" if _e.get("confident") else "#FFD166"
+            _mt[1].markdown(stat_card("🎯 入场参考价", f"{_e['anchor']:.1f}",
+                                      f"{_e['zone']}·{'✅稳健' if _e.get('confident') else '低置信'}", _ecol), unsafe_allow_html=True)
+            _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", "#7C5CFC"), unsafe_allow_html=True)
+        else:
+            _mt[1].markdown(stat_card("🎯 入场参考价", "区间分批", "当前无统计稳健点位", "#FFD166"), unsafe_allow_html=True)
+            _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方最佳入场区", "#7C5CFC"), unsafe_allow_html=True)
+        # 入场后 / 离场 一行操作摘要（细节见下方📋操作预案）
+        st.markdown(
+            f'<div style="border-radius:12px;padding:10px 16px;margin:8px 0 2px;background:#ffffff08;border:1px solid #ffffff14">'
+            f'<span style="color:#9aa3b2;font-size:0.84rem">📈 <b>入场后</b>：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</span><br>'
+            f'<span style="color:#9aa3b2;font-size:0.84rem">🚪 <b>离场</b>：{"；".join(_card["exit_rules"])}</span>'
             f'</div>', unsafe_allow_html=True)
         # 🗂️ 自动留痕：每天打开该标的就静默记录当日指导(按 标的+日期+周期 去重·一天一条)，
         # 供「校准追踪」长期回填真实结果、检验工具有效性。
@@ -1725,12 +1743,34 @@ def page_panorama():
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
 
-    st.divider()
-    # 操作预案数据（决策卡已是页面头部裁决；旧"今日速读"横幅已删，避免重复）
+    # ========== 📋 操作预案（紧跟行动面板：具体怎么建仓 · 涨了/跌了/到时间/风控）==========
     from analysis.playbook import build_playbook
     pbk = build_playbook(b)
+    st.markdown("#### 📋 操作预案（具体怎么操作）")
 
-    # ========== 第二区：当前状态（证据等级 + 今日状态 + 多周期）==========
+    def _pcard(col, title, accent, items):
+        body = "".join(
+            f'<div style="font-size:.85rem;line-height:1.55;color:#D2D8E3;margin:5px 0;'
+            f'padding-left:12px;border-left:2px solid {accent}55">{x}</div>'
+            for x in (items or ["—"]))
+        col.markdown(
+            f'<div class="glass" style="min-height:172px;padding:14px 16px">'
+            f'<div style="font-weight:700;color:{accent};font-size:.95rem;margin-bottom:6px">{title}</div>'
+            f'{body}</div>', unsafe_allow_html=True)
+
+    r1 = st.columns(3)
+    _pcard(r1[0], "🎯 建仓", "#FFD166", pbk.get("entry"))
+    _pcard(r1[1], "📈 涨了怎么操作", "#2BE6A8", pbk.get("if_up"))
+    _pcard(r1[2], "📉 跌了怎么操作", "#FF5C7A", pbk.get("if_down"))
+    st.write("")
+    r2 = st.columns(2)
+    _pcard(r2[0], "⏱️ 时间 / 事件", "#00D4FF", pbk.get("time_event"))
+    _pcard(r2[1], "🛡️ 风控", "#7C5CFC", pbk.get("risk"))
+    st.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
+
+    st.divider()
+    # ========== 🧭 当前状态（证据等级 + 今日盘面 + 事件雷达）==========
+    st.markdown("#### 🧭 当前状态（证据等级 · 今日盘面 · 事件）")
     # ---- 证据等级 + 多周期对账 + 一致性/数据质量告警 ----
     for c in (b.get("consistency") or []):
         st.markdown(f'<div class="verdict">🚧 <b>一致性告警</b>：{c["message"]}</div>', unsafe_allow_html=True)
@@ -1962,30 +2002,6 @@ def page_panorama():
         } for t in b["tranches"]])
         st.dataframe(_tdf, use_container_width=True, hide_index=True, column_config=_col_cfg(_tdf.columns))
         st.caption("📖 「回前高目标」=前期高点(约52周高)，只用来和技术止损算盈亏比，**非预测目标价**。")
-    st.write("")
-
-    # ---- 📋 操作预案（if-then 条件指导；把握度见顶部速读，此处不重复结论）----
-    st.markdown("#### 📋 操作预案（怎么建仓 · 涨了跌了怎么办）")
-
-    def _pcard(col, title, accent, items):
-        body = "".join(
-            f'<div style="font-size:.85rem;line-height:1.55;color:#D2D8E3;margin:5px 0;'
-            f'padding-left:12px;border-left:2px solid {accent}55">{x}</div>'
-            for x in (items or ["—"]))
-        col.markdown(
-            f'<div class="glass" style="min-height:172px;padding:14px 16px">'
-            f'<div style="font-weight:700;color:{accent};font-size:.95rem;margin-bottom:6px">{title}</div>'
-            f'{body}</div>', unsafe_allow_html=True)
-
-    r1 = st.columns(3)
-    _pcard(r1[0], "🎯 建仓", "#FFD166", pbk.get("entry"))
-    _pcard(r1[1], "📈 涨了怎么操作", "#2BE6A8", pbk.get("if_up"))
-    _pcard(r1[2], "📉 跌了怎么操作", "#FF5C7A", pbk.get("if_down"))
-    st.write("")
-    r2 = st.columns(2)
-    _pcard(r2[0], "⏱️ 时间 / 事件", "#00D4FF", pbk.get("time_event"))
-    _pcard(r2[1], "🛡️ 风控", "#7C5CFC", pbk.get("risk"))
-    st.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
     st.write("")
 
     # ========== 第四区：深入分析（全部收进 Tab，保持主区简洁）==========
