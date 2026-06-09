@@ -693,6 +693,40 @@ def _fund_cache_load(ticker: str):
     return None, None
 
 
+@st.cache_resource(show_spinner=False)
+def _fund_seed():
+    """随仓库提交的基本面快照（关注清单），供云端限流且无本地缓存时兜底。返回 {ticker: fields}, gen_date。"""
+    import json as _j
+    from pathlib import Path as _P
+    try:
+        p = _P(__file__).resolve().parent / "data" / "fundamentals_seed.json"
+        obj = _j.loads(p.read_text(encoding="utf-8"))
+        return obj.get("data", {}), obj.get("_generated", "")
+    except Exception:  # noqa: BLE001
+        return {}, ""
+
+
+def _ensure_ascii_ca():
+    """修复 Windows 非 ASCII 路径(如中文目录)下 curl_cffi 读取证书失败(SSLError curl:77)：
+    若 certifi 路径含非 ASCII，复制一份到 ASCII 临时路径并指向它。云端 Linux 不受影响、无副作用。"""
+    import os
+    if os.environ.get("CURL_CA_BUNDLE") and os.environ["CURL_CA_BUNDLE"].isascii():
+        return
+    try:
+        import certifi
+        ca = certifi.where()
+        if ca.isascii():
+            os.environ.setdefault("CURL_CA_BUNDLE", ca); os.environ.setdefault("SSL_CERT_FILE", ca)
+            return
+        import shutil, tempfile
+        dst = os.path.join(tempfile.gettempdir(), "quantlab_cacert_ascii.pem")
+        if not (os.path.exists(dst) and os.path.getsize(dst) > 1000):
+            shutil.copy(ca, dst)
+        os.environ["CURL_CA_BUNDLE"] = dst; os.environ["SSL_CERT_FILE"] = dst
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def c_fund_info(ticker: str):
     """取全面基本面字段(体检后)供分析师视角用。ttl 1 小时。
@@ -702,6 +736,7 @@ def c_fund_info(ticker: str):
     """
     import time as _t
     import yfinance as yf
+    _ensure_ascii_ca()
     info = {}
     for _i in range(4):
         try:
@@ -723,12 +758,16 @@ def c_fund_info(ticker: str):
         _fund_cache_save(ticker, out)       # 成功 → 落盘
         out["_stale"] = None
         return out
-    # 取不到 → 回退到上次成功(标注陈旧)；连缓存都没有才抛
+    # 取不到 → ① 回退到本地上次成功；② 回退到仓库内置快照；③ 都没有才抛
     cached, ts = _fund_cache_load(ticker)
     if cached:
         cached["_stale"] = ts
         return cached
-    raise RuntimeError(f"yfinance 暂未返回 {ticker} 基本面(限流)，且无历史缓存可回退，稍后重试")
+    seed, sdate = _fund_seed()
+    if ticker in seed:
+        out = dict(seed[ticker]); out["_stale"] = f"{sdate}·内置快照"
+        return out
+    raise RuntimeError(f"yfinance 暂未返回 {ticker} 基本面(限流)，且无历史/内置快照可回退，稍后重试")
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
