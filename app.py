@@ -665,32 +665,70 @@ def c_brief(ticker: str, horizon: int, end: str, broad: bool = False):
     return bf.stock_brief(ticker, bstart, end, horizon=horizon, with_news=True, news_sources=sources)
 
 
+def _fund_cache_save(ticker: str, data: dict) -> None:
+    """把最近一次成功取到的基本面落盘，供日后限流时回退（避免硬报错）。"""
+    import json as _j, sqlite3 as _sq
+    import config as _cfg
+    try:
+        p = _cfg.user_db_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        with _sq.connect(p) as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fund_cache(ticker TEXT PRIMARY KEY, json TEXT, fetched_at TEXT)")
+            c.execute("INSERT OR REPLACE INTO fund_cache(ticker,json,fetched_at) VALUES(?,?,datetime('now'))",
+                      (ticker, _j.dumps(data, default=str)))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _fund_cache_load(ticker: str):
+    """读取上次成功的基本面 (data, fetched_at)；无则 (None, None)。"""
+    import json as _j, sqlite3 as _sq
+    import config as _cfg
+    try:
+        with _sq.connect(_cfg.user_db_path()) as c:
+            r = c.execute("SELECT json, fetched_at FROM fund_cache WHERE ticker=?", (ticker,)).fetchone()
+        if r:
+            return _j.loads(r[0]), r[1]
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def c_fund_info(ticker: str):
     """取全面基本面字段(体检后)供分析师视角用。ttl 1 小时。
 
-    重试 3 次防 yfinance 瞬时限流；**取不到则抛错(不缓存空)**，下次重试，避免把限流空值缓存1小时。
+    指数退避重试防 yfinance 限流(429)；取不到则**回退到上次成功落盘的数据**(标注陈旧)，
+    彻底没有才抛错——避免云端共享IP被限流时直接给用户硬报错。
     """
     import time as _t
     import yfinance as yf
     info = {}
-    for _i in range(3):
+    for _i in range(4):
         try:
             info = yf.Ticker(ticker).info or {}
         except Exception:  # noqa: BLE001
             info = {}
-        if info and info.get("trailingPE") is not None or (info and len(info) > 30):
+        if (info.get("trailingPE") is not None) or (len(info) > 30):
             break
-        _t.sleep(0.8)
-    if not info or len(info) < 20:
-        raise RuntimeError(f"yfinance 暂未返回 {ticker} 基本面(限流)，已不缓存空值，稍后重试")
-    from analysis.engine_discipline import sanity_check_fundamentals
-    from analysis.analyst import FULL_FIELDS
-    chk = sanity_check_fundamentals(info)
-    merged = dict(info); merged.update(chk["clean"])
-    for k in chk["suspicious"]:
-        merged.pop(k, None)
-    return {k: merged.get(k) for k in FULL_FIELDS}
+        if _i < 3:
+            _t.sleep(0.8 * (2 ** _i))   # 指数退避 0.8/1.6/3.2s，给 Yahoo 解除限流的时间
+    if info and len(info) >= 20:
+        from analysis.engine_discipline import sanity_check_fundamentals
+        from analysis.analyst import FULL_FIELDS
+        chk = sanity_check_fundamentals(info)
+        merged = dict(info); merged.update(chk["clean"])
+        for k in chk["suspicious"]:
+            merged.pop(k, None)
+        out = {k: merged.get(k) for k in FULL_FIELDS}
+        _fund_cache_save(ticker, out)       # 成功 → 落盘
+        out["_stale"] = None
+        return out
+    # 取不到 → 回退到上次成功(标注陈旧)；连缓存都没有才抛
+    cached, ts = _fund_cache_load(ticker)
+    if cached:
+        cached["_stale"] = ts
+        return cached
+    raise RuntimeError(f"yfinance 暂未返回 {ticker} 基本面(限流)，且无历史缓存可回退，稍后重试")
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
@@ -1685,20 +1723,15 @@ def page_panorama():
         _card = _dec.decision_card(a, price, _bezc, _mkt.get("fragile", False), _mkt.get("light", ""))
         _cc = _card["color"]
         _e = _card.get("entry")
-        _lvl = (f"入场参考 ≈ <b>{_e['anchor']:.1f}</b>（{_e['zone']}·持有~{_e['horizon_months']}月·"
-                f"{'✅稳健' if _e.get('confident') else '低置信'}）"
-                if _e and _e.get("anchor") == _e.get("anchor") else "入场参考：当前无统计稳健点位，按区间分批")
-        # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）
+        # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）—— 显示在下方大数字三联里
         _posnow = None
         try:
             from analysis import overlay as _ov2
             _tvol = _PROFILE_VOL.get(gl_profile, 0.15)
             _posnow = float(_ov2.risk_managed_position(price, c_fragility(zstart, end)["frame"]["fragile"],
                                                        target_vol=_tvol).iloc[-1])
-            _possz = (f"📊 当前建议仓位 <b>{_posnow:.0%}</b>（{gl_profile}档·目标波动{_tvol:.0%}；"
-                      f"满仓100%基准上按趋势/波动/宽度缩放，侧栏可调稳健度）")
         except Exception:  # noqa: BLE001
-            _possz = ""
+            pass
         st.markdown(
             f'<div style="border-radius:16px;padding:20px 24px 16px;margin:2px 0 12px;'
             f'background:linear-gradient(92deg,{_cc}2e,{_cc}08);border:1px solid {_cc}66;border-left:9px solid {_cc}">'
@@ -1727,6 +1760,8 @@ def page_panorama():
             f'<span style="color:#9aa3b2;font-size:0.84rem">📈 <b>入场后</b>：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</span><br>'
             f'<span style="color:#9aa3b2;font-size:0.84rem">🚪 <b>离场</b>：{"；".join(_card["exit_rules"])}</span>'
             f'</div>', unsafe_allow_html=True)
+        st.caption("📍 说明：上方『入场参考价』=**统计最佳入场区锚点**（历史远期收益最佳处）；下方『📋操作预案/建仓档』=**技术支撑位**"
+                   "（MA/POC 等）用于分批。两者是不同视角、互为补充，合起来当一个入场区间用，不是互相矛盾。")
         # 🗂️ 自动留痕：每天打开该标的就静默记录当日指导(按 标的+日期+周期 去重·一天一条)，
         # 供「校准追踪」长期回填真实结果、检验工具有效性。
         try:
@@ -1769,8 +1804,8 @@ def page_panorama():
     st.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
 
     st.divider()
-    # ========== 🧭 当前状态（证据等级 + 今日盘面 + 事件雷达）==========
-    st.markdown("#### 🧭 当前状态（证据等级 · 今日盘面 · 事件）")
+    # ========== 🧭 当前状态（证据等级 + 事件雷达 + 今日盘面）==========
+    st.markdown("#### 🧭 当前状态")
     # ---- 证据等级 + 多周期对账 + 一致性/数据质量告警 ----
     for c in (b.get("consistency") or []):
         st.markdown(f'<div class="verdict">🚧 <b>一致性告警</b>：{c["message"]}</div>', unsafe_allow_html=True)
@@ -1971,46 +2006,33 @@ def page_panorama():
 
     cL, cR = st.columns([3, 2])
     with cL:
-        from frontend import tvchart
-        zlines = []
-        # 🎯 推荐最佳入场区（开关控制·绿=稳健 黄=样本偏少）—— 用户请求的核心叠加
+        # 最佳入场区数据（开关开时才取；失败不影响其它图层）
+        _bz_chart = None
         if _show_best:
             try:
-                _bz = c_best_entry_scan(a, zstart, end)
-                if _bz.get("has_zone"):
-                    _bcol = "#2BE6A8" if _bz.get("tier") == "稳健最佳入场区" else "#FFD166"
-                    _bd = _bz.get("price_band") or (None, None)
-                    _anc = _bz.get("anchor_price")
-                    if _anc == _anc and _anc is not None:
-                        zlines.append({"price": float(_anc), "color": _bcol, "title": f"🎯最佳入场锚点 {float(_anc):.1f}"})
-                    if _bd[1] is not None:
-                        zlines.append({"price": float(_bd[1]), "color": _bcol, "title": "最佳区·上沿"})
-                    if _bd[0] is not None:
-                        zlines.append({"price": float(_bd[0]), "color": _bcol, "title": "最佳区·下沿"})
+                _bz_chart = c_best_entry_scan(a, zstart, end)
             except Exception:  # noqa: BLE001
-                pass
-        if _show_zones:
-            zz = z[z["enough"]] if "enough" in z.columns else z
-            for _, r in zz.iterrows():
-                iscur = bool(r.get("is_current", False))
-                zlines.append({"price": float(r["price_high"]),
-                               "color": "#00D4FF" if iscur else "rgba(138,147,166,0.6)",
-                               "title": ("▶ " if iscur else "") + str(r["zone"])})
-        # 叠加换手位：POC + 价值区(高换手带) —— 与价位带一起看支撑/压力
+                _bz_chart = None
+        # 换手位数据（开关开时才取）
+        _vp_chart = None
         if _show_vp:
             try:
-                _, _vpk = c_volume_profile(a, "2015-01-01", end, 252)
-                zlines.append({"price": float(_vpk["poc"]), "color": "#FF9F45", "title": "POC换手密集"})
-                zlines.append({"price": float(_vpk["value_area"][0]), "color": "rgba(255,159,69,0.45)", "title": "价值区低"})
-                zlines.append({"price": float(_vpk["value_area"][1]), "color": "rgba(255,159,69,0.45)", "title": "价值区高"})
+                _, _vp_chart = c_volume_profile(a, "2015-01-01", end, 252)
             except Exception:  # noqa: BLE001
-                pass
+                _vp_chart = None
+        # Plotly 主图：可靠绘制阴影/横线（lightweight-charts 不支持 priceLine，故弃用）
         try:
-            ohlcv_pan = _ld.load_ohlcv(a, zstart, end)
-            render_tv_candles(ohlcv_pan, None, price_lines=zlines, key=f"tvpan_{a}", height=460, log=True,
-                              caption="🖱️ 滚轮缩放·拖动平移·十字光标读价。**绿/黄线=🎯推荐最佳入场区(锚点+上下沿)**；蓝/灰线=回撤价位带(▶=当前)；橙线=POC换手密集价/价值区。用上方开关增删图层。")
-        except Exception:  # noqa: BLE001
+            ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
+            st.plotly_chart(
+                ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
+                                        show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
+                                        title=f"{a} · K线 + 图层", logy=False),
+                use_container_width=True, config=ch.CHART_CONFIG)
+            st.caption("🖱️ 滚轮缩放·拖动平移·十字光标读价（顶部按钮切时间范围）。**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；"
+                       "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层。")
+        except Exception as _ce:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
+            st.caption(f"主图降级（{type(_ce).__name__}）。")
     cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
     from regime import entry_cockpit as ec
     cur = z[z["is_current"] & z["enough"]] if "is_current" in z.columns else z.iloc[0:0]
@@ -2043,13 +2065,18 @@ def page_panorama():
         if _lazy_gate(f"analyst_{a}", "▶ 生成分析师报告（取实时基本面）"):
             try:
                 from analysis import analyst as _an
-                _info = c_fund_info(a)
+                _info = dict(c_fund_info(a))
+                _stale = _info.pop("_stale", None)
+                if _stale:
+                    st.caption(f"⏳ 实时基本面取数受限（yfinance 限流），下面显示**最近一次成功获取**（{_stale} UTC）。"
+                               "稍后刷新可更新；价格/量化结论始终是实时的，不受影响。")
                 _rep = _an.analyst_report(a, price, _info, b, horizon)
                 st.markdown(_an.format_report(_rep))
                 st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
                            "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
             except Exception as _e:  # noqa: BLE001
-                st.warning(f"基本面暂未取到（yfinance 限流）：{_e}。请**再点一次**按钮重试（已不缓存空值）。")
+                st.warning(f"基本面暂未取到（yfinance 限流且无历史缓存）：{_e}。请**再点一次**按钮重试，"
+                           "或稍后再来——成功取到一次后即会落盘，之后限流也能显示最近数据。")
     with _T_FUND.expander("🧠 多引擎校准（不同视角的历史倾斜）", expanded=True):
         ec_cols = st.columns(3)
         for col, key, label in [(ec_cols[0], "engine_state", "当前状态桶"),

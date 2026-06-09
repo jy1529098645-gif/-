@@ -287,6 +287,88 @@ def volume_profile_bars(vp: dict, title="Volume Profile（日线近似）") -> g
     return _style(fig, height=460, title=title)
 
 
+def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None,
+                         best_entry: dict | None = None, show_best=True, show_zones=True,
+                         show_vp=True, title="K线 + 图层", logy=True) -> go.Figure:
+    """全景页主图（Plotly）：K线 + 量副图，并按开关叠加：
+      🎯最佳入场区(绿/黄阴影带 + 锚点线) · 📊回撤价位带(蓝=当前/灰=其它) · 📦换手位(筹码柱+POC+价值区)。
+    用 Plotly 画横线/阴影(streamlit_lightweight_charts 不支持 priceLine，故改用此图可靠渲染)。"""
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.80, 0.20])
+    ymin = float(ohlcv["low"].min()); ymax = float(ohlcv["high"].max())
+
+    # —— 📦 换手位：筹码横柱(叠在价格轴) + POC + 价值区 ——
+    if show_vp and vp is not None:
+        centers = np.asarray(vp["centers"], dtype=float); vols = np.asarray(vp["volumes"], dtype=float)
+        if centers.size and vols.max() > 0:
+            bw = float(centers[1] - centers[0]) if centers.size > 1 else None
+            va_lo, va_hi = vp["value_area"]
+            bcol = ["rgba(255,159,69,0.55)" if (va_lo <= c <= va_hi) else "rgba(255,159,69,0.22)" for c in centers]
+            fig.add_trace(go.Bar(x=vols, y=centers, orientation="h", width=bw, marker_color=bcol,
+                                 marker_line_width=0, xaxis="x3", yaxis="y", showlegend=False, name="筹码",
+                                 hovertemplate="价位 %{y:.1f}<br>筹码量 %{x:.3s}<extra></extra>"))
+
+    # —— K线 + 量副图 ——
+    fig.add_trace(go.Candlestick(x=ohlcv.index, open=ohlcv["open"], high=ohlcv["high"], low=ohlcv["low"],
+                  close=ohlcv["close"], increasing_line_color="#2BE6A8", decreasing_line_color="#FF5C7A",
+                  increasing_line_width=0.7, decreasing_line_width=0.7, name="K线", showlegend=False), row=1, col=1)
+    up = (ohlcv["close"] >= ohlcv["open"]).to_numpy()
+    vcol = np.where(up, "rgba(43,230,168,0.45)", "rgba(255,92,122,0.45)")
+    fig.add_trace(go.Bar(x=ohlcv.index, y=ohlcv["volume"], marker_color=vcol, showlegend=False,
+                  hovertemplate="量 %{y:.3s}<extra></extra>"), row=2, col=1)
+
+    if show_vp and vp is not None:
+        poc = vp["poc"]; va_lo, va_hi = vp["value_area"]
+        fig.add_hline(y=poc, line=dict(color="#FF9F45", width=1.4, dash="dash"),
+                      annotation_text=f"POC {poc:.1f}", annotation_position="right", row=1, col=1)
+        fig.add_hrect(y0=va_lo, y1=va_hi, fillcolor="rgba(255,159,69,0.07)", line_width=0, row=1, col=1)
+
+    # —— 📊 回撤价位带（蓝=当前/灰=其它）——
+    if show_zones and zones is not None and len(zones):
+        zz = zones[zones["enough"]] if "enough" in zones.columns else zones
+        for _, r in zz.iterrows():
+            cur = bool(r.get("is_current", False))
+            col = "#00D4FF" if cur else "rgba(138,147,166,0.5)"
+            fig.add_hline(y=float(r["price_high"]), line=dict(color=col, width=1, dash="dot"),
+                          annotation_text=("▶ " if cur else "") + str(r["zone"]),
+                          annotation_position="left", annotation_font_size=10, row=1, col=1)
+
+    # —— 🎯 推荐最佳入场区（绿=稳健/黄=样本偏少 阴影带 + 锚点线）——
+    if show_best and best_entry and best_entry.get("has_zone"):
+        gcol = "#2BE6A8" if best_entry.get("tier") == "稳健最佳入场区" else "#FFD166"
+        bd = best_entry.get("price_band") or (None, None)
+        lo, hi = bd[0], bd[1]
+        anc = best_entry.get("anchor_price")
+        if hi is not None:
+            y0 = float(lo) if lo is not None else ymin
+            fig.add_hrect(y0=y0, y1=float(hi), fillcolor=gcol, opacity=0.13, line_width=0,
+                          annotation_text="🎯最佳入场区", annotation_position="top left",
+                          annotation_font=dict(color=gcol, size=12), row=1, col=1)
+        if anc == anc and anc is not None:
+            fig.add_hline(y=float(anc), line=dict(color=gcol, width=1.8),
+                          annotation_text=f"🎯锚点 {float(anc):.1f}", annotation_position="right",
+                          annotation_font=dict(color=gcol, size=12), row=1, col=1)
+
+    _apply_tv(fig, 560, title)
+    _vmax = (np.asarray(vp["volumes"], float).max() if (show_vp and vp is not None and np.asarray(vp["volumes"], float).size) else 0)
+    fig.update_layout(xaxis_rangeslider_visible=False, barmode="overlay",
+                      xaxis3=dict(overlaying="x", side="top", range=[0, (_vmax * 4.5) if _vmax > 0 else 1],
+                                  showgrid=False, showticklabels=False, zeroline=False, fixedrange=True))
+    fig.update_xaxes(rangeselector=_RANGE_BUTTONS, row=1, col=1)
+    if logy:
+        # 显式给定 log 轴范围：add_hline 注释会破坏 log 自动量程(plotly 把线性值当作指数→爆成 10^240)，
+        # 故按实际价格手动算 log10 范围。
+        import math
+        lo = max(ymin * 0.92, 1e-6); hi = ymax * 1.06
+        fig.update_yaxes(type="log", range=[math.log10(lo), math.log10(hi)], row=1, col=1)
+    else:
+        # 线性：留一点上下边距，避免贴边
+        fig.update_yaxes(range=[ymin * 0.96, ymax * 1.04], row=1, col=1)
+    fig.update_yaxes(title_text="量", row=2, col=1)
+    return fig
+
+
 def candle_with_levels(ohlcv: pd.DataFrame, vp: dict, title="近一年 K线 + 筹码分布", logy=False) -> go.Figure:
     """K线 + 量副图，并把**每个价位的筹码量(Volume Profile)**作为横向柱直接叠加在K线价格轴上
     （靠左、半透明，不挡近端价格；价值区柱更亮）。POC=最高换手价虚线，价值区=70%成交带。"""
