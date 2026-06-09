@@ -132,6 +132,8 @@ def analyst_report(ticker: str, price: pd.Series, info: dict, brief: dict | None
     info = info or {}
     brief = brief or {}
     val = _valuation(info); grw = _growth(info); prof = _profitability(info); hlth = _health(info)
+    # ETF/基金无单公司基本面(只有 PE/PB/股息)——避免成长/盈利/财务健康大片显"数据不足"
+    etf_like = not (grw["notes"] or prof["notes"] or hlth["notes"])
     sc = _scenarios(price, horizon)
     tgt = _g(info, "targetMeanPrice"); thi = _g(info, "targetHighPrice"); tlo = _g(info, "targetLowPrice")
     rec = info.get("recommendationKey"); n_an = _g(info, "numberOfAnalystOpinions")
@@ -173,14 +175,15 @@ def analyst_report(ticker: str, price: pd.Series, info: dict, brief: dict | None
 
     # 一句话论点（综合估值×成长×量化状态，分析师 framing，不预测点位）
     dd = float(price.iloc[-1] / price.rolling(252, min_periods=120).max().iloc[-1] - 1.0)
-    thesis = (f"{ticker}：估值{val['grade']}、{grw['grade']}、{prof['grade']}；"
+    _qual = "ETF/基金（无单公司基本面）" if etf_like else f"估值{val['grade']}、{grw['grade']}、{prof['grade']}"
+    thesis = (f"{ticker}：{_qual}；"
               f"现价距前高 {dd:+.0%}，未来{int(horizon/21)}个月历史区间 "
               f"{sc['ret_bear']:+.0%}~{sc['ret_bull']:+.0%}（基准 {sc['ret_base']:+.0%}、胜率 {sc['win_rate']:.0%}）。"
               + ("⚠️动量陷阱，偏防守。" if brief.get("momentum_trap") else "按情景分批、设失效线。"))
 
     return {
         "ticker": ticker, "thesis": thesis, "valuation": val, "growth": grw,
-        "profitability": prof, "health": hlth, "scenarios": sc,
+        "profitability": prof, "health": hlth, "scenarios": sc, "etf_like": etf_like,
         "analyst_target": {"mean": tgt, "high": thi, "low": tlo, "rec": rec, "n": n_an},
         "target_vs_engine": tgt_vs_engine,
         "beta": beta, "dividend_yield": dy, "catalysts": catalysts,
@@ -193,10 +196,17 @@ def format_report(r: dict) -> str:
     """渲染成 Markdown 研报。"""
     sc = r["scenarios"]; at = r["analyst_target"]
     L = [f"### 📝 {r['ticker']} 分析师视角（叙事·不纳入量化）", "", f"**论点**：{r['thesis']}", ""]
-    L.append(f"**估值**（{r['valuation']['grade']}）：" + "；".join(r["valuation"]["notes"] or ["数据不足"]))
-    L.append(f"**成长**（{r['growth']['grade']}）：" + "；".join(r["growth"]["notes"] or ["数据不足"]))
-    L.append(f"**盈利能力**（{r['profitability']['grade']}）：" + "；".join(r["profitability"]["notes"] or ["数据不足"]))
-    L.append(f"**财务健康**（{r['health']['grade']}）：" + "；".join(r["health"]["notes"] or ["数据不足"]))
+    if r.get("etf_like"):
+        # ETF/基金：只列可得的估值(PE/PB/股息)，不显示成长/盈利/财务健康的"数据不足"
+        if r["valuation"]["notes"]:
+            L.append("**估值**：" + "；".join(r["valuation"]["notes"]))
+        L.append("ℹ️ **ETF / 基金**：无单公司基本面（利润率/成长/财务健康不适用）"
+                 "——以下方**量化情景 + 估值 + 风险叠加**为准。")
+    else:
+        L.append(f"**估值**（{r['valuation']['grade']}）：" + "；".join(r["valuation"]["notes"] or ["数据不足"]))
+        L.append(f"**成长**（{r['growth']['grade']}）：" + "；".join(r["growth"]["notes"] or ["数据不足"]))
+        L.append(f"**盈利能力**（{r['profitability']['grade']}）：" + "；".join(r["profitability"]["notes"] or ["数据不足"]))
+        L.append(f"**财务健康**（{r['health']['grade']}）：" + "；".join(r["health"]["notes"] or ["数据不足"]))
     if isinstance(at.get("mean"), float):
         L.append(f"**卖方目标价**：均值 {at['mean']:.1f}（区间 {at.get('low','?')}–{at.get('high','?')}）"
                  f"·评级 {at.get('rec','?')}（{at.get('n','?')}家）")

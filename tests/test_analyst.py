@@ -66,6 +66,18 @@ def test_target_vs_engine_flags_optimism():
     assert "卖方 vs 引擎" in md
 
 
+def test_etf_no_data_insufficient_spam():
+    # ETF 只有 PE/PB/股息 → 应给 ETF 口径,不刷"数据不足"
+    etf_info = {"trailingPE": 25.0, "priceToBook": 4.5, "dividendYield": 0.013,
+                "targetMeanPrice": None}
+    r = an.analyst_report("SPY", _px(), etf_info, brief={}, horizon=63)
+    assert r["etf_like"] is True
+    md = an.format_report(r)
+    assert md.count("数据不足") == 0          # 不再刷数据不足
+    assert "ETF" in md                        # 给 ETF 口径
+    assert "量化情景" in md                    # 情景仍在(ETF的核心)
+
+
 def test_empty_info_graceful():
     r = an.analyst_report("ZZZ", _px(), {}, brief={}, horizon=63)
     md = an.format_report(r)
