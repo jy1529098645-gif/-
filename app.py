@@ -1962,28 +1962,53 @@ def page_panorama():
         pass
     st.write("")
 
+    # —— 图层开关：控制 K 线上叠加什么（默认都开；嫌乱可关）——
+    _ovc = st.columns([1.2, 1, 1.2, 2.6])
+    _show_best = _ovc[0].toggle("🎯 最佳入场区", value=True, key=f"ovbest_{a}",
+                                help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（锚点价 + 区间上下沿）")
+    _show_zones = _ovc[1].toggle("📊 价位带", value=True, key=f"ovzone_{a}", help="历史回撤价位带（蓝=当前·灰=其它）")
+    _show_vp = _ovc[2].toggle("📦 换手位", value=True, key=f"ovvp_{a}", help="POC 最高换手价 / 价值区（橙）")
+
     cL, cR = st.columns([3, 2])
     with cL:
         from frontend import tvchart
         zlines = []
-        zz = z[z["enough"]] if "enough" in z.columns else z
-        for _, r in zz.iterrows():
-            iscur = bool(r.get("is_current", False))
-            zlines.append({"price": float(r["price_high"]),
-                           "color": "#00D4FF" if iscur else "rgba(138,147,166,0.6)",
-                           "title": ("▶ " if iscur else "") + str(r["zone"])})
+        # 🎯 推荐最佳入场区（开关控制·绿=稳健 黄=样本偏少）—— 用户请求的核心叠加
+        if _show_best:
+            try:
+                _bz = c_best_entry_scan(a, zstart, end)
+                if _bz.get("has_zone"):
+                    _bcol = "#2BE6A8" if _bz.get("tier") == "稳健最佳入场区" else "#FFD166"
+                    _bd = _bz.get("price_band") or (None, None)
+                    _anc = _bz.get("anchor_price")
+                    if _anc == _anc and _anc is not None:
+                        zlines.append({"price": float(_anc), "color": _bcol, "title": f"🎯最佳入场锚点 {float(_anc):.1f}"})
+                    if _bd[1] is not None:
+                        zlines.append({"price": float(_bd[1]), "color": _bcol, "title": "最佳区·上沿"})
+                    if _bd[0] is not None:
+                        zlines.append({"price": float(_bd[0]), "color": _bcol, "title": "最佳区·下沿"})
+            except Exception:  # noqa: BLE001
+                pass
+        if _show_zones:
+            zz = z[z["enough"]] if "enough" in z.columns else z
+            for _, r in zz.iterrows():
+                iscur = bool(r.get("is_current", False))
+                zlines.append({"price": float(r["price_high"]),
+                               "color": "#00D4FF" if iscur else "rgba(138,147,166,0.6)",
+                               "title": ("▶ " if iscur else "") + str(r["zone"])})
         # 叠加换手位：POC + 价值区(高换手带) —— 与价位带一起看支撑/压力
-        try:
-            _, _vpk = c_volume_profile(a, "2015-01-01", end, 252)
-            zlines.append({"price": float(_vpk["poc"]), "color": "#FF9F45", "title": "POC换手密集"})
-            zlines.append({"price": float(_vpk["value_area"][0]), "color": "rgba(255,159,69,0.45)", "title": "价值区低"})
-            zlines.append({"price": float(_vpk["value_area"][1]), "color": "rgba(255,159,69,0.45)", "title": "价值区高"})
-        except Exception:  # noqa: BLE001
-            pass
+        if _show_vp:
+            try:
+                _, _vpk = c_volume_profile(a, "2015-01-01", end, 252)
+                zlines.append({"price": float(_vpk["poc"]), "color": "#FF9F45", "title": "POC换手密集"})
+                zlines.append({"price": float(_vpk["value_area"][0]), "color": "rgba(255,159,69,0.45)", "title": "价值区低"})
+                zlines.append({"price": float(_vpk["value_area"][1]), "color": "rgba(255,159,69,0.45)", "title": "价值区高"})
+            except Exception:  # noqa: BLE001
+                pass
         try:
             ohlcv_pan = _ld.load_ohlcv(a, zstart, end)
             render_tv_candles(ohlcv_pan, None, price_lines=zlines, key=f"tvpan_{a}", height=460, log=True,
-                              caption="🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标读价。蓝/灰线=回撤价位带(▶=当前)，橙线=POC换手密集价/价值区。")
+                              caption="🖱️ 滚轮缩放·拖动平移·十字光标读价。**绿/黄线=🎯推荐最佳入场区(锚点+上下沿)**；蓝/灰线=回撤价位带(▶=当前)；橙线=POC换手密集价/价值区。用上方开关增删图层。")
         except Exception:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
     cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
@@ -2135,9 +2160,11 @@ def page_panorama():
             cvp[0].markdown(stat_card("POC 最高换手价", f"{_poc:.1f}", f"现价在其{_rel}", "#00D4FF", tip="POC"), unsafe_allow_html=True)
             cvp[1].markdown(stat_card("高换手价值区(70%)", f"{_vp['value_area'][0]:.0f}–{_vp['value_area'][1]:.0f}", "成交最集中带", "#7C5CFC", tip="Volume Profile"), unsafe_allow_html=True)
             cvp[2].markdown(stat_card("现价 vs POC", f"{_cur:.1f}", f"距POC {(_cur/_poc-1):+.1%}", "#FFD166"), unsafe_allow_html=True)
-            st.plotly_chart(ch.volume_profile_bars(_vp, title=f"{a} 筹码分布（近1年日线）"), use_container_width=True, config=ch.CHART_CONFIG)
-            st.caption("📖 横轴=该价位累计成交量(换手)。**POC=换手最密价位**(强支撑/压力磁吸)；**价值区=70%成交集中带**(辨别主力换手区)。"
-                       "现价上穿POC→其转为支撑；下破→转为压力。日线均摊近似·仅辅助·非信号·不入量化。")
+            st.plotly_chart(ch.candle_with_levels(_ohlcv_vp, _vp, title=f"{a} K线 + 筹码分布（近1年日线）", logy=True),
+                            use_container_width=True, config=ch.CHART_CONFIG)
+            st.caption("📖 **左侧紫色横柱=每个价位累计成交量(筹码)**，直接叠在K线上：柱越长该价位换手越密、支撑/压力越强；"
+                       "亮柱=价值区(70%成交带)。**POC=换手最密价位**(蓝色虚线·强磁吸)。现价上穿POC→其转支撑；下破→转压力。"
+                       "日线均摊近似·仅辅助·非信号·不入量化。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"筹码分布暂不可用（{type(_e).__name__}）——可能该标的 OHLCV 数据不足。")
 
