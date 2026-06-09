@@ -1689,6 +1689,7 @@ def page_panorama():
                 f"{'✅稳健' if _e.get('confident') else '低置信'}）"
                 if _e and _e.get("anchor") == _e.get("anchor") else "入场参考：当前无统计稳健点位，按区间分批")
         # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）
+        _posnow = None
         try:
             from analysis import overlay as _ov2
             _tvol = _PROFILE_VOL.get(gl_profile, 0.15)
@@ -1708,6 +1709,19 @@ def page_panorama():
             + f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:6px">📈 入场后：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</div>'
             f'<div style="color:#9aa3b2;font-size:0.82rem;margin-top:4px">🚪 离场：{"；".join(_card["exit_rules"])}</div>'
             f'</div>', unsafe_allow_html=True)
+        # 🗂️ 自动留痕：每天打开该标的就静默记录当日指导(按 标的+日期+周期 去重·一天一条)，
+        # 供「校准追踪」长期回填真实结果、检验工具有效性。
+        try:
+            from analysis import journal as _jn
+            _logged = _jn.log_from_brief(b, extra={
+                "decision_state": _card.get("state"), "decision_action": _card.get("action"),
+                "rec_position": (round(_posnow, 3) if _posnow is not None else None),
+                "entry_anchor": (_card.get("entry") or {}).get("anchor")})
+            st.caption("🗂️ 已自动留痕今日指导（决策状态/建议仓位/入场锚点/引擎预期）→ "
+                       "「📂深入分析 → 🧰工具&校准 → 🎯校准追踪」看历史有效性。" if _logged
+                       else "🗂️ 今日该标的指导已留痕（去重）。")
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
 

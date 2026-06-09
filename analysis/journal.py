@@ -53,8 +53,8 @@ def log_signal(record: dict, db_path: str | Path | None = None) -> bool:
         return False
 
 
-def log_from_brief(brief: dict, db_path: str | Path | None = None) -> bool:
-    """从 stock_brief 输出抽取关键字段落库。"""
+def log_from_brief(brief: dict, db_path: str | Path | None = None, extra: dict | None = None) -> bool:
+    """从 stock_brief 输出抽取关键字段落库。extra=额外留痕(如决策卡状态/建议仓位/入场锚点)，并入 payload。"""
     be = brief.get("engine_headline") or brief.get("engine_best") or {}
     g = brief.get("grade") or {}
     rec = {
@@ -66,6 +66,8 @@ def log_from_brief(brief: dict, db_path: str | Path | None = None) -> bool:
         "momentum_trap": brief.get("momentum_trap"),
         "confidence": g.get("confidence"), "max_position_fraction": g.get("max_position_fraction"),
     }
+    if extra:
+        rec.update(extra)
     return log_signal(rec, db_path)
 
 
