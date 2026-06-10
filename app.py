@@ -214,6 +214,19 @@ def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
         f'<div class="hero-sub" style="font-size:.8rem">{sub}</div></div>'
     )
 
+
+def _claude_deep_link(prompt: str) -> str:
+    """生成一键打开 Claude 并预填提示词的链接（claude.ai 新对话·q 参数预填）。"""
+    from urllib.parse import quote
+    return "https://claude.ai/new?q=" + quote(prompt)
+
+
+def claude_deep_button(label: str, prompt: str, key: str = ""):
+    """渲染"一键用 Claude 深度分析"按钮：新标签页打开 claude.ai 并预填提示词。"""
+    st.link_button("🚀 " + label, _claude_deep_link(prompt), use_container_width=True)
+    st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
+               "（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
+
 # ---------------------------------------------------------------------------
 # 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器
 # ---------------------------------------------------------------------------
@@ -2272,8 +2285,12 @@ def page_panorama():
                                "稍后刷新可更新；价格/量化结论始终是实时的，不受影响。")
                 _rep = _an.analyst_report(a, price, _info, b, horizon)
                 st.markdown(_an.format_report(_rep))
-                st.caption("💡 想要**联网读真实新闻 + LLM 深度推理**的分析师评论：在 Claude 对话说"
-                           "「深度分析 " + a + "」触发 quant-deep-brief skill（工具内只用自身数据，不联网）。")
+                st.caption("💡 想要**联网读真实新闻全文 + LLM 深度推理**的分析师评论（工具内只用自身数据，不联网）：")
+                claude_deep_button(
+                    f"用 Claude 深度分析 {a}（读全文+推理）",
+                    f"深度分析 {a}：读全网新闻全文、结合作战简报，给一句话判断、为什么是这些价位、"
+                    f"已发生了什么、未来催化剂、市场已price in 什么、中长期定位。用 quant-deep-brief 口径。",
+                    key=f"cl_pan_{a}")
             except Exception as _e:  # noqa: BLE001
                 st.warning(f"基本面暂未取到（yfinance 限流且无历史缓存）：{_e}。请**再点一次**按钮重试，"
                            "或稍后再来——成功取到一次后即会落盘，之后限流也能显示最近数据。")
@@ -2686,24 +2703,38 @@ def page_industry():
                                      "近63日": "{:+.0%}", "vs板块": "{:+.0%}"}, na_rep="—"),
                      use_container_width=True, hide_index=True)
 
-    # 🌐 联网深读（按钮触发·慢·仅线索不入量化）
+    # 🌐 联网深读（按钮触发·慢·含 GDELT 全球外媒·板块主题聚合·仅线索不入量化）
     st.divider()
-    st.markdown("##### 🌐 联网深读（板块龙头新闻主题 + 情绪 · 仅线索、不入量化）")
-    if st.button("🌐 拉取板块新闻动向（联网·约 10–20 秒）", key=f"webnews_{sec}"):
-        with st.spinner("联网拉取板块龙头新闻…"):
+    st.markdown("##### 🌐 联网深读（板块龙头新闻 · 含 GDELT 全球外媒 · 主题/情绪聚合 · 仅线索）")
+    if st.button("🌐 拉取板块全球新闻动向（联网·约 20–40 秒）", key=f"webnews_{sec}"):
+        with st.spinner("联网拉取板块龙头新闻（google + yahoo + GDELT 全球外媒）…"):
             try:
-                nz = ind.sector_news_themes(tks, sources=("google", "yahoo"))
+                nz = ind.sector_news_themes(tks, sources=("google", "yahoo", "gdelt"))
             except Exception as _e:  # noqa: BLE001
                 nz = None; st.warning(f"联网失败（{type(_e).__name__}）——可能限流，稍后再试。")
         if nz and nz["n"]:
-            st.caption(f"共 {nz['n']} 条 · {nz['providers']} 家媒体 · 标记利好 {nz['pos']} / 利空 {nz['neg']}（启发式·非信号）。")
-            for it in nz["items"][:18]:
-                t = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
-                st.markdown(f"- `{it['date'][:10]}` **{it['ticker']}** {('['+it['sentiment']+'] ') if it['sentiment'] else ''}{t}")
-            st.caption("⚠️ 新闻仅供顺藤摸瓜、含前视、不入任何量化结果。要**全文读网+LLM深度推理**："
-                       "在 Claude 对话说「深度分析 " + tks[0] + "」触发 quant-deep-brief。")
+            st.session_state[f"_news_{sec}"] = nz
         elif nz is not None:
             st.caption("暂无拉到新闻（可能限流）。")
+    _nz = st.session_state.get(f"_news_{sec}")
+    if _nz and _nz.get("n"):
+        st.markdown(f"**板块主导主题**：" + ("、".join(f"{t}({c})" for t, c in _nz["top_themes"]) or "无明显主题")
+                    + f"　|　情绪天平 利好 {_nz['pos']} / 利空 {_nz['neg']}（{_nz['n']}条·{_nz['providers']}家媒体·启发式非信号）")
+        if _nz["hot_pos"] or _nz["hot_neg"]:
+            st.caption("情绪偏多成分：" + ("、".join(f"{k}(+{v})" for k, v in _nz["hot_pos"]) or "—")
+                       + "　|　情绪偏空成分：" + ("、".join(f"{k}({v})" for k, v in _nz["hot_neg"]) or "—"))
+        for it in _nz["items"][:20]:
+            t = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
+            th = ("·".join(it["themes"][:2])) if it.get("themes") else ""
+            st.markdown(f"- `{it['date'][:10]}` **{it['ticker']}** {('['+it['sentiment']+'] ') if it['sentiment'] else ''}{t}"
+                        + (f"　_{th}_" if th else ""))
+        st.caption("⚠️ 新闻仅供顺藤摸瓜、含前视、不入任何量化结果。")
+        # 🚀 一键转 Claude 做全文读网 + 深度推理（app 内只聚合标题/情绪，全文推理在 Claude）
+        claude_deep_button(f"用 Claude 深度分析 {sec.split()[-1]}板块（读全文+推理）",
+                           f"深度分析 {sec} 板块（{', '.join(tks[:8])} 等）：读全网新闻全文，"
+                           f"结合行业动向（宽度/相对强度/成长/估值/供应链）推理可能出现的情景与各自概率，"
+                           f"给中长期定位。用 quant-deep-brief 口径：校准而非预测、给情景分布不拍单点。",
+                           key=f"cl_{sec}")
 
     st.caption("⚠️ 全页为**历史可观测动向 + 历史类比分布**，非预测、不判牛熊、不给点位；新闻/基本面仅供人读、不入量化。")
 

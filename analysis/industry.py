@@ -176,15 +176,19 @@ def sector_fundamentals(tickers: list[str]) -> dict:
             "n_growth": len(rg), "n_pe": len(pe)}
 
 
-def sector_news_themes(tickers: list[str], limit_per: int = 4,
-                       sources=("google", "yahoo")) -> dict:
-    """联网拉板块龙头新闻 → 主题/情绪聚合（仅线索·不入量化·含前视）。慢，按钮触发。"""
+def sector_news_themes(tickers: list[str], limit_per: int = 6, n_tickers: int = 12,
+                       sources=("google", "yahoo", "gdelt")) -> dict:
+    """联网深读：拉板块龙头新闻(含 GDELT 全球外媒) → **板块级主题/情绪聚合**（仅线索·不入量化·含前视）。
+
+    汇总各成分的主题计数(财报/监管/并购/AI产品/宏观…)成"板块主导主题"，再给情绪天平。慢，按钮触发。
+    """
     from data import news as nws
-    from analysis.news_reason import analyze_news
-    items = []
-    providers = set()
+    from analysis.news_reason import analyze_news, _THEME_CN
+    items, providers = [], set()
     pos = neg = 0
-    for t in tickers[:8]:
+    theme_total: dict[str, int] = {}
+    per_ticker_tone: dict[str, int] = {}
+    for t in tickers[:n_tickers]:
         try:
             df = nws.stock_news(t, limit=limit_per, sources=sources)
         except Exception:  # noqa: BLE001
@@ -192,12 +196,24 @@ def sector_news_themes(tickers: list[str], limit_per: int = 4,
         if df is None or df.empty:
             continue
         an = analyze_news(df) or {}
-        tag = {it["title"]: it.get("sentiment", "") for it in an.get("items", [])}
+        per_ticker_tone[t] = int(an.get("tone", 0))
+        for th, c in an.get("theme_count", {}).items():
+            theme_total[th] = theme_total.get(th, 0) + c
+        meta = {it["title"]: it for it in an.get("items", [])}
         for _, r in df.iterrows():
-            s = tag.get(r["title"], "")
-            pos += ("利好" in s or "正" in s); neg += ("利空" in s or "负" in s)
+            m = meta.get(r["title"], {})
+            s = m.get("sentiment", "")
+            pos += (s == "利好"); neg += (s == "利空")
             providers.add(r.get("provider", ""))
             items.append({"ticker": t, "date": str(r.get("date", "")), "title": r.get("title", ""),
-                          "sentiment": s, "url": r.get("url", "")})
+                          "sentiment": s, "themes": [_THEME_CN.get(x, x) for x in m.get("themes", [])],
+                          "url": r.get("url", "")})
     items.sort(key=lambda x: x["date"], reverse=True)
-    return {"n": len(items), "providers": len(providers), "pos": pos, "neg": neg, "items": items[:25]}
+    top_themes = sorted(theme_total.items(), key=lambda kv: kv[1], reverse=True)
+    top_themes_cn = [(_THEME_CN.get(t, t), c) for t, c in top_themes[:5]]
+    # 情绪偏多/偏空的成分
+    hot_pos = sorted([(k, v) for k, v in per_ticker_tone.items() if v > 0], key=lambda kv: kv[1], reverse=True)[:4]
+    hot_neg = sorted([(k, v) for k, v in per_ticker_tone.items() if v < 0], key=lambda kv: kv[1])[:4]
+    return {"n": len(items), "providers": len(providers), "pos": pos, "neg": neg,
+            "top_themes": top_themes_cn, "hot_pos": hot_pos, "hot_neg": hot_neg,
+            "items": items[:30]}
