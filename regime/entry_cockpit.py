@@ -262,14 +262,21 @@ def best_entry_zone(
                 "caveats": ["无正超额档：硬给买点=骗自己。"]}
 
     base_med = float(zones.attrs.get("baseline_median", 0.0))
-    robust = elig[elig["ci_low"] > base_med]
+    # 选档原则（修正"按 max 超额→选到深档少样本噪声"）：
+    #   ① 优先**样本充足**档(独立窗口≥5)，避免把 N独立=2~3 的深档当"最佳"；
+    #   ② 一律按 **ci_low(保守下界)** 排名，而非点估计超额——宽CI的少样本深档 ci_low 自然低、被惩罚；
+    #   ③ robust = ci_low>基准(超额显著)；否则取 ci_low 最高(最不坏)者，并标低置信。
+    _N_FLOOR = 5
+    adequate = elig[elig["n_independent"] >= _N_FLOOR]
+    pool0 = adequate if not adequate.empty else elig
+    robust = pool0[pool0["ci_low"] > base_med]
     if not robust.empty:
-        pool, confident, key = robust, True, "ci_low"
+        pool, confident = robust, True
     else:
-        pool, confident, key = elig, False, "excess_median"
+        pool, confident = pool0, False
     bounded = pool[pool["depth_hi"] < 1.0]
     use = bounded if not bounded.empty else pool
-    best = use.loc[use[key].idxmax()]
+    best = use.loc[use["ci_low"].idxmax()]   # 始终按保守下界择优
 
     # —— 反关 1：多重检验折扣（从 len(elig) 个合格档里选最优）——
     sharpes = elig["sharpe"].dropna().to_numpy()

@@ -152,3 +152,27 @@ def test_entry_miss_risk_and_format():
     bez2 = dict(bez); bez2["price_band"] = [cur*1.0, cur*1.05]; bez2["anchor_price"] = cur*1.02
     mr2 = ec.entry_miss_risk(px, bez2)
     assert mr2.get("already_in") and "无踏空风险" in ec.format_miss_risk(mr2)
+
+
+def test_best_entry_prefers_adequate_samples_and_ci_low():
+    """选档应优先样本充足档(独立窗口≥5)并按 ci_low 排名，不再选深档少样本/烂CI的噪声。"""
+    from data import loader as ld
+    from regime import entry_cockpit as ec
+    px = ld.load_prices(["SPY"], "1995-01-01", "2026-06-09")["SPY"].dropna()
+    z = ec.entry_zones(px, asset="SPY", horizon=63, bands=ec.DEEP_BANDS)
+    base = z.attrs["baseline_median"]
+    bez = ec.best_entry_zone(px, asset="SPY", horizon=63, single_name=False)
+    if not bez.get("has_zone"):
+        return  # 防守也可接受
+    row = z[z["zone"] == bez["zone_label"]].iloc[0]
+    elig = z[(z["enough"]) & (z["excess_median"] > 0)]
+    adequate = elig[elig["n_independent"] >= 5]
+    if not adequate.empty:
+        # 选中档必须来自样本充足池
+        assert int(row["n_independent"]) >= 5, f"选中档 N独立={row['n_independent']}<5 但存在充足档"
+        # 且是该池(按 robust/降级后)里 ci_low 最高者之一
+        pool = adequate[adequate["ci_low"] > base]
+        pool = pool if not pool.empty else adequate
+        pool_b = pool[pool["depth_hi"] < 1.0]
+        pool_b = pool_b if not pool_b.empty else pool
+        assert abs(row["ci_low"] - pool_b["ci_low"].max()) < 1e-9, "未按 ci_low 择优"
