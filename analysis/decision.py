@@ -78,8 +78,9 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
             state, color, posture = "🟢 建仓区(高置信)", "#2BE6A8", "build"
             action = "分批加重——指数/宽基ETF深跌是回测里胜率最高、最干净的建仓带"
         elif is_semi:
-            state, color, posture = "🟢 建仓区(半导体)", "#2BE6A8", "build"
-            action = "分批加重——半导体只有深跌(-20%+)才有正edge，正是此区；但波动大、严设止损"
+            state, color, posture = "🟡 半导体深跌·小批认尾部", "#FFD166", "build"
+            action = ("半导体深跌长周期反弹大、绝对收益高，但回测显示**此档尾部最肥(p10可达-25%)、胜率最低**——"
+                      "分批小步进、严设止损、认尾部，别'越深越重仓'(浅跌0-10%正期望档才是风险调整最优)")
         else:
             state, color, posture = "🟡 深跌·需把握", "#FFD166", "build"
             action = "仅在你确信基本面会回来时分批——单票深跌可能是价值陷阱(输家此档历史负超额)"
@@ -89,14 +90,16 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
             action = "3x杠杆每日复利衰减、不宜久持——只做短线波段、严设止损，别越跌越补"
         elif is_semi:
             state, color, posture = "🟠 半导体中度回撤·别急", "#FF9F45", "wait"
-            action = "半导体浅/中跌(10-20%)历史无edge甚至负——别接，等深跌(-20%+)或趋势重新站上200线"
+            action = ("半导体中跌(10-20%)是回测里**最弱的一档**(edge最薄甚至为负)——别因'跌得多'就接；"
+                      "等引擎此档转正期望再小批，或趋势站回200线。注意**深跌(-20%+)尾部更肥、胜率更低，不是越深越安全**")
         else:
             state, color, posture = "🟡 分批", "#FFD166", "wait"
-            action = "中度回撤，分档建仓、留子弹给更深的档；指数/科技ETF此区尚可，单票看把握"
+            action = ("中度回撤，分档建仓；但别一味'留子弹等更深'——回测里更深档尾部更肥、胜率更低，"
+                      "浅档(0-10%)正期望反而风险调整最优。指数/科技ETF此区尚可，单票看引擎与把握")
     elif dd <= -0.05:
         state, color, posture = "🟡 浅回撤", "#FFD166", "wait"
         action = ("科技/宽基ETF浅跌(5-10%)历史已有正超额，可分批" if cls in ("index_etf",)
-                  else "浅回撤无显著edge，按计划小批进、别空等")
+                  else "浅跌(0-10%)正期望档是回测里**风险调整最优**(胜率最高、尾部最浅)——引擎此档转正即可分批，别空等更深(更深≠更好)")
     else:
         state, color, posture = "🟢 追 / 持有", "#2BE6A8", "chase"
         action = "高位附近：直接分批进/持有——别等浅回调(回测70%等不到且更亏，在场>择时)"
@@ -157,9 +160,9 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
     elif is_lev:
         add_txt = "杠杆ETF不摊平：只做短线波段、严设止损，别越跌越补"
     elif dd > -0.20:
-        add_txt = "跌到下一更深档再补一批（按价位带分档）"
+        add_txt = "可在更深档小批分档补（按价位带）——但越深尾部越肥、胜率越低，每深一档减码、别越深越重仓"
     else:
-        add_txt = "已在深档，剩余子弹小步补、别梭哈"
+        add_txt = "已在深档（历史尾部最肥、胜率最低）——只用剩余子弹小步试探、认尾部，别梭哈摊平"
     post_entry = {
         "add": add_txt,
         "trim": "反弹到前高附近/引擎中位上行后，分批减 1/3，移动止损让利润奔跑",

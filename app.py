@@ -216,19 +216,75 @@ def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
 
 
 def _claude_deep_link(prompt: str) -> str:
-    """生成一键打开 Claude 并预填提示词的链接（claude.ai 新对话·q 参数预填）。"""
+    """生成一键打开 Claude 并预填提示词的链接（claude.ai 新对话·q 参数预填）——本地不可用时的回退。"""
     from urllib.parse import quote
     return "https://claude.ai/new?q=" + quote(prompt)
 
 
+@st.cache_data(show_spinner=False)
+def _find_local_claude() -> str:
+    """定位本地 Claude Code 可执行文件（桌面应用自带 / 独立安装 / PATH）。找不到返回 ""。"""
+    import os, glob, shutil
+    # 1) 系统 PATH（独立安装 / macOS / Linux）
+    exe = shutil.which("claude")
+    if exe:
+        return exe
+    # 2) Windows 桌面应用自带：%APPDATA%\Claude\claude-code\<版本>\claude.exe（取最高版本）
+    base = os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude-code")
+    cands = glob.glob(os.path.join(base, "*", "claude.exe"))
+    if cands:
+        def _ver(p):
+            v = os.path.basename(os.path.dirname(p)).split(".")
+            return tuple(int(x) if x.isdigit() else 0 for x in (v + ["0", "0", "0"])[:3])
+        return max(cands, key=_ver)
+    return ""
+
+
+def _launch_local_claude(prompt: str) -> bool:
+    """在新终端窗口里拉起本地 Claude Code，以 prompt 作为首条消息开启一个新对话。成功返回 True。"""
+    import os, subprocess
+    exe = _find_local_claude()
+    if not exe:
+        return False
+    cwd = os.path.dirname(os.path.abspath(__file__))  # 在量化工具目录开会话，便于结合本仓数据/skill
+    try:
+        if os.name == "nt":
+            # CREATE_NEW_CONSOLE：开一个全新交互式终端窗口；prompt 作为独立 argv 传入，无需 shell 转义
+            subprocess.Popen([exe, prompt], cwd=cwd,
+                             creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:
+            subprocess.Popen([exe, prompt], cwd=cwd)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def claude_deep_button(label: str, prompt: str, key: str = "", hint: bool = True):
-    """渲染"一键用 Claude 深度分析"按钮：新标签页打开 claude.ai 并预填提示词。
+    """渲染"一键用 Claude 深度分析"按钮：优先在本地新开一个 Claude Code 对话并预填提示词；
+    本地 Claude 不可用时回退到 claude.ai 网页版新对话。
 
     hint=False 时省略下方说明（用于顶部等已在别处解释过的位置，避免重复字眼）。"""
-    st.link_button("🚀 " + label, _claude_deep_link(prompt), use_container_width=True)
-    if hint:
-        st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
-                   "（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
+    if not key:
+        import hashlib
+        key = "cl_" + hashlib.md5((label + prompt).encode("utf-8")).hexdigest()[:10]
+    if _find_local_claude():
+        if st.button("🚀 " + label, use_container_width=True, key=key):
+            if _launch_local_claude(prompt):
+                st.toast("已在本地新终端窗口打开 Claude，并预填好提示词——回车即开始深度分析。", icon="🚀")
+            else:
+                st.error("本地 Claude 启动失败，请改用下方网页版或在终端手动运行 `claude`。")
+                st.link_button("↗ 改用网页版 Claude", _claude_deep_link(prompt),
+                               use_container_width=True, key=key + "_web")
+        if hint:
+            st.caption("↑ 在**本地新终端**打开 Claude Code 新对话并预填提示词，**回车即开始**"
+                       "联网读全文+深度推理（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
+    else:
+        # 本地未找到 Claude Code：回退网页版，保证按钮永不失效
+        st.link_button("🚀 " + label, _claude_deep_link(prompt),
+                       use_container_width=True, key=key + "_web")
+        if hint:
+            st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
+                       "（未检测到本地 Claude Code；装好后此按钮会自动改为在本地新开对话）。")
 
 # ---------------------------------------------------------------------------
 # 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器

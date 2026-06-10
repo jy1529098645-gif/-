@@ -54,6 +54,18 @@ def test_semi_mid_dip_warns_not_to_catch():
     assert "别" in c["action"] or "无edge" in c["action"] or "别急" in c["state"]
 
 
+def test_deep_dip_is_tail_aware_not_more_aggressive():
+    """新口径(PIT回测)：深档≠更好的买点——决策卡深跌/补仓措辞必须含'认尾部'或'减码/小批'，
+    且不得把更深档说成'加重/越深越重仓'。锁定'更深≠更好'的行为口径。"""
+    # 半导体深跌：应是'小批认尾部'，不是'分批加重'
+    cs = dc.decision_card("NVDA", _px(-0.25), _ZONE_OK, fragile_now=False)
+    assert ("认尾部" in cs["action"] or "尾部最肥" in cs["action"])
+    assert "加重" not in cs["action"]
+    # 补仓口径(post_entry.add)：越深越减码、别越深越重仓
+    ca = dc.decision_card("AAPL", _px(-0.12), _ZONE_OK, fragile_now=False)
+    assert ("减码" in ca["post_entry"]["add"] or "认尾部" in ca["post_entry"]["add"])
+
+
 def test_single_deep_needs_conviction():
     c = dc.decision_card("CRM", _px(-0.25), _ZONE_OK, fragile_now=False)
     assert "把握" in c["state"] or "价值陷阱" in c["action"]

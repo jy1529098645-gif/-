@@ -41,7 +41,7 @@ def test_momentum_trap_defensive():
 def test_value_allows_add_on_dip():
     p = pb.build_playbook(_value_brief())
     down = " ".join(p["if_down"])
-    assert "可按计划补仓" in down  # 价值倾斜允许补
+    assert "可小批补仓" in down  # 价值倾斜允许补（前重后轻·认尾部口径）
     # 涨了有减仓 + 移动止损
     up = " ".join(p["if_up"])
     assert "减" in up and ("移动止损" in up or "止损" in up)

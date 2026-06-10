@@ -80,11 +80,12 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
         if high_vol:
             size_hint = f"高波动(分位 {volp*100:.0f}%)→先建计划仓位的 1/3 试探，波动回落再补中/重档"
         else:
-            size_hint = "可按 浅30%/中40%/重30% 分批落地（指该标的计划仓位，非全部资金）"
+            size_hint = ("可按 浅40%/中35%/重25% 分批落地（**前重后轻**：回测里浅档正期望风险调整最优、"
+                         "越深尾部越肥胜率越低，故越深每批越小；指该标的计划仓位，非全部资金）")
         pb["entry"].append("分批落地：" + size_hint + "。")
         # Plan B（防踏空）：避免"只挂深档、价格直接走高踏空整波"——在场>择时
         pb["entry"].append("🪂 **防踏空 Plan B**：若价格不回深档、直接走高 → 站上 MA50 / 突破前高确认就**追小仓**，"
-                           "别空仓干等（历史上想等的浅回调多数不来，踏空常比追高更亏）。深档与追势两手都留子弹。")
+                           "别空仓干等（历史上想等的浅回调多数不来，踏空常比追高更亏）。注意**更深档不是更好的买点**(回测尾部更肥、胜率更低)，深档只留小份子弹试探。")
 
     # ---------- 涨了（减仓位必须按价位从低到高，先到先减）----------
     sc1 = (price * (1 + up_median)) if (up_median == up_median) else None
@@ -114,8 +115,8 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
             mids = [t for t in tranches[1:]]
             if mids:
                 add_txt = "、".join(f"{t['tier']}档 {t['price']:.1f}" for t in mids)
-                pb["if_down"].append(f"跌到下一共振支撑（{add_txt}）**可按计划补仓**——历史上该深度远期分布仍正偏；"
-                                     "但每补一档必须**同步下移整体止损**。")
+                pb["if_down"].append(f"跌到下一共振支撑（{add_txt}）**可小批补仓**——该深度远期分布仍正偏，但**越深尾部越肥、胜率越低→每档减码、认尾部**，"
+                                     "且每补一档必须**同步下移整体止损**。")
         else:
             pb["if_down"].append("引擎未给正超额 → 跌了**不加仓**，按止损纪律执行。")
     if hard_stop is not None:
