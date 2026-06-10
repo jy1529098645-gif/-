@@ -221,11 +221,14 @@ def _claude_deep_link(prompt: str) -> str:
     return "https://claude.ai/new?q=" + quote(prompt)
 
 
-def claude_deep_button(label: str, prompt: str, key: str = ""):
-    """渲染"一键用 Claude 深度分析"按钮：新标签页打开 claude.ai 并预填提示词。"""
+def claude_deep_button(label: str, prompt: str, key: str = "", hint: bool = True):
+    """渲染"一键用 Claude 深度分析"按钮：新标签页打开 claude.ai 并预填提示词。
+
+    hint=False 时省略下方说明（用于顶部等已在别处解释过的位置，避免重复字眼）。"""
     st.link_button("🚀 " + label, _claude_deep_link(prompt), use_container_width=True)
-    st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
-               "（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
+    if hint:
+        st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
+                   "（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
 
 # ---------------------------------------------------------------------------
 # 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器
@@ -1744,6 +1747,17 @@ def page_briefing():
                         st.caption("以上为原文抽取的含数字/事件关键句，**仅供人读、未做事实校验、不入量化**。"
                                    "要全面读各种新闻并深度推理，请在 Claude 对话里触发 `quant-deep-brief` skill。")
 
+    # 🚀 一键转 Claude 深度分析这几只（联网读全文 + 跨票对比推理）
+    _tks = [b.get("ticker", "") for b in briefs if b.get("ticker")]
+    if _tks:
+        st.divider()
+        claude_deep_button(
+            f"用 Claude 深度分析这 {len(_tks)} 只（{', '.join(_tks[:6])}{'…' if len(_tks) > 6 else ''}）",
+            f"深度分析这几只：{', '.join(_tks)}。逐只读全网新闻全文 + 结合作战简报，给每只一句话判断、"
+            f"为什么是这些价位、催化剂、已 price in 什么；再做**跨票对比**(谁更值得、相关性/集中度风险)，"
+            f"给一个组合层面的中长期定位。用 quant-deep-brief 口径：校准而非预测、给情景分布不拍单点。",
+            key="cl_brief")
+
     # 导出
     st.divider()
     md = bf.render_markdown(briefs, weights, run["h"])
@@ -1955,6 +1969,14 @@ def page_panorama():
     else:
         _oc[3].markdown(stat_card("下次财报", "—", "ETF/无日程", "#8A93A6"), unsafe_allow_html=True)
     st.write("")
+
+    # 🚀 一键转 Claude 联网读全文+深度推理（最显眼处；app 给校准数字，Claude 补读网推理）
+    _clc = st.columns([2, 1, 2])
+    with _clc[1]:
+        claude_deep_button(f"用 Claude 深度分析 {a}",
+                           f"深度分析 {a}：读全网新闻全文 + 结合作战简报，给一句话判断、为什么是这些价位、"
+                           f"已发生了什么、未来催化剂、市场已 price in 什么、中长期定位。用 quant-deep-brief 口径"
+                           f"（校准而非预测、给情景分布不拍单点）。", key=f"cl_top_{a}", hint=False)
 
     # ========== 📋 操作预案（紧跟行动面板：具体怎么建仓 · 涨了/跌了/到时间/风控）==========
     from analysis.playbook import build_playbook
