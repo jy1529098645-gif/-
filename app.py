@@ -2946,15 +2946,18 @@ def page_position_card():
     r, b, x = g["regime"], g["build"], g["exit"]
     st.info(g["headline"])
 
-    # —— 今日三档暴露 ——
+    # —— 今日四档暴露(含🔥杠杆进取) ——
     st.markdown("##### 📊 今日建议暴露（v3 连续定仓·已验证；非投资建议）")
-    ec = st.columns(3)
-    _pcol = {"conservative": "#00D4FF", "moderate": "#2BE6A8", "aggressive": "#FF9F45"}
-    for i, k in enumerate(["conservative", "moderate", "aggressive"]):
+    ec = st.columns(4)
+    _pcol = {"conservative": "#00D4FF", "moderate": "#2BE6A8", "aggressive": "#FF9F45", "leveraged": "#FF5C7A"}
+    for i, k in enumerate(["conservative", "moderate", "aggressive", "leveraged"]):
         ev = g["exposure"][k]
-        ec[i].markdown(stat_card(f"{pg.PROFILE_ZH[k]}档（波动目标 {ev['target_vol']:.0%}）",
+        _lev = f"·上限{ev['max_lev']:g}×" if ev.get("leveraged") else ""
+        ec[i].markdown(stat_card(f"{pg.PROFILE_ZH[k]}档（波动{ev['target_vol']:.0%}{_lev}）",
                                  f"{ev['exposure_pct']}%", "建议暴露", _pcol[k]), unsafe_allow_html=True)
     st.caption(f"当前触发：{x['active_trigger']}")
+    if x.get("leverage_warning"):
+        st.error(x["leverage_warning"])
     st.write("")
 
     # —— 暴露历史图（中性档）——

@@ -22,9 +22,16 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# 三档风险偏好 → 波动目标(年化)。中性=v3终审用的 0.25。
-PROFILES = {"conservative": 0.18, "moderate": 0.25, "aggressive": 0.35}
-PROFILE_ZH = {"conservative": "稳健", "moderate": "中性", "aggressive": "进取"}
+# 风险偏好 → (波动目标年化, 杠杆上限)。中性=v3终审用的 0.25/1.0。
+# 🔥杠杆进取(leveraged)= 回测验证的"纪律可控更高利润"档：科技/半导体上年化≈+30%(死拿+29%)、
+# 夏普打平、回撤同级；原理=低波动牛市里加杠杆放大、波动一起自动降、200线破位清仓(放大beta非择时)。
+PROFILES = {
+    "conservative": {"tvol": 0.18, "max_lev": 1.0},
+    "moderate":     {"tvol": 0.25, "max_lev": 1.0},
+    "aggressive":   {"tvol": 0.35, "max_lev": 1.0},
+    "leveraged":    {"tvol": 0.40, "max_lev": 1.5},
+}
+PROFILE_ZH = {"conservative": "稳健", "moderate": "中性", "aggressive": "进取", "leveraged": "🔥杠杆进取"}
 
 
 def _ewma_vol_last(ret: pd.Series, lam: float = 0.94) -> float:
@@ -33,32 +40,35 @@ def _ewma_vol_last(ret: pd.Series, lam: float = 0.94) -> float:
     return float(s.iloc[-1]) if not s.empty else float("nan")
 
 
-def _target_exposure(trend_up: bool, slope_pos: bool, ewmav: float, tvol: float) -> float:
-    """v3 暴露规则：趋势门 × 波动目标连续定仓 × 仅确认趋势死亡才清。"""
+def _target_exposure(trend_up: bool, slope_pos: bool, ewmav: float, tvol: float,
+                     max_lev: float = 1.0) -> float:
+    """v3 暴露规则：趋势门 × 波动目标连续定仓(上限 max_lev) × 仅确认趋势死亡才清。
+
+    max_lev>1 即"科技进取·杠杆"：低波动牛市里上杠杆放大、波动起来自动降、破位清仓。"""
     if not (ewmav == ewmav) or ewmav <= 0:
         base = 0.0
     else:
-        base = min(1.0, tvol / ewmav)
-    if trend_up:                       # 站上200线：按波动目标在场
+        base = min(max_lev, tvol / ewmav)
+    if trend_up:                       # 站上200线：按波动目标在场(可>1倍)
         return base
     if not slope_pos:                  # 200线下方且斜率转负：确认趋势死亡 → 清
         return 0.0
     return 0.5 * base                  # 200线下方但斜率未转负：半仓过渡
 
 
-def _exposure_series(price: pd.Series, tvol: float) -> pd.Series:
-    """全历史 v3 暴露序列(供画图/复核)。无前视：t 暴露用到 t 收盘。"""
+def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0) -> pd.Series:
+    """全历史暴露序列(供画图/复核/回测)。无前视：t 暴露用到 t 收盘。max_lev>1 时可上杠杆。"""
     from analysis.quant_edge import ewma_vol
     ret = price.pct_change()
     sma200 = price.rolling(200, min_periods=100).mean()
     slope = (sma200 > sma200.shift(20))
     ewmav = ewma_vol(ret)
-    base = (tvol / ewmav).clip(upper=1.0)
+    base = (tvol / ewmav).clip(upper=max_lev)
     up = price > sma200
     dead = (price < sma200) & (~slope)
     expo = base.where(up, 0.5 * base)
     expo = expo.where(~dead, 0.0)
-    return expo.clip(0.0, 1.0).fillna(0.0)
+    return expo.clip(0.0, max_lev).fillna(0.0)
 
 
 def position_guidance(ticker: str, start: str | None = None, end: str | None = None,
@@ -97,12 +107,13 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
         "vol_spike": vol_spike,
     }
 
-    # --- 今日三档暴露 ---
+    # --- 今日四档暴露(含🔥杠杆进取) ---
     exposure = {}
-    for k, tvol in PROFILES.items():
-        e = _target_exposure(trend_up, slope_pos, ewmav, tvol)
-        exposure[k] = {"target_vol": tvol, "exposure": float(round(e, 3)),
-                       "exposure_pct": int(round(e * 100))}
+    for k, cfg in PROFILES.items():
+        e = _target_exposure(trend_up, slope_pos, ewmav, cfg["tvol"], cfg["max_lev"])
+        exposure[k] = {"target_vol": cfg["tvol"], "max_lev": cfg["max_lev"],
+                       "exposure": float(round(e, 3)), "exposure_pct": int(round(e * 100)),
+                       "leveraged": bool(cfg["max_lev"] > 1.0)}
 
     # --- 回撤桶证据(建仓核心) ---
     bucket = {"available": False}
@@ -198,8 +209,12 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
             "❌ 不要用固定%移动止损/快速二元止损 → 回测证明对同篮子持有显著负α、反拖累夏普。",
         ],
         "honesty": ("⚠️ 撤离=崩盘保险：26年回测里22年闭眼持有的夏普更高，撤离的正α**只在崩盘年兑现**"
-                    "(2008/2022 把回撤砍掉2/3)。绝对收益上没有任何配置跑赢长牛持有——撤离换的是"
+                    "(2008/2022 把回撤砍掉2/3)。稳健/中性/进取(≤1倍)绝对收益上不跑赢长牛持有——换的是"
                     "风险调整后更优 + 回撤腰斩，代价是正常年份让出部分上行。要的是这个保险才用。"),
+        "leverage_warning": ("🔥 杠杆进取档(暴露>100%=上杠杆)：回测(科技/半导体 2010-26)年化≈+30%(略高于死拿+29%)、"
+                             "夏普打平、回撤同级——这是**放大beta、非更聪明择时**，没有免费午餐。"
+                             "代价：① 真出现 2000/2008 级结构性深熊会远比这惨(200线过滤滞后挨刀)；"
+                             "② −50% 级回撤要扛住不割；③ 全 in-sample、未来不复刻。仅高风险承受力、且严守200线破位清仓纪律者用。"),
     }
 
     # --- 总纲 ---
@@ -207,10 +222,11 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
     head = (f"{regime['ticker']} @ {px:.2f}（距前高 {dd:+.0%}，{'200线上' if trend_up else '200线下'}"
             f"{'·斜率正' if slope_pos else '·斜率转负'}，波动分位 {vol_pct:.0%}）｜"
             f"建仓：{stance}｜今日建议暴露 稳健{exposure['conservative']['exposure_pct']}%/"
-            f"中性{exposure['moderate']['exposure_pct']}%/进取{exposure['aggressive']['exposure_pct']}%｜{active_trigger}")
+            f"中性{exposure['moderate']['exposure_pct']}%/进取{exposure['aggressive']['exposure_pct']}%/"
+            f"🔥杠杆{exposure['leveraged']['exposure_pct']}%｜{active_trigger}")
 
     # --- 暴露历史(中性档，供画图) ---
-    es = _exposure_series(price, PROFILES["moderate"])
+    es = _exposure_series(price, PROFILES["moderate"]["tvol"], PROFILES["moderate"]["max_lev"])
     hist = pd.DataFrame({"price": price, "exposure": es}).dropna().tail(750)
 
     return {"regime": regime, "exposure": exposure, "build": build, "exit": exit_blk,
@@ -227,11 +243,13 @@ def format_guidance(g: dict) -> str:
          f"> {g['headline']}", ""]
     # 今日暴露
     L += ["## 📊 今日建议暴露（v3 连续定仓·已验证）",
-          f"| 风险偏好 | 波动目标 | 建议暴露 |",
-          f"|---|---|---|"]
-    for k in ("conservative", "moderate", "aggressive"):
-        L.append(f"| {PROFILE_ZH[k]} | {ex[k]['target_vol']:.0%} | **{ex[k]['exposure_pct']}%** |")
+          f"| 风险偏好 | 波动目标 | 杠杆上限 | 建议暴露 |",
+          f"|---|---|---|---|"]
+    for k in ("conservative", "moderate", "aggressive", "leveraged"):
+        L.append(f"| {PROFILE_ZH[k]} | {ex[k]['target_vol']:.0%} | {ex[k]['max_lev']:g}× | **{ex[k]['exposure_pct']}%** |")
     L += [f"\n_{x['active_trigger']}_", ""]
+    if x.get("leverage_warning"):
+        L += [f"> {x['leverage_warning']}", ""]
     # 建仓
     L += [f"## 🎯 建仓：{b['stance']}  （把握度 {b['grade']}）", f"> {b['why']}", ""]
     bk = b["drawdown_bucket"]
