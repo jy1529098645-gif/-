@@ -176,3 +176,20 @@ def test_best_entry_prefers_adequate_samples_and_ci_low():
         pool_b = pool[pool["depth_hi"] < 1.0]
         pool_b = pool_b if not pool_b.empty else pool
         assert abs(row["ci_low"] - pool_b["ci_low"].max()) < 1e-9, "未按 ci_low 择优"
+
+
+def test_cross_horizon_avoids_tiny_sample_bands():
+    """跨周期择优不得选到 N独立<5 的少样本档（如长周期开口深档 N=1）——只要有充足样本档可选。"""
+    from data import loader as ld
+    from regime import entry_cockpit as ec
+    for a in ["SPY", "XLF", "TSM"]:
+        zs = "1995-01-01" if a == "SPY" else "2008-01-01"
+        px = ld.load_prices([a], zs, "2026-06-09")[a].dropna()
+        bez = ec.best_entry_across_horizons(px, asset=a, single_name=False)
+        if not bez.get("has_zone"):
+            continue
+        # 若任一周期存在 N独立≥5 的有区档，选中档必须 N独立≥5
+        scan = bez.get("horizon_scan", [])
+        has_adequate = any(s.get("has_zone") and (s.get("n_independent") or 0) >= 5 for s in scan)
+        if has_adequate:
+            assert (bez.get("n_independent") or 0) >= 5, f"{a}: 选中 N独立={bez.get('n_independent')}<5 但存在充足档"

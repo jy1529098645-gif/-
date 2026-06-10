@@ -382,13 +382,16 @@ def best_entry_across_horizons(
 
     def _score(b):
         if not b.get("has_zone"):
-            return (-1.0, -1.0, -1.0)
+            return (-1.0, -1.0, -1.0, -1.0)
         conf = 1.0 if b.get("confident") else 0.0
+        # 样本充足优先：独立窗口≥5 才进"够样本"档——杜绝跨周期选到长周期 N独立=1 的开口深档噪声
+        n_ind = b.get("n_independent", 0) or 0
+        adequate = 1.0 if n_ind >= 5 else 0.0
         dsr = b.get("dsr", 0.0)
         dsr = dsr if dsr == dsr else 0.0
         ci_low = b.get("ci", [float("nan")])[0]
         ci_low = ci_low if ci_low == ci_low else -1.0
-        return (conf, dsr, ci_low)
+        return (conf, adequate, dsr, ci_low)
 
     ranked = sorted(results, key=_score, reverse=True)
     best = dict(ranked[0])
