@@ -1907,6 +1907,21 @@ def page_panorama():
     except Exception as _e:  # noqa: BLE001
         st.caption(f"决策卡暂不可用（{type(_e).__name__}）——其余分析照常。")
 
+    # ---- 📍 关键状态一行（紧跟裁决：把"现在在哪"看全；现价见顶部大字条）----
+    _oc = st.columns(4)
+    _oc[0].markdown(stat_card("距历史高", f"{b['drawdown']:+.0%}", "全期峰值回撤·引擎分桶口径", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
+    _up0 = b.get("trend_position", 0) > 0
+    _oc[1].markdown(stat_card("趋势", "均线上方" if _up0 else "均线下方",
+                              f"距200线 {b['trend_position']:+.0%}", "#2BE6A8" if _up0 else "#FF5C7A", tip="regime"), unsafe_allow_html=True)
+    _vp0 = b["vol_percentile"]
+    _oc[2].markdown(stat_card("波动状态", {"low_vol": "低", "mid_vol": "中", "high_vol": "高"}.get(b["vol_state"], "—") + "波动",
+                              f"分位 {_vp0:.0%}" if _vp0 == _vp0 else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
+    if b.get("next_earnings"):
+        _oc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
+    else:
+        _oc[3].markdown(stat_card("下次财报", "—", "ETF/无日程", "#8A93A6"), unsafe_allow_html=True)
+    st.write("")
+
     # ========== 📋 操作预案（紧跟行动面板：具体怎么建仓 · 涨了/跌了/到时间/风控）==========
     from analysis.playbook import build_playbook
     pbk = build_playbook(b)
@@ -2135,6 +2150,23 @@ def page_panorama():
                            f"长期{_bf._score_cn(_hz.get('long'))} → {_hz['action']}")
     st.write("")
 
+    # ---- 📈📉 趋势全程分布（像今天这状态，历史后来再跌多深/反弹多高/见底多久/回到前高多久）----
+    try:
+        _rp = c_regime_path(a, zstart, end)
+        if _rp:
+            st.markdown("##### 📈📉 趋势全程分布（历史类比 · 分布非预测）")
+            st.markdown(
+                f'<div style="border-radius:12px;padding:12px 16px;margin:2px 0 6px;'
+                f'background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
+                f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{_rp["headline"]}</div>'
+                + "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
+                + f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+            st.caption("📖 " + _rp["caveat"] + " 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
+                       "(再跌/反弹/见底时长/收复时长的分布)，**不判牛熊、不给点位、不预测拐点**。")
+    except Exception:  # noqa: BLE001
+        pass
+
     # ---- 🛰️ 事件雷达（全网自动抓取，display-only 风险提醒，绝不入量化）----
     import datetime as _dtm
     from analysis import event_radar as _er
@@ -2197,59 +2229,6 @@ def page_panorama():
                 dc[0].markdown(f"- `{e['date']}` **{e['title']}**（{e['scope']}·{e['category']}·{e['severity']}）{('— '+e['watch']) if e['watch'] else ''}")
                 if dc[1].button("删除", key=f"delevt_{e['id']}"):
                     _er.delete_event(e["id"]); st.rerun()
-
-    # ---- 今日状态 ----
-    st.markdown("#### 📍 今日状态")
-    hc = st.columns(5)
-    # 现价：盘中近实时(yfinance≈15min延迟)，开盘时每 ~30 秒自动刷新；仅展示、不入量化
-    _mkt_open = is_market_open()
-
-    @st.fragment(run_every=("30s" if _mkt_open else None))
-    def _live_price(ticker=a, fallback=b):
-        import datetime as _d
-        bucket = int(_d.datetime.now().timestamp() // 30)
-        q = c_live_quote(ticker, bucket)
-        price = q["price"] if (q.get("ok") and q["price"] == q["price"]) else fallback["price"]
-        chg = q.get("change_pct")
-        if q.get("ok") and chg == chg:
-            col = "#2BE6A8" if chg >= 0 else "#FF5C7A"
-            sub = f"{'▲' if chg >= 0 else '▼'} {q['change']:+.2f} ({chg:+.2%}) · {'🟢盘中' if _mkt_open else '⚪休市'}"
-        else:
-            col = "#FFD166"; sub = fallback["date"]
-        st.markdown(stat_card("现价", f"{price:.2f}", sub, col), unsafe_allow_html=True)
-        if q.get("ok") and q.get("delayed"):
-            st.caption("≈15min延迟·不入量化")
-
-    with hc[0]:
-        _live_price()
-    # 距历史高=全期峰值(cummax,引擎回撤桶口径)；顶部决策卡『距1年高』=近1年峰值(择时口径)，两者刻意不同、各有用途
-    hc[1].markdown(stat_card("距历史高", f"{b['drawdown']:+.0%}", "全期峰值回撤·引擎分桶口径", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-    _uptrend = b.get("trend_position", 0) > 0       # 用 trend_position 正负判趋势（b['trend'] 是箭头串，不是 up_trend）
-    hc[2].markdown(stat_card("趋势", "均线上方" if _uptrend else "均线下方",
-                             f"距200线 {b['trend_position']:+.0%}", "#2BE6A8" if _uptrend else "#FF5C7A", tip="regime"), unsafe_allow_html=True)
-    vp_ = b["vol_percentile"]
-    hc[3].markdown(stat_card("波动状态", {"low_vol": "低", "mid_vol": "中", "high_vol": "高"}.get(b["vol_state"], "—") + "波动",
-                             f"分位 {vp_:.0%}" if vp_ == vp_ else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
-    if b.get("next_earnings"):
-        hc[4].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
-    st.write("")
-
-    # ---- 📈📉 趋势全程分布（像今天这状态，历史后来再跌多深/反弹多高/见底多久/回到前高多久）----
-    try:
-        _rp = c_regime_path(a, zstart, end)
-        if _rp:
-            st.markdown("##### 📈📉 趋势全程分布（历史类比 · 分布非预测）")
-            st.markdown(
-                f'<div style="border-radius:12px;padding:12px 16px;margin:2px 0 6px;'
-                f'background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
-                f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{_rp["headline"]}</div>'
-                + "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
-                + f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
-                f'</div>', unsafe_allow_html=True)
-            st.caption("📖 " + _rp["caveat"] + " 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
-                       "(再跌/反弹/见底时长/收复时长的分布)，**不判牛熊、不给点位、不预测拐点**。")
-    except Exception:  # noqa: BLE001
-        pass
 
     # ========== 第四区：深入分析（全部收进 Tab，保持主区简洁）==========
     from regime import entry_cockpit as ec
@@ -2466,6 +2445,10 @@ def page_panorama():
 
     st.divider()
     from analysis import briefing as bf
+    try:
+        b["regime_path"] = c_regime_path(a, zstart, end)   # 与页面显示同源，报告含趋势全程分布
+    except Exception:  # noqa: BLE001
+        pass
     md = bf.render_markdown([b], bf.auto_weights([b]), horizon)
     st.download_button("📄 导出该股分析(Markdown)", md, file_name=f"{a}_analysis_{end}.md", mime="text/markdown")
 

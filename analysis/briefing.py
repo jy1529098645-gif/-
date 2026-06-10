@@ -399,6 +399,12 @@ def render_markdown(briefs: list[dict], weights: dict, horizon: int = 63) -> str
         if b.get("momentum_trap"):
             L.append("> ⚠️ **动量陷阱**：当前在回撤中，但回撤桶超额≤0——历史上逢跌买并不优于随机进场。"
                      "正确做法是等趋势确认/波动回落，而非抢这段回撤。\n")
+        rp = b.get("regime_path")
+        if rp:
+            L.append(f"**📈📉 趋势全程分布（历史类比·分布非预测）**：{rp['headline']}")
+            L += [f"- {ln}" for ln in rp["lines"]]
+            L.append(f"- {rp['price_range']}")
+            L.append(f"> _{rp['caveat']}_\n")
         if b["tranches"]:
             L.append("| 建仓档 | 价位 | 是什么 | 目标 | 止损 | 盈亏比RR | 引擎胜率 |")
             L.append("|---|---|---|---|---|---|---|")
