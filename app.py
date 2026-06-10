@@ -829,6 +829,9 @@ _FRAGILITY_BASKETS = {
                 "INTU", "AMD", "QCOM", "TXN", "AVGO", "CSCO"],
     "🌟 七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
 }
+_ETF_SET = {"SPY", "QQQ", "DIA", "IWM", "XLK", "SMH", "SOXX", "XLC", "XLY", "XLF", "XLV", "XLE",
+            "XLI", "XLP", "XLU", "XLB", "XLRE", "TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "TNA",
+            "AGG", "HYG", "IEF", "MTUM", "USMV", "IWD"}   # 无单公司财报的 ETF/基金（用于"下次财报"口径）
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
@@ -1985,8 +1988,10 @@ def page_panorama():
                               f"分位 {_vp0:.0%}" if _vp0 == _vp0 else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
     if b.get("next_earnings"):
         _oc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
+    elif a in _ETF_SET:
+        _oc[3].markdown(stat_card("下次财报", "—", "ETF·无单公司财报", "#8A93A6"), unsafe_allow_html=True)
     else:
-        _oc[3].markdown(stat_card("下次财报", "—", "ETF/无日程", "#8A93A6"), unsafe_allow_html=True)
+        _oc[3].markdown(stat_card("下次财报", "—", "未取到(限流/暂无日程)·稍后刷新", "#8A93A6"), unsafe_allow_html=True)
     st.write("")
 
     # 🚀 一键转 Claude 联网读全文+深度推理（最显眼处；app 给校准数字，Claude 补读网推理）
@@ -2214,7 +2219,8 @@ def page_panorama():
             "引擎胜率": f"{t['engine_win_rate']:.0%}" if t["engine_win_rate"] == t["engine_win_rate"] else "—",
         } for t in b["tranches"]])
         st.dataframe(_tdf, use_container_width=True, hide_index=True, column_config=_col_cfg(_tdf.columns))
-        st.caption("📖 「回前高目标」=前期高点(约52周高)，只用来和技术止损算盈亏比，**非预测目标价**。")
+        st.caption("📖 「回前高目标」=前期高点(约52周高)，只用来和技术止损算盈亏比，**非预测目标价**。"
+                   "盈亏比按**未四舍五入的精确价**计算，与表中取整价手算会有小数差。")
     st.write("")
 
     st.divider()
@@ -2247,6 +2253,21 @@ def page_panorama():
                 from analysis import briefing as _bf
                 st.caption(f"🕐 多周期对账{cf}：短期{_bf._score_cn(_hz.get('short'))} / 中期{_bf._score_cn(_hz.get('medium'))} / "
                            f"长期{_bf._score_cn(_hz.get('long'))} → {_hz['action']}")
+        # 证据等级(基于"估值低位/买便宜"论据)与 当前状态桶/多周期 打架时醒目降级——杜绝"A级却观察为主"误导
+        _es = b.get("engine_state") or {}
+        _state_neg = _es.get("excess") is not None and _es["excess"] <= 0
+        _hz_weak = bool(_hz and ("观察" in (_hz.get("action") or "") or (_hz.get("agreement") is not None and _hz.get("agreement") <= 0)))
+        if _g and _g.get("grade") in ("A", "B") and (_state_neg or _hz_weak):
+            _bits = []
+            if _state_neg: _bits.append(f"当前状态桶超额 {_es['excess']:+.1%}(≤0)")
+            if _hz_weak: _bits.append(f"多周期「{_hz.get('action','')}」")
+            st.markdown(
+                '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 4px;'
+                'background:#FFD16614;border:1px solid #FFD16655;border-left:6px solid #FFD166;color:#D2D8E3;font-size:0.85rem">'
+                f'⚠️ <b>证据等级 {_g["grade"]} 偏乐观、请降级看</b>：这个等级主要来自「估值低位(买便宜)」论据，'
+                f'但 {"、".join(_bits)} → **即时择时上并无优势**。'
+                '把"等级 A/B"理解成"长期估值/赔率不差"，<b>不等于"现在就该重仓建"</b>；以裁决/撤离与多周期为准。</div>',
+                unsafe_allow_html=True)
     st.write("")
 
     # ---- 📈📉 趋势全程分布（像今天这状态，历史后来再跌多深/反弹多高/见底多久/回到前高多久）----
@@ -2431,6 +2452,23 @@ def page_panorama():
         except Exception as _e:  # noqa: BLE001
             st.caption(f"校准库读取失败：{_e}")
 
+    with _T_TOOL.expander("📐 方法与口径披露（样本/N/CI/DSR/费用/偏差 —— 怎么算的、哪里不可全信）"):
+        st.markdown(
+            "- **样本窗口**：SPY 自 1995、其余自 2008，到**上一交易日收盘**(yfinance+FRED+财报，本地缓存)。"
+            "顶部『现价』是盘中≈15min延迟，仅展示；**距高/回撤桶/最佳入场区/盈亏比一律按上一收盘计**，故与盘中价会有小差。\n"
+            "- **分桶**：距前高各回撤带(按 252 日滚动高折算价位)；引擎「回撤桶/in_drawdown」按**全历史峰值(cummax)**，"
+            "决策卡/择时的「距1年高」按**近 252 日高**——两者刻意不同(深价值 vs 战术择时)，已分别标注。\n"
+            "- **N vs 有效独立 N**：远期窗口高度重叠，名义 N(天数)**不是**独立交易机会数；有效独立窗口 ≈ N天/持有期。"
+            "结论可信度看**有效独立 N**，不是大 N。\n"
+            "- **CI**：中位数的 **block bootstrap**(块长≈持有期，吸收重叠)；'稳健最佳入场区'要求 CI 下界 > 无条件基准(即超额显著)。\n"
+            "- **多重检验**：从多个回撤档选'最佳'用 **deflated Sharpe(DSR)** 折扣，**DSR<0.95** 即标'存疑(可能是运气)'。\n"
+            f"- **费用/滑点**：回测含单边 手续费 {0.0005:.2%} + 滑点 {0.0005:.2%}(共 {0.001:.1%}/边)；杠杆 ETF 复利衰减不可长持。\n"
+            "- **已知偏差/边界**：单票深档有**幸存者偏差**(只统计到活下来的)；**未做**退市/成分变更回填；"
+            "基本面/新闻是 yfinance **当前快照**(含前视/重述，**仅供人读、不入量化**)；估值非 point-in-time。\n"
+            "- **唯一 OOS 验证过的可交易规则**：跌破200线/宽度恶化→减半仓(ETF夏普7/7改善、回撤砍约40%、2015+样本外稳健)；"
+            "其余(最佳入场区/因子/桶)是**校准**，非择时 alpha。")
+        st.caption("一句话：本工具给**历史条件分布 + 区间 + 有效样本 + 多重检验折扣**，是研究校准、**非投资建议**；"
+                   "醒目结论(等级/仓位/最佳入场区)都需结合 CI、有效 N、裁决与本页口径一起看。")
     with _T_TOOL.expander("🩺 数据质量体检（新鲜度 / 缺口 / 异常跳空）"):
       if _lazy_gate(f"dq_{a}"):
         peers_dq = tuple(dict.fromkeys([a] + [t for t in _TICKER_GROUPS[grp] if t != "SPY"]))[:12]

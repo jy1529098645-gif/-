@@ -160,10 +160,16 @@ def format_regime_path(rd: dict) -> dict | None:
     if in_dd:
         rt = rd["t_recovery_med_d"]
         rt_s = f"、其中位用时约 {rt/21:.0f} 个月" if rt == rt else "（多数未在窗口内收复）"
-        lines.append(f"🔁 **回到前高**：{rd['recovery_rate']:.0%} 的情形在 ~{wm}个月内收复前高{rt_s}")
+        # 极端比例(≥98%/≤2%)降级措辞，别让"100%"被当成确定性
+        _rr = rd["recovery_rate"]
+        _rr_s = (f"几乎全部({rd['n']}个样本里 {_rr:.0%})" if _rr >= 0.98 else
+                 (f"仅 {_rr:.0%}" if _rr <= 0.5 else f"{_rr:.0%}"))
+        lines.append(f"🔁 **回到前高**：{_rr_s} 的情形在 ~{wm}个月内收复前高{rt_s}"
+                     + ("（注：历史能进入样本的多是「活下来」的，**幸存者偏差**会高估收复率）" if _rr >= 0.9 else ""))
     price_range = (f"历史类比区间(未来~{wm}个月)：最坏 ≈ {rd['price_worst']:.0f}（{fdd['p10']:+.0%}）"
                    f" → 中位谷底 ≈ {rd['price_trough_med']:.0f} → 最好 ≈ {rd['price_best']:.0f}（{ru['p90']:+.0%}）")
     headline = f"像今天这状态(距1年高 {rd['dd_now']:+.0%})，历史 {rd['n']} 个同深度样本后来的全程分布"
-    caveat = ("⚠️ 这是**历史同深度样本的实际走势分布**(非预测、非牛熊判断、非点位目标)；"
-              "上行尾部(p90)常由个别大牛市集中贡献" + ("；样本偏少、低置信" if rd["n"] < 60 else "") + "。")
+    caveat = ("⚠️ 这是**历史同深度样本的实际走势分布**(非预测、非牛熊判断、非点位目标)；样本为**滚动重叠日**(非独立交易机会)、"
+              "且单票含**幸存者偏差**(只统计到活下来的)；上行尾部(p90)常由个别大牛市集中贡献"
+              + ("；样本偏少、低置信" if rd["n"] < 60 else "") + "。极端比例(如~100%)务必当「历史如此」而非「未来必然」看。")
     return {"headline": headline, "lines": lines, "price_range": price_range, "n": rd["n"], "caveat": caveat}
