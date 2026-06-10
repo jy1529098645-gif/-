@@ -1899,7 +1899,8 @@ def page_panorama():
         # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
         try:
             from regime import entry_cockpit as _ecmr
-            _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc)) if _enter_ok else None
+            # 踏空风险只对"想新建仓"有意义；已持仓者不显示（与身份 toggle 联动）
+            _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc)) if (_enter_ok and not _is_holder) else None
             if _mrline:
                 _mrcol = "#FF9F45" if "踏空风险高" in _mrline else (
                     "#FFD166" if ("踏空风险中" in _mrline or "要等很久" in _mrline) else "#2BE6A8")
@@ -1978,11 +1979,10 @@ def page_panorama():
                            f"已发生了什么、未来催化剂、市场已 price in 什么、中长期定位。用 quant-deep-brief 口径"
                            f"（校准而非预测、给情景分布不拍单点）。", key=f"cl_top_{a}", hint=False)
 
-    # ========== 📋 操作预案（紧跟行动面板：具体怎么建仓 · 涨了/跌了/到时间/风控）==========
+    # ========== 📋 操作预案（🆕新建仓） & 📌已建仓（📦持仓者）—— 随身份 toggle 展开/折叠联动 ==========
     from analysis.playbook import build_playbook
     _eok = bool(_card.get("enter_ok", True)) if _card else True   # 与决策卡同口径：别建仓时预案转防守
     pbk = build_playbook(b, enter_ok=_eok)
-    st.markdown("#### 📋 操作预案（🆕 新建仓怎么操作）")
 
     def _pcard(col, title, accent, items):
         body = "".join(
@@ -1994,23 +1994,23 @@ def page_panorama():
             f'<div style="font-weight:700;color:{accent};font-size:.95rem;margin-bottom:6px">{title}</div>'
             f'{body}</div>', unsafe_allow_html=True)
 
-    r1 = st.columns(3)
+    # 📋 操作预案（新建仓用）：新建仓身份默认展开，持仓者自动折叠（点开仍可看）
+    _pe = st.expander("📋 操作预案（🆕 新建仓怎么操作）", expanded=not _is_holder)
+    r1 = _pe.columns(3)
     _pcard(r1[0], "🎯 建仓", "#FFD166", pbk.get("entry"))
     _pcard(r1[1], "📈 涨了怎么操作", "#2BE6A8", pbk.get("if_up"))
     _pcard(r1[2], "📉 跌了怎么操作", "#FF5C7A", pbk.get("if_down"))
-    st.write("")
-    r2 = st.columns(2)
+    r2 = _pe.columns(2)
     _pcard(r2[0], "⏱️ 时间 / 事件", "#00D4FF", pbk.get("time_event"))
     _pcard(r2[1], "🛡️ 风控", "#7C5CFC", pbk.get("risk"))
-    st.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
+    _pe.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
 
-    # ========== 📌 已建仓怎么办（守/加/减/离 · 与上方建仓口径同源）==========
+    # 📌 已建仓 + 🚨撤离预警（持仓者用）：持仓身份默认展开，新建仓自动折叠（点开仍可看）
     if _card is not None:
         try:
             _hold = _dec.holding_advice(_card, b, _bezc)
             _hcol = _hold["color"]
-            st.markdown("#### 📌 已经建仓了？现在该怎么办")
-            # 🚨 撤离预警状态灯（绿/黄/红 · 四信号 · 含防过热止盈）—— 持仓者最该先看的一盏灯
+            _ph = st.expander("📌 已经持有？守/加/减/离 + 🚨 撤离预警", expanded=_is_holder)
             try:
                 _ef = c_fragility(zstart, end).get("cur", {})
                 _ew = _dec.exit_warning(price, _ef.get("fragile", False), _ef.get("pctile"))
@@ -2019,31 +2019,31 @@ def page_panorama():
                     f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:2px 9px;border-radius:7px;'
                     f'background:#ffffff0a;border:1px solid #ffffff1f;font-size:0.78rem;color:#C7CEDA">{s["state"]}</span>'
                     for s in _ew.get("signals", []))
-                st.markdown(
+                _ph.markdown(
                     f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 10px;'
                     f'background:linear-gradient(92deg,{_ewc}2e,{_ewc}08);border:1px solid {_ewc}66;border-left:8px solid {_ewc}">'
                     f'<div style="font-size:1.12rem;font-weight:800;color:#F0F3F8">🚨 撤离预警 · {_ew["level"]}</div>'
                     f'<div style="margin:6px 0 4px">{_chips}</div>'
                     f'<div style="color:#D2D8E3;font-size:0.86rem">▸ {_ew["action"]}</div>'
                     f'</div>', unsafe_allow_html=True)
-                with st.expander("🚨 撤离预警明细（四信号 + 历史校准口径）"):
-                    for s in _ew.get("signals", []):
-                        st.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
-                    st.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
-                               "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
-                               "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
+                # 撤离明细（四信号）—— 内联（避免 expander 套 expander）
+                for s in _ew.get("signals", []):
+                    _ph.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
+                _ph.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
+                            "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
+                            "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
             except Exception:  # noqa: BLE001
                 pass
-            st.markdown(
-                f'<div style="border-radius:14px;padding:14px 18px;margin:2px 0 8px;'
+            _ph.markdown(
+                f'<div style="border-radius:14px;padding:14px 18px;margin:6px 0 8px;'
                 f'background:linear-gradient(92deg,{_hcol}26,{_hcol}08);border:1px solid {_hcol}55;border-left:7px solid {_hcol}">'
                 f'<div style="font-size:1.18rem;font-weight:800;color:#F0F3F8">{_hold["stance"]}</div>'
                 f'<div style="color:#C7CEDA;font-size:0.9rem;margin-top:5px">{_hold["headline"]}</div>'
                 f'</div>', unsafe_allow_html=True)
-            _ha = st.columns(2)
+            _ha = _ph.columns(2)
             _pcard(_ha[0], "🔧 现在的动作", "#2BE6A8", _hold["actions"])
             _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", "#FF9F45", _hold["triggers"])
-            st.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
+            _ph.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
 
