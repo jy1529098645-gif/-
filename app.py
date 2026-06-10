@@ -1792,6 +1792,26 @@ def page_panorama():
             f'</div>', unsafe_allow_html=True)
     _hero_price()
 
+    # ===== 👤 你是新建仓 还是 已持仓？—— 决定重点看哪些区块（深跌破位类票两视角口径不同，先分流）=====
+    _persona = st.radio("👤 你的情况", ["🆕 还没建仓 / 想建仓", "📦 已经持有这只票"],
+                        horizontal=True, key=f"persona_{a}", label_visibility="collapsed")
+    _is_holder = _persona.startswith("📦")
+    if _is_holder:
+        st.markdown(
+            '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 10px;'
+            'background:#7C5CFC1f;border:1px solid #7C5CFC55;border-left:6px solid #7C5CFC;color:#D2D8E3;font-size:0.86rem">'
+            '📦 <b>已持仓视角</b>：重点看下方 <b>🚨 撤离预警 + 📌 已建仓怎么办（守/加/减/离）</b>。'
+            '顶部"现在该建多少新仓 / 入场参考价 / 踏空风险"是给<b>新买家</b>的——你不用纠结那些，盯**撤离信号**与止盈止损纪律。</div>',
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 10px;'
+            'background:#2BE6A81f;border:1px solid #2BE6A855;border-left:6px solid #2BE6A8;color:#D2D8E3;font-size:0.86rem">'
+            '🆕 <b>新建仓视角</b>：重点看 <b>🎯 现在怎么做（裁决/仓位/入场价/踏空） → 📋 操作预案 → 🎯 该在哪建仓</b>。'
+            '下方"🚨 撤离预警 / 📌 已建仓"是给<b>已持仓者</b>的，可先略过。<br>'
+            '⚠️ 注意：深跌且跌破200线的票，"新建仓(逆势价值·慢建严止损)"与"持仓者(减仓防守)"口径**本就不同**，按你的身份看对应区块。</div>',
+            unsafe_allow_html=True)
+
     # ===== 🎯 决策卡（合成：现在该做什么 / 入场点 / 入场后 / 离场）—— 页面第一眼 =====
     _card = None
     _bezc = None
@@ -1927,7 +1947,7 @@ def page_panorama():
     from analysis.playbook import build_playbook
     _eok = bool(_card.get("enter_ok", True)) if _card else True   # 与决策卡同口径：别建仓时预案转防守
     pbk = build_playbook(b, enter_ok=_eok)
-    st.markdown("#### 📋 操作预案（具体怎么操作）")
+    st.markdown("#### 📋 操作预案（🆕 新建仓怎么操作）")
 
     def _pcard(col, title, accent, items):
         body = "".join(
