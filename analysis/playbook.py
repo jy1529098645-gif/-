@@ -77,8 +77,10 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
                            "无稳健入场区）。上列价位仅作**参考**；要建仓请按裁决条件（等更深回撤 / 趋势或宽度确认），"
                            "已持仓者直接看『📌 已建仓怎么办』。")
     else:
-        size_hint = "高波动(分位 %.0f%%)→先建计划仓位的 1/3 试探，波动回落再补中/重档" % (volp * 100) if high_vol \
-            else "可按 浅30%%/中40%%/重30%% 分批落地（指该标的计划仓位，非全部资金）"
+        if high_vol:
+            size_hint = f"高波动(分位 {volp*100:.0f}%)→先建计划仓位的 1/3 试探，波动回落再补中/重档"
+        else:
+            size_hint = "可按 浅30%/中40%/重30% 分批落地（指该标的计划仓位，非全部资金）"
         pb["entry"].append("分批落地：" + size_hint + "。")
         # Plan B（防踏空）：避免"只挂深档、价格直接走高踏空整波"——在场>择时
         pb["entry"].append("🪂 **防踏空 Plan B**：若价格不回深档、直接走高 → 站上 MA50 / 突破前高确认就**追小仓**，"

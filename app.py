@@ -2008,8 +2008,7 @@ def page_panorama():
             _ha = st.columns(2)
             _pcard(_ha[0], "🔧 现在的动作", "#2BE6A8", _hold["actions"])
             _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", "#FF9F45", _hold["triggers"])
-            st.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；"
-                       "价位是「**到了才行动**」的触发区间，非预测、非买卖指令。")
+            st.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
 
@@ -2184,8 +2183,8 @@ def page_panorama():
                 + "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
                 + f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
                 f'</div>', unsafe_allow_html=True)
-            st.caption("📖 " + _rp["caveat"] + " 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
-                       "(再跌/反弹/见底时长/收复时长的分布)，**不判牛熊、不给点位、不预测拐点**。")
+            st.caption("📖 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
+                       "（再跌/反弹/见底时长/收复时长的分布）。" + _rp["caveat"])
     except Exception:  # noqa: BLE001
         pass
 
