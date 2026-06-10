@@ -553,6 +553,13 @@ def c_zones(asset: str, start: str, end: str, horizon: int):
     return ec.entry_zones(px, asset=asset, horizon=horizon, n_boot=400)
 
 @st.cache_data(show_spinner=False)
+def c_regime_path(asset: str, start: str, end: str, window: int = 504):
+    from data import loader
+    from analysis import analogs as _an
+    px = loader.load_prices([asset], start, end)[asset].dropna()
+    return _an.format_regime_path(_an.regime_path_distribution(px, window=window))
+
+@st.cache_data(show_spinner=False)
 def c_best_entry_scan(asset: str, start: str, end: str):
     """跨持有期(21/63/126/252)择优：自动挑置信度最高的入场点，避免长周期低置信埋没好结果。"""
     from data import loader
@@ -2226,6 +2233,23 @@ def page_panorama():
     if b.get("next_earnings"):
         hc[4].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
     st.write("")
+
+    # ---- 📈📉 趋势全程分布（像今天这状态，历史后来再跌多深/反弹多高/见底多久/回到前高多久）----
+    try:
+        _rp = c_regime_path(a, zstart, end)
+        if _rp:
+            st.markdown("##### 📈📉 趋势全程分布（历史类比 · 分布非预测）")
+            st.markdown(
+                f'<div style="border-radius:12px;padding:12px 16px;margin:2px 0 6px;'
+                f'background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
+                f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{_rp["headline"]}</div>'
+                + "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
+                + f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+            st.caption("📖 " + _rp["caveat"] + " 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
+                       "(再跌/反弹/见底时长/收复时长的分布)，**不判牛熊、不给点位、不预测拐点**。")
+    except Exception:  # noqa: BLE001
+        pass
 
     # ========== 第四区：深入分析（全部收进 Tab，保持主区简洁）==========
     from regime import entry_cockpit as ec

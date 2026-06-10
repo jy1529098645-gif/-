@@ -85,3 +85,85 @@ def historical_analogs(price: pd.Series, macro: pd.DataFrame, asset: str,
     return {"current": {"drawdown_state": cur_dd, "valuation": cur_val, "vol": cur_vol,
                         "date": str(today.date())},
             "cases": recent, "all_n": int(len(cases)), "summary": summary}
+
+
+# ---------------------------------------------------------------------------
+# 趋势全程分布：像今天这状态，历史后来"再跌多深 / 反弹多高 / 见底多久 / 回到前高多久"
+# 铁律：是历史类比的**分布**(带 N/p10-p50-p90)，不是"会进牛/熊市"的预测、不是点位目标。
+# ---------------------------------------------------------------------------
+def regime_path_distribution(price: pd.Series, window: int = 504, dd_tol: float = 0.05,
+                             lookback_high: int = 252, n_min: int = 30) -> dict:
+    """从今日回撤深度(距 lookback_high 高点)出发，取历史同深度的日子，统计其后 window 日的
+    **全程路径分布**：进一步最大回撤(相对当日)、最大反弹、到谷底天数、回到当时前高的比例与天数。
+
+    返回 {available, n, window, dd_now, further_dd{p10,p50,p90}, runup{p10,p50,p90},
+          further_le10(再跌>10%频率), t_trough_med_d, recovery_rate, t_recovery_med_d,
+          price_*{现价×(1+分位) 的价位}}。无前视：条件只用当日及之前。"""
+    px = price.dropna()
+    if len(px) < lookback_high + 60:
+        return {"available": False, "n": 0}
+    cur = float(px.iloc[-1])
+    high = px.rolling(lookback_high, min_periods=lookback_high // 2).max()
+    dd = (px / high - 1.0)
+    dd_now = float(dd.iloc[-1])
+    p = px.to_numpy(dtype=float); hiv = high.to_numpy(dtype=float); ddv = dd.to_numpy()
+    mask = (ddv >= dd_now - dd_tol) & (ddv <= dd_now + dd_tol)
+    fdd, runup, t_tr, rec_days, rec_flag = [], [], [], [], []
+    n_all = len(p)
+    for i in np.where(mask)[0]:
+        end = min(i + window, n_all - 1)
+        if end <= i + 5:
+            continue
+        win = p[i + 1:end + 1]
+        if win.size == 0:
+            continue
+        j = int(win.argmin())
+        fdd.append(win[j] / p[i] - 1.0)            # 进一步最大回撤(相对当日，≤0；正=没再跌破)
+        runup.append(win.max() / p[i] - 1.0)       # 全程最大反弹(相对当日)
+        t_tr.append(j + 1)                          # 到谷底天数
+        peak = hiv[i]                               # 当时的前高(回撤参照)
+        rr = np.where(win >= peak)[0]
+        if rr.size:
+            rec_flag.append(1); rec_days.append(int(rr[0] + 1))
+        else:
+            rec_flag.append(0)
+    n = len(fdd)
+    if n < n_min:
+        return {"available": False, "n": n}
+    pc = lambda a, q: float(np.percentile(a, q))
+    return {
+        "available": True, "n": n, "window": window, "dd_now": dd_now, "cur": cur,
+        "further_dd": {"p10": pc(fdd, 10), "p50": pc(fdd, 50), "p90": pc(fdd, 90)},
+        "runup": {"p10": pc(runup, 10), "p50": pc(runup, 50), "p90": pc(runup, 90)},
+        "further_le10": float(np.mean(np.asarray(fdd) <= -0.10)),
+        "t_trough_med_d": float(np.median(t_tr)),
+        "recovery_rate": float(np.mean(rec_flag)),
+        "t_recovery_med_d": float(np.median(rec_days)) if rec_days else float("nan"),
+        "price_worst": cur * (1 + pc(fdd, 10)), "price_trough_med": cur * (1 + pc(fdd, 50)),
+        "price_best": cur * (1 + pc(runup, 90)), "price_runup_med": cur * (1 + pc(runup, 50)),
+    }
+
+
+def format_regime_path(rd: dict) -> dict | None:
+    """把趋势全程分布渲染成 {headline, lines[], price_range}。非预测、是历史类比分布。"""
+    if not rd or not rd.get("available"):
+        return None
+    fdd, ru = rd["further_dd"], rd["runup"]
+    wm = max(1, round(rd["window"] / 21)); tt = rd["t_trough_med_d"] / 21
+    in_dd = rd["dd_now"] < -0.03
+    lines = [
+        f"📉 **再下行**(相对现价，未来~{wm}个月内)：中位 {fdd['p50']:+.0%}、坏情形(p10) {fdd['p10']:+.0%}"
+        f"；{rd['further_le10']:.0%} 的历史情形会再跌过 −10%",
+        f"📈 **反弹空间**(相对现价)：中位 {ru['p50']:+.0%}、好情形(p90) {ru['p90']:+.0%}",
+        f"⏳ **到谷底**：历史中位约 {tt:.0f} 个月见到该程后最低点",
+    ]
+    if in_dd:
+        rt = rd["t_recovery_med_d"]
+        rt_s = f"、其中位用时约 {rt/21:.0f} 个月" if rt == rt else "（多数未在窗口内收复）"
+        lines.append(f"🔁 **回到前高**：{rd['recovery_rate']:.0%} 的情形在 ~{wm}个月内收复前高{rt_s}")
+    price_range = (f"历史类比区间(未来~{wm}个月)：最坏 ≈ {rd['price_worst']:.0f}（{fdd['p10']:+.0%}）"
+                   f" → 中位谷底 ≈ {rd['price_trough_med']:.0f} → 最好 ≈ {rd['price_best']:.0f}（{ru['p90']:+.0%}）")
+    headline = f"像今天这状态(距1年高 {rd['dd_now']:+.0%})，历史 {rd['n']} 个同深度样本后来的全程分布"
+    caveat = ("⚠️ 这是**历史同深度样本的实际走势分布**(非预测、非牛熊判断、非点位目标)；"
+              "上行尾部(p90)常由个别大牛市集中贡献" + ("；样本偏少、低置信" if rd["n"] < 60 else "") + "。")
+    return {"headline": headline, "lines": lines, "price_range": price_range, "n": rd["n"], "caveat": caveat}
