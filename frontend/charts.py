@@ -301,7 +301,7 @@ def volume_profile_bars(vp: dict, title="Volume Profile（日线近似）") -> g
 
 def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None,
                          best_entry: dict | None = None, show_best=True, show_zones=True,
-                         show_vp=True, title="K线 + 图层", logy=True) -> go.Figure:
+                         show_vp=True, title="K线 + 图层", logy=True, best_endorsed=True) -> go.Figure:
     """全景页主图（Plotly）：K线 + 量副图，并按开关叠加：
       🎯最佳入场区(绿/黄阴影带 + 锚点线) · 📊回撤价位带(蓝=当前/灰=其它) · 📦换手位(筹码柱+POC+价值区)。
     用 Plotly 画横线/阴影(streamlit_lightweight_charts 不支持 priceLine，故改用此图可靠渲染)。"""
@@ -309,8 +309,34 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.80, 0.20])
     ymin = float(ohlcv["low"].min()); ymax = float(ohlcv["high"].max())
+    x0, x1 = ohlcv.index[0], ohlcv.index[-1]
 
-    # —— 📦 换手位：筹码横柱(叠在价格轴) + POC + 价值区 ——
+    # 叠加层一律用 go.Scatter **数据 trace**（而非 add_hline/add_hrect 的 layout shape）：
+    # shape 在「子图 + 叠加副x轴(x3)」组合下浏览器里常常完全不渲染（横线/区域不显示的根因）；
+    # 数据 trace 绑定坐标轴，必现。横线=两点连线，阴影带=自闭合多边形 fill。
+    _lvls: list[float] = []   # 记录所有已画叠加层的价位，最后据此把 y 轴撑开，杜绝叠加层被裁出视野
+
+    def _hline(level, color, width, dash, label=None, side="right"):
+        _lvls.append(float(level))
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[level, level], mode="lines",
+                                 line=dict(color=color, width=width, dash=dash),
+                                 hoverinfo="skip", showlegend=False), row=1, col=1)
+        if label:
+            fig.add_annotation(x=(x1 if side == "right" else x0), y=level, text=label,
+                               xanchor=("right" if side == "right" else "left"), yanchor="bottom",
+                               showarrow=False, font=dict(color=color, size=10),
+                               bgcolor="rgba(13,17,28,0.55)", row=1, col=1)
+
+    def _band(y0, y1, fillcolor, label=None, lab_color="#E6E9EF"):
+        _lvls.extend([float(y0), float(y1)])
+        fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[y0, y0, y1, y1, y0],
+                                 fill="toself", fillcolor=fillcolor, line=dict(width=0),
+                                 mode="lines", hoverinfo="skip", showlegend=False), row=1, col=1)
+        if label:
+            fig.add_annotation(x=x0, y=y1, text=label, xanchor="left", yanchor="bottom",
+                               showarrow=False, font=dict(color=lab_color, size=11), row=1, col=1)
+
+    # —— 📦 换手位筹码横柱（叠在价格轴；用副 x 轴 x3 控制柱长靠左）——
     if show_vp and vp is not None:
         centers = np.asarray(vp["centers"], dtype=float); vols = np.asarray(vp["volumes"], dtype=float)
         if centers.size and vols.max() > 0:
@@ -321,6 +347,23 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                                  marker_line_width=0, xaxis="x3", yaxis="y", showlegend=False, name="筹码",
                                  hovertemplate="价位 %{y:.1f}<br>筹码量 %{x:.3s}<extra></extra>"))
 
+    # —— 阴影带先画（垫在 K 线下面，不挡）：🎯最佳入场区 + 📦价值区 ——
+    # best_endorsed=False（引擎判定当前别建仓）时，带/线降级为灰色"统计参考锚(暂非买点)"，
+    # 与顶部三联卡口径一致，杜绝"卡说暂非买点、图却画绿色最佳入场区"的冲突。
+    if show_best and best_entry and best_entry.get("has_zone"):
+        if not best_endorsed:
+            gcol = "rgba(138,147,166,0.95)"; gfill = "rgba(138,147,166,0.12)"; _blab = "📍统计参考锚(暂非买点)"
+        elif best_entry.get("tier") == "稳健最佳入场区":
+            gcol = "#2BE6A8"; gfill = "rgba(43,230,168,0.15)"; _blab = "🎯最佳入场区"
+        else:
+            gcol = "#FFD166"; gfill = "rgba(255,209,102,0.15)"; _blab = "🎯最佳入场区"
+        bd = best_entry.get("price_band") or (None, None)
+        lo, hi = bd[0], bd[1]
+        if hi is not None:
+            _band(float(lo) if lo is not None else ymin, float(hi), gfill, _blab, gcol)
+    if show_vp and vp is not None:
+        _band(vp["value_area"][0], vp["value_area"][1], "rgba(255,159,69,0.08)")
+
     # —— K线 + 量副图 ——
     fig.add_trace(go.Candlestick(x=ohlcv.index, open=ohlcv["open"], high=ohlcv["high"], low=ohlcv["low"],
                   close=ohlcv["close"], increasing_line_color="#2BE6A8", decreasing_line_color="#FF5C7A",
@@ -330,37 +373,24 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
     fig.add_trace(go.Bar(x=ohlcv.index, y=ohlcv["volume"], marker_color=vcol, showlegend=False,
                   hovertemplate="量 %{y:.3s}<extra></extra>"), row=2, col=1)
 
-    if show_vp and vp is not None:
-        poc = vp["poc"]; va_lo, va_hi = vp["value_area"]
-        fig.add_hline(y=poc, line=dict(color="#FF9F45", width=1.4, dash="dash"),
-                      annotation_text=f"POC {poc:.1f}", annotation_position="right", row=1, col=1)
-        fig.add_hrect(y0=va_lo, y1=va_hi, fillcolor="rgba(255,159,69,0.07)", line_width=0, row=1, col=1)
-
-    # —— 📊 回撤价位带（蓝=当前/灰=其它）——
+    # —— 横线叠在 K 线之上：📊回撤价位带 · 📦POC · 🎯锚点 ——
     if show_zones and zones is not None and len(zones):
         zz = zones[zones["enough"]] if "enough" in zones.columns else zones
         for _, r in zz.iterrows():
             cur = bool(r.get("is_current", False))
-            col = "#00D4FF" if cur else "rgba(138,147,166,0.5)"
-            fig.add_hline(y=float(r["price_high"]), line=dict(color=col, width=1, dash="dot"),
-                          annotation_text=("▶ " if cur else "") + str(r["zone"]),
-                          annotation_position="left", annotation_font_size=10, row=1, col=1)
-
-    # —— 🎯 推荐最佳入场区（绿=稳健/黄=样本偏少 阴影带 + 锚点线）——
+            col = "#00D4FF" if cur else "rgba(138,147,166,0.55)"
+            _hline(float(r["price_high"]), col, 1.4 if cur else 1.0, "dot",
+                   ("▶ " if cur else "") + str(r["zone"]), side="left")
+    if show_vp and vp is not None:
+        _hline(vp["poc"], "#FF9F45", 1.6, "dash", f"POC {vp['poc']:.1f}", side="right")
     if show_best and best_entry and best_entry.get("has_zone"):
-        gcol = "#2BE6A8" if best_entry.get("tier") == "稳健最佳入场区" else "#FFD166"
-        bd = best_entry.get("price_band") or (None, None)
-        lo, hi = bd[0], bd[1]
+        if not best_endorsed:
+            gcol = "rgba(138,147,166,0.95)"; _alab = "📍参考锚"
+        else:
+            gcol = "#2BE6A8" if best_entry.get("tier") == "稳健最佳入场区" else "#FFD166"; _alab = "🎯锚点"
         anc = best_entry.get("anchor_price")
-        if hi is not None:
-            y0 = float(lo) if lo is not None else ymin
-            fig.add_hrect(y0=y0, y1=float(hi), fillcolor=gcol, opacity=0.13, line_width=0,
-                          annotation_text="🎯最佳入场区", annotation_position="top left",
-                          annotation_font=dict(color=gcol, size=12), row=1, col=1)
         if anc == anc and anc is not None:
-            fig.add_hline(y=float(anc), line=dict(color=gcol, width=1.8),
-                          annotation_text=f"🎯锚点 {float(anc):.1f}", annotation_position="right",
-                          annotation_font=dict(color=gcol, size=12), row=1, col=1)
+            _hline(float(anc), gcol, 2.0, "solid", f"{_alab} {float(anc):.1f}", side="right")
 
     _apply_tv(fig, 560, title)
     _vmax = (np.asarray(vp["volumes"], float).max() if (show_vp and vp is not None and np.asarray(vp["volumes"], float).size) else 0)
@@ -368,15 +398,18 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                       xaxis3=dict(overlaying="x", side="top", range=[0, (_vmax * 4.5) if _vmax > 0 else 1],
                                   showgrid=False, showticklabels=False, zeroline=False, fixedrange=True))
     fig.update_xaxes(rangeselector=_RANGE_BUTTONS, row=1, col=1)
+    # y 轴范围：把已画的叠加层一并纳入（否则深档价位带/锚点会被裁出视野=用户说的"不显示"）；
+    # 但对极端深档设下限，避免 K 线被过度压扁（叠加层最多把下界压到近端低点的 0.78×）。
+    _lo = ymin; _hi = ymax
+    if _lvls:
+        _lo = min(_lo, max(min(_lvls), ymin * 0.78))
+        _hi = max(_hi, min(max(_lvls), ymax * 1.22))
     if logy:
-        # 显式给定 log 轴范围：add_hline 注释会破坏 log 自动量程(plotly 把线性值当作指数→爆成 10^240)，
-        # 故按实际价格手动算 log10 范围。
+        # 显式给定 log 轴范围：注释/trace 不破坏 log 自动量程，按实际价格手动算 log10 范围。
         import math
-        lo = max(ymin * 0.92, 1e-6); hi = ymax * 1.06
-        fig.update_yaxes(type="log", range=[math.log10(lo), math.log10(hi)], row=1, col=1)
+        fig.update_yaxes(type="log", range=[math.log10(max(_lo * 0.96, 1e-6)), math.log10(_hi * 1.04)], row=1, col=1)
     else:
-        # 线性：留一点上下边距，避免贴边
-        fig.update_yaxes(range=[ymin * 0.96, ymax * 1.04], row=1, col=1)
+        fig.update_yaxes(range=[_lo * 0.97, _hi * 1.03], row=1, col=1)
     fig.update_yaxes(title_text="量", row=2, col=1)
     return fig
 
@@ -407,10 +440,19 @@ def candle_with_levels(ohlcv: pd.DataFrame, vp: dict, title="近一年 K线 + �
     vcol = np.where(up, "rgba(43,230,168,0.45)", "rgba(255,92,122,0.45)")
     fig.add_trace(go.Bar(x=ohlcv.index, y=ohlcv["volume"], marker_color=vcol, showlegend=False,
                   hovertemplate="量 %{y:.3s}<extra></extra>"), row=2, col=1)
-    fig.add_hline(y=poc, line=dict(color="#00D4FF", width=1.5, dash="dash"),
-                  annotation_text=f"POC {poc:.1f}", row=1, col=1)
-    fig.add_hrect(y0=va_lo, y1=va_hi, fillcolor="rgba(124,92,252,0.10)", line_width=0,
-                  annotation_text="价值区(70%)", annotation_position="top left", row=1, col=1)
+    # POC/价值区用数据 trace（非 add_hline/add_hrect 的 layout shape）——子图+副x轴下 shape 常不渲染
+    _x0, _x1 = ohlcv.index[0], ohlcv.index[-1]
+    fig.add_trace(go.Scatter(x=[_x0, _x1, _x1, _x0, _x0], y=[va_lo, va_lo, va_hi, va_hi, va_lo],
+                             fill="toself", fillcolor="rgba(124,92,252,0.10)", line=dict(width=0),
+                             mode="lines", hoverinfo="skip", showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=[_x0, _x1], y=[poc, poc], mode="lines",
+                             line=dict(color="#00D4FF", width=1.5, dash="dash"),
+                             hoverinfo="skip", showlegend=False), row=1, col=1)
+    fig.add_annotation(x=_x1, y=poc, text=f"POC {poc:.1f}", xanchor="right", yanchor="bottom",
+                       showarrow=False, font=dict(color="#00D4FF", size=10),
+                       bgcolor="rgba(13,17,28,0.55)", row=1, col=1)
+    fig.add_annotation(x=_x0, y=va_hi, text="价值区(70%)", xanchor="left", yanchor="bottom",
+                       showarrow=False, font=dict(color="#7C5CFC", size=11), row=1, col=1)
     _apply_tv(fig, 540, title)
     # x3 = 筹码柱专用轴：range 放大到 4.5×max → 柱只占左侧约 22% 宽，近端K线不被遮挡
     fig.update_layout(xaxis_rangeslider_visible=False, barmode="overlay",

@@ -45,8 +45,13 @@ def _trend_break(px: pd.Series) -> bool:
 
 
 def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool,
-                  market_light: str = "") -> dict:
-    """合成单标的决策卡。best_entry=entry_cockpit.best_entry_across_horizons 的返回。"""
+                  market_light: str = "", momentum_trap: bool = False,
+                  grade: dict | None = None) -> dict:
+    """合成单标的决策卡。best_entry=entry_cockpit.best_entry_across_horizons 的返回。
+
+    momentum_trap / grade / best_entry 一起作为**引擎纪律覆盖**：当引擎判定逢跌无优势
+    (动量陷阱)、证据等级 F、或各回撤档都跑不赢基准时，**绝不在回撤里硬给"建仓"裁决**，
+    与下方"操作预案 / 最佳入场区"口径对齐，杜绝顶层结论与引擎层前后矛盾。"""
     px = px.dropna()
     cls = classify(asset)
     cur = float(px.iloc[-1])
@@ -55,35 +60,81 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
     trend_broken = _trend_break(px)
     is_etf_index = cls in ("index_etf",)
     is_semi = cls in ("semi_etf", "semi_single")
+    is_lev = cls == "leveraged_etf"
 
     # ---- 状态机：现在该做什么（按资产类别校准）----
-    if fragile_now and dd > -0.10:
-        state, color = "🔴 防守", "#FF5C7A"
-        action = "降仓 / 不追高——市场宽度恶化，历史上未来数月大跌概率翻倍"
+    # posture: defend(防守降仓) / build(逢跌建仓) / chase(高位追·持有) / wait(无edge·分批留子弹)
+    # 脆弱性阈值 -0.15 与 fragility.wait_or_chase 对齐：脆弱+尚未进入深跌edge区(>-15%)才转防守，
+    # 避免"决策卡说分批、市场环境横幅说降仓减半"这类前后矛盾。
+    if fragile_now and dd > -0.15:
+        state, color, posture = "🔴 防守", "#FF5C7A", "defend"
+        action = "降仓 / 不追高——市场宽度恶化(且尚未进入深跌edge区)，历史上未来数月大跌概率翻倍"
     elif dd <= -0.20:
-        if is_etf_index:
-            state, color = "🟢 建仓区(高置信)", "#2BE6A8"
+        if is_lev:
+            state, color, posture = "🟠 杠杆ETF深跌·别摊平", "#FF9F45", "caution"
+            action = ("3x杠杆深跌：每日复利衰减+路径依赖，反弹弹性大但**不可久持/重仓摊平**——"
+                      "只在做短线波段、严设止损时小仓参与，长持者反而该减")
+        elif is_etf_index:
+            state, color, posture = "🟢 建仓区(高置信)", "#2BE6A8", "build"
             action = "分批加重——指数/宽基ETF深跌是回测里胜率最高、最干净的建仓带"
         elif is_semi:
-            state, color = "🟢 建仓区(半导体)", "#2BE6A8"
+            state, color, posture = "🟢 建仓区(半导体)", "#2BE6A8", "build"
             action = "分批加重——半导体只有深跌(-20%+)才有正edge，正是此区；但波动大、严设止损"
         else:
-            state, color = "🟡 深跌·需把握", "#FFD166"
+            state, color, posture = "🟡 深跌·需把握", "#FFD166", "build"
             action = "仅在你确信基本面会回来时分批——单票深跌可能是价值陷阱(输家此档历史负超额)"
     elif dd <= -0.10:
-        if is_semi:
-            state, color = "🟠 半导体中度回撤·别急", "#FF9F45"
+        if is_lev:
+            state, color, posture = "🟠 杠杆ETF回撤·小仓波段", "#FF9F45", "wait"
+            action = "3x杠杆每日复利衰减、不宜久持——只做短线波段、严设止损，别越跌越补"
+        elif is_semi:
+            state, color, posture = "🟠 半导体中度回撤·别急", "#FF9F45", "wait"
             action = "半导体浅/中跌(10-20%)历史无edge甚至负——别接，等深跌(-20%+)或趋势重新站上200线"
         else:
-            state, color = "🟡 分批", "#FFD166"
+            state, color, posture = "🟡 分批", "#FFD166", "wait"
             action = "中度回撤，分档建仓、留子弹给更深的档；指数/科技ETF此区尚可，单票看把握"
     elif dd <= -0.05:
-        state, color = "🟡 浅回撤", "#FFD166"
+        state, color, posture = "🟡 浅回撤", "#FFD166", "wait"
         action = ("科技/宽基ETF浅跌(5-10%)历史已有正超额，可分批" if cls in ("index_etf",)
                   else "浅回撤无显著edge，按计划小批进、别空等")
     else:
-        state, color = "🟢 追 / 持有", "#2BE6A8"
+        state, color, posture = "🟢 追 / 持有", "#2BE6A8", "chase"
         action = "高位附近：直接分批进/持有——别等浅回调(回测70%等不到且更亏，在场>择时)"
+
+    # ---- 引擎纪律覆盖：动量陷阱 / 弱证据(F) / 引擎未找到稳健入场区 →
+    #      绝不在没有统计优势的回撤里硬建仓（与操作预案/最佳入场区一致，杜绝前后矛盾）----
+    grade_letter = (grade or {}).get("grade") if isinstance(grade, dict) else None
+    best_defensive = bool(best_entry and not best_entry.get("has_zone"))
+    engine_override = None
+    if posture in ("build", "wait") and dd <= -0.05:
+        if momentum_trap:
+            state, color, posture = "🟠 回撤但无统计优势", "#FF9F45", "caution"
+            action = ("别越跌越补——该票此回撤档历史超额≤0(动量陷阱)，逢跌买不优于随机进场。"
+                      "等站回 MA50/MA100 或波动回落后再轻仓试探。")
+            engine_override = "momentum_trap"
+        elif grade_letter == "F":
+            state, color, posture = "🔴 弱证据·不建仓", "#FF5C7A", "defend"
+            action = "证据等级 F：该状态历史显著吃亏(负超额+左尾差)，不主动建仓，等趋势确认再说。"
+            engine_override = "grade_F"
+        elif best_defensive:
+            state, color, posture = "🟡 深跌但引擎未找到稳健入场点", "#FFD166", "caution"
+            action = ("各回撤档历史上都没跑赢无条件基准——不硬给买点，观望或仅极轻仓试探、严设止损；"
+                      "把'会不会回来'交给你的基本面判断。")
+            engine_override = "no_robust_zone"
+
+    # ---- 趋势破位注记：建仓视角仍建议分批、但已跌破200线时，明确提示与下方'已建仓'减仓口径的关系，
+    #      避免"顶部说分批建仓、已建仓卡说减仓防守"被误读为自相矛盾 ----
+    if trend_broken and posture in ("build", "wait"):
+        action += "　⚠️已跌破200线(趋势破位)：新仓分批更慢、严设止损；**已持仓者**见下方『已建仓怎么办』的减仓口径。"
+
+    # ---- 是否建议"现在建新仓"：供前端门控顶部三联卡（仓位/入场价/持有），
+    #      杜绝"决策卡说别接、却同屏显示建仓仓位+入场参考价"的矛盾 ----
+    no_enter = (
+        posture in ("defend", "caution")                 # 防守/弱证据/动量陷阱/无稳健入场区
+        or (is_semi and -0.20 < dd <= -0.10)              # 半导体浅/中跌：历史无edge甚至负
+        or (is_lev and dd <= -0.05)                       # 杠杆ETF回撤里不建标准仓（只短线波段）
+    )
+    enter_ok = not no_enter
 
     # ---- 入场点（来自 best_entry 跨周期择优）----
     entry = None
@@ -99,8 +150,18 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
         }
 
     # ---- 入场后处理 ----
+    # add 必须与裁决一致：凡"现在别建新仓"(enter_ok=False，含半导体中浅跌/动量陷阱/弱证据等)
+    # 一律不说"补一批"，杜绝"别接"却又"越跌越补"的卡内矛盾
+    if not enter_ok:
+        add_txt = "⚠️不越跌越补——引擎未给统计优势，等趋势确认(站回MA50/MA100)再轻仓，每加一档同步上移止损"
+    elif is_lev:
+        add_txt = "杠杆ETF不摊平：只做短线波段、严设止损，别越跌越补"
+    elif dd > -0.20:
+        add_txt = "跌到下一更深档再补一批（按价位带分档）"
+    else:
+        add_txt = "已在深档，剩余子弹小步补、别梭哈"
     post_entry = {
-        "add": ("跌到下一更深档再补一批（按价位带分档）" if dd > -0.20 else "已在深档，剩余子弹小步补、别梭哈"),
+        "add": add_txt,
         "trim": "反弹到前高附近/引擎中位上行后，分批减 1/3，移动止损让利润奔跑",
         "stop": ("严设止损（杠杆/半导体波动大）" if cls in ("leveraged_etf", "semi_etf", "semi_single")
                  else "跌破建仓档下沿或200日线则减仓"),
@@ -134,7 +195,9 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
     return {
         "asset": asset, "asset_class": cls, "current_price": cur, "drawdown": dd,
         "trend_broken": trend_broken, "fragile": fragile_now, "market_light": market_light,
-        "state": state, "color": color, "action": action,
+        "state": state, "color": color, "action": action, "posture": posture,
+        "engine_override": engine_override, "momentum_trap": bool(momentum_trap),
+        "grade": grade_letter, "enter_ok": enter_ok,
         "entry": entry, "post_entry": post_entry, "exit_rules": exit_rules,
     }
 
@@ -148,3 +211,97 @@ def format_card(card: dict) -> str:
     else:
         lvl = ""
     return f"{card['state']}：{card['action']}{lvl}"
+
+
+def holding_advice(card: dict, brief: dict | None = None,
+                   best_entry: dict | None = None) -> dict:
+    """已建仓者怎么办：守 / 加 / 减 / 离 + 触发式止盈止损。
+
+    与 decision_card 共用同一套引擎纪律(回撤/趋势/脆弱/动量陷阱/证据等级)，保证
+    "建仓视角"与"已持仓视角"口径一致、不自相矛盾。返回
+    {stance, color, headline, actions[], triggers[]}。
+    """
+    brief = brief or {}
+    cls = card.get("asset_class", "single")
+    dd = float(card.get("drawdown", 0.0) or 0.0)
+    cur = float(card.get("current_price", float("nan")))
+    trend_broken = bool(card.get("trend_broken"))
+    fragile = bool(card.get("fragile"))
+    trap = bool(brief.get("momentum_trap"))
+    grade_letter = (brief.get("grade") or {}).get("grade")
+    is_lev = cls == "leveraged_etf"
+    is_etf = cls in ("index_etf", "semi_etf")
+    es = brief.get("engine_state") or {}
+    ev = brief.get("engine_value") or {}
+    up_median = es.get("median") if es.get("median") is not None else ev.get("median")
+    has_edge = (grade_letter in ("A", "B")) or bool(best_entry and best_entry.get("confident"))
+    tranches = brief.get("tranches") or []
+    dte = brief.get("days_to_earnings")
+
+    actions: list[str] = []
+    triggers: list[str] = []
+
+    # ---- 立场（优先级：风控开关 > 动量陷阱 > 弱证据 > 高位 > 有edge深跌 > 默认）----
+    if trend_broken or fragile:
+        why = " + ".join(w for w in ("跌破200日线" if trend_broken else "",
+                                     "市场宽度恶化" if fragile else "") if w)
+        stance, color = "🔴 减仓 / 防守", "#FF5C7A"
+        headline = f"{why} → 按已验证规则**减到半仓 + 按波动降仓**(非清仓)，等修复再加回。"
+        if is_etf:
+            actions.append("减半仓+按波动降仓——ETF上该规则夏普7/7改善、回撤-39%vs-55%、2015+OOS稳健。")
+        else:
+            actions.append("减半仓+按波动降仓——个股也升夏普(0.84vs0.83)、回撤-35%vs-56%、7/9占优；"
+                           "若是高动量龙头、你只追长期收益，可少减、用移动止损替代清仓。")
+        actions.append("**站回200日线上方且市场宽度转 healthy** → 再把仓位加回去。")
+    elif trap and dd <= -0.05:
+        stance, color = "🟠 别补·守止损", "#FF9F45"
+        headline = "你已套在动量陷阱里(该回撤档历史超额≤0)——**认错优先于摊平**，绝不越跌越补。"
+        actions.append("不要越跌越补：该票逢跌买历史上无统计优势。")
+        if tranches:
+            actions.append(f"跌破浅档止损 {tranches[0]['stop']:.0f} → 减仓/离场。")
+        actions.append("等**站回 MA50/MA100** 或波动回落确认趋势，再决定是否重新轻仓参与。")
+    elif grade_letter == "F":
+        stance, color = "🔴 降低暴露", "#FF5C7A"
+        headline = "证据等级 F：当前状态历史显著吃亏——主动**降低这只票的暴露**，不加仓。"
+        actions.append("分批减仓到你睡得着的水平，严设止损，别死等'回本'。")
+    elif dd > -0.05:
+        stance, color = "🟢 持有·让利润跑", "#2BE6A8"
+        headline = "接近高位且趋势在：**持有**，用移动止损保护，到减仓区再分段止盈——别因怕回调过早全平。"
+        actions.append("用移动止损(回吐约20%出场，回测验证的出场)让赢家继续跑。")
+        actions.append("趋势仍站上200线、未到减仓区 → 持有，别过早全平。")
+    elif has_edge and dd <= -0.15 and not trap:
+        stance, color = "🟢 持有·可在更深档补", "#2BE6A8"
+        headline = "深跌且引擎仍有正倾斜：**持有**，跌到下一共振档可按计划补，但每补一档同步下移整体止损。"
+        if len(tranches) >= 2:
+            add_txt = "、".join(f"{t['tier']}档 {t['price']:.1f}" for t in tranches[1:])
+            actions.append(f"跌到下一共振支撑({add_txt})可补仓——历史上该深度远期分布仍正偏；补一档下移一次止损。")
+        actions.append("反弹到引擎中位/前高附近分批减 1/3，移动止损锁利润。")
+    else:
+        stance, color = "🟡 持有·按纪律", "#FFD166"
+        headline = "无明确加/减信号：**持有**，按机械止盈止损纪律走，不追不砍。"
+        actions.append("到下方止盈区分批减、跌破硬止损离场；其余仓位用移动止损。")
+
+    # ---- 通用触发式止盈/止损（价格升序，先到先动；排序后再编号，杜绝"低位标再减、高位标第一减"的乱序）----
+    tp = []
+    if up_median == up_median and up_median is not None and cur == cur and up_median > 0:
+        sc1 = cur * (1 + up_median)
+        if sc1 > cur:
+            tp.append((sc1, f"≈{sc1:.1f}(+{up_median:.0%}，引擎该状态中位上行)"))
+    tgt = tranches[0]["target"] if tranches else None
+    if tgt and tgt == tgt and cur == cur and tgt > cur:
+        tp.append((tgt, f"≈前高 {tgt:.0f}"))
+    tp.sort(key=lambda x: x[0])
+    for i, (_, desc) in enumerate(tp):
+        lead = "涨到第一减仓区 " if i == 0 else "涨到下一减仓区 "
+        triggers.append(f"{lead}{desc}：分批减 1/3、移动止损保护其余。")
+    stops = [t["stop"] for t in tranches if t.get("stop") == t.get("stop")]
+    if stops:
+        triggers.append(f"跌破**硬止损 ≈{min(stops):.0f}**(重档技术失守)：无条件离场，不恋战。")
+    triggers.append("跌破200日线 或 市场宽度恶化 → 减到半仓(已验证的降仓规则)，别扛。")
+    if dte is not None and dte <= 21:
+        triggers.append(f"财报临近({dte}天)：别在财报前满仓押方向，财报后按超预期/不及的历史漂移再调。")
+    if is_lev:
+        triggers.append("⚠️ 杠杆ETF每日复利衰减、不可长持，必须设硬止损/止盈。")
+
+    return {"asset": card.get("asset"), "stance": stance, "color": color,
+            "headline": headline, "actions": actions, "triggers": triggers}

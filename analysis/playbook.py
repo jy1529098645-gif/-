@@ -56,7 +56,6 @@ def build_playbook(brief: dict, gate: dict | None = None) -> dict:
 
     # ---------- 建仓 ----------
     if tranches:
-        names = {"浅": tranches[0]} if tranches else {}
         zone_txt = "；".join(
             f"{t['tier']}档 ≈{t['price']:.1f}（{t['what']}，回前高目标 {t['target']:.0f}/{_pct(t['to_target_pct'])}，"
             f"技术止损 {t['stop']:.0f}/{_pct(t['to_stop_pct'])}，盈亏比 {t['rr']:.1f}）"

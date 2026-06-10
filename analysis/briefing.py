@@ -181,9 +181,13 @@ def stock_brief(ticker: str, start: str, end: str | None = None, horizon: int = 
     engine_state = bmap.get(cur_state_cn)            # 匹配当前状态(主结论)
     engine_value = bmap.get("估值低位")               # 买便宜论据
     engine_best = engine_state or engine_value        # 建仓档引擎胜率用"当前状态桶"
-    # 动量陷阱：当前在回撤、但回撤桶超额≤0（逢跌买不优于随机）
+    # 动量陷阱：当前在回撤、但回撤桶超额≤0（逢跌买不优于随机）。
+    # 注意：引擎回撤桶按**全历史前高(cummax)**分桶；但"陷阱"是给"现在要不要抢这段跌"的告警，
+    # 故再要求**近1年也确在回撤**(dd_252≤-5%)，避免"距历史高很深、但已回到近1年高位"的标的(如UNH)
+    # 被误标陷阱、与决策卡『追/持有』口径打架（决策卡用近1年高）。
+    dd_252 = float(price.iloc[-1] / trailing_high - 1.0) if trailing_high == trailing_high and trailing_high > 0 else 0.0
     momentum_trap = bool(engine_state and panel["drawdown_state"] == "in_drawdown"
-                         and engine_state["excess"] <= 0)
+                         and engine_state["excess"] <= 0 and dd_252 <= -0.05)
     # 表头桶：常态用"估值低位"(买便宜论据、跨票可比)，动量陷阱时切回撤桶以暴露真相
     engine_headline = (engine_state if momentum_trap else (engine_value or engine_state))
 
@@ -240,7 +244,7 @@ def stock_brief(ticker: str, start: str, end: str | None = None, horizon: int = 
     try:
         edates = loader.load_earnings_dates(ticker, limit=80)
         up = ec.upcoming_events(price, edates)
-        ne = up[up["event"].str.contains("财报")]
+        ne = up[up["event"].str.contains("财报", na=False)]
         if not ne.empty:
             brief["next_earnings"] = str(ne.iloc[0]["date"])
             brief["days_to_earnings"] = int(ne.iloc[0]["days_ahead"])
@@ -346,7 +350,7 @@ def render_markdown(briefs: list[dict], weights: dict, horizon: int = 63) -> str
          "> 校准式输出：价位带=区间+分布，目标/止损=按技术位规则推导的风险参考，非预测点位。",
          "> 新闻/基本面仅供人读、不入量化、含前视风险。权重为机械规则、非投资建议。\n",
          f"## 一屏总览（引擎周期 h{horizon}）\n",
-         "| 标的 | 现价 | 趋势/距前高 | 波动分位 | 引擎最优桶 | 盈亏比 | 胜率 | 下次财报 |",
+         "| 标的 | 现价 | 趋势/距历史高 | 波动分位 | 引擎最优桶 | 盈亏比 | 胜率 | 下次财报 |",
          "|---|---|---|---|---|---|---|---|"]
     for b in briefs:
         be = b.get("engine_headline")

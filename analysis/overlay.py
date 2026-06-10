@@ -195,7 +195,11 @@ def verdict(bt: dict) -> str:
     """一句话裁决。"""
     s, h = bt["strategy"], bt["hold"]
     ds = s["sharpe"] - h["sharpe"]
-    better = "更优(夏普↑·回撤↓)" if ds >= 0 else "夏普未改善(此标的更适合长持)"
+    dd_better = s["maxdd"] >= h["maxdd"]   # maxdd≤0，叠加的更浅(更大)=回撤改善
+    if ds >= 0:
+        better = "更优(夏普↑" + ("·回撤↓)" if dd_better else "·但回撤未改善)")
+    else:
+        better = "夏普未改善(此标的更适合长持)" + ("·回撤↓" if dd_better else "")
     return (f"风险管理叠加：夏普 {s['sharpe']:.2f} vs 持有 {h['sharpe']:.2f}、"
             f"回撤 {s['maxdd']:.0%} vs {h['maxdd']:.0%}、年化 {s['cagr']:+.0%} vs {h['cagr']:+.0%}"
             f"｜当前建议仓位 {bt['current_position']:.0%}｜{better}")

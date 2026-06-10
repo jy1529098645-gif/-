@@ -51,13 +51,16 @@ def evaluate_breadth_warning(panel: pd.DataFrame, index_price: pd.Series,
     ff = fragility_frame(panel, ma, win, thresh)
     idx = index_price.dropna()
     p = idx.to_numpy()
+    # 只对**完整前瞻窗口**(i+horizon < len)计算未来回撤；末段窗口不完整→留 NaN 并剔除，
+    # 否则被截断的短窗口会低估跌幅、把真回撤误判为"无事件"，虚高基率/拉低 lift。
     fmdd = pd.Series(index=idx.index, dtype=float)
-    for i in range(len(p) - 1):
+    for i in range(len(p) - horizon):
         fmdd.iloc[i] = p[i:i + horizon + 1].min() / p[i] - 1.0
-    target = (fmdd <= dd_thresh)
+    valid = fmdd.notna()
+    target = (fmdd <= dd_thresh).where(valid)
     sig = ff["fragile"].reindex(idx.index).fillna(False)
-    v = target.notna() & sig.notna()
-    s2, t2 = sig[v], target[v]
+    v = valid & target.notna() & sig.notna()
+    s2, t2 = sig[v], target[v].astype(bool)
     base = float(t2.mean()) if len(t2) else float("nan")
     if s2.sum() < 20:
         return {"base": base, "n_signal": int(s2.sum()), "note": "触发样本不足"}
@@ -84,13 +87,18 @@ def current_fragility(panel: pd.DataFrame, ma: int = MA_WINDOW, win: int = PCT_W
 # 等 / 追 操作指南（来自回测：高位别等浅回调；深回撤才是该等的有 edge 区）
 # ---------------------------------------------------------------------------
 def wait_or_chase(current_dd: float, fragile_now: bool = False, is_index: bool = False,
-                  conviction: bool = True) -> dict:
+                  conviction: bool = True, momentum_trap: bool = False) -> dict:
     """给定当前距前高回撤，返回'等/追'操作指南。
 
     current_dd: ≤0，价格相对前高的回撤；fragile_now: 市场脆弱性是否触发；
-    is_index: 是否指数(深回撤建仓 edge 更可靠)；conviction: 个股是否有'会回来'的把握。
+    is_index: 是否指数(深回撤建仓 edge 更可靠)；conviction: 个股是否有'会回来'的把握；
+    momentum_trap: 引擎判定该票逢跌无优势(回撤桶超额≤0)——为真则各档"逢跌买"一律转防守，
+    与决策卡/操作预案口径一致，杜绝"决策卡说别越跌越补、市场环境却说边追边备/深跌建仓"的矛盾。
     """
     dd = current_dd
+    # 动量陷阱：个股逢跌无统计优势 → 深档不给"会回来"把握，浅/中档不鼓励边追边补
+    if momentum_trap:
+        conviction = False
     if fragile_now:
         head = "🔴 市场脆弱性已触发——一切偏防守"
     else:
@@ -117,9 +125,15 @@ def wait_or_chase(current_dd: float, fragile_now: bool = False, is_index: bool =
             action = "深跌但无把握 → 观望/极轻仓"
             detail = ("单票深跌且无把握会回来——可能是价值陷阱(输家池此档历史超额为负)。别越跌越补。")
 
+    # 动量陷阱覆盖：任何"逢跌买/边追边补"在无统计优势的回撤里都不该鼓励（与决策卡同口径）
+    if momentum_trap and dd <= -0.05:
+        action = "别越跌越补（动量陷阱）"
+        detail = ("该票当前回撤档历史超额≤0——逢跌买不优于随机进场。等站回 MA50/MA100 或波动回落"
+                  "确认趋势再考虑轻仓，而不是抢这段回撤。已持仓者见『已建仓』减仓口径。")
+
     if fragile_now and dd >= -0.15:
         action = "降仓优先 / 建仓减半等确认"
         detail = "市场脆弱性触发(宽度恶化)，高位追势风险升高——建仓减半、等趋势确认或回到更深档。 " + detail
 
     return {"current_dd": dd, "headline": head, "action": action, "detail": detail,
-            "fragile": fragile_now}
+            "fragile": fragile_now, "momentum_trap": bool(momentum_trap)}

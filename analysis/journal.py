@@ -107,7 +107,10 @@ def evaluate(df: pd.DataFrame, prices: dict[str, pd.Series] | None = None,
             pos = int(np.searchsorted(idx.values.astype("datetime64[ns]"),
                                       np.datetime64(sd, "ns"), side="left"))
             tgt = pos + int(r["horizon"])
-            if 0 <= pos < len(p) and tgt < len(p):
+            # asof：只认"到 asof 为止已走完 horizon"的信号成熟，且只用 asof 前的价格回填，
+            # 防止以过去某日做校准复盘时用到未来价(默认 asof=None→用全部已加载价格,到今天,无前视)。
+            asof_ok = (asof is None) or (tgt < len(p) and pd.Timestamp(idx[tgt]) <= pd.Timestamp(asof))
+            if 0 <= pos < len(p) and tgt < len(p) and asof_ok:
                 rr = float(p.iloc[tgt] / p.iloc[pos] - 1.0)
                 rpos = float(rr > 0)
                 if r.get("baseline_median") == r.get("baseline_median"):

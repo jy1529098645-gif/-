@@ -36,20 +36,62 @@ def test_fragile_forces_defense():
     assert any("降仓" in r or "宽度" in r for r in c["exit_rules"])
 
 
+# 一个"有稳健入场区"的引擎结果：用于隔离测试纯回撤状态机，
+# 避免触发"引擎未找到稳健入场区→转防守"的纪律覆盖（该覆盖另有专测）。
+_ZONE_OK = {"has_zone": True, "anchor_price": 150.0, "confident": True,
+            "tier": "稳健最佳入场区", "zone_label": "距前高-25%档", "horizon": 63,
+            "price_band": [140.0, 160.0], "excess_median": 0.04}
+
+
 def test_index_etf_deep_is_high_conviction_buy():
-    c = dc.decision_card("SPY", _px(-0.25), {"has_zone": False}, fragile_now=False)
+    c = dc.decision_card("SPY", _px(-0.25), _ZONE_OK, fragile_now=False)
     assert "建仓" in c["state"]
     assert "高置信" in c["state"] or "ETF" in c["action"]
 
 
 def test_semi_mid_dip_warns_not_to_catch():
-    c = dc.decision_card("SMH", _px(-0.13), {"has_zone": False}, fragile_now=False)
+    c = dc.decision_card("SMH", _px(-0.13), _ZONE_OK, fragile_now=False)
     assert "别" in c["action"] or "无edge" in c["action"] or "别急" in c["state"]
 
 
 def test_single_deep_needs_conviction():
-    c = dc.decision_card("CRM", _px(-0.25), {"has_zone": False}, fragile_now=False)
+    c = dc.decision_card("CRM", _px(-0.25), _ZONE_OK, fragile_now=False)
     assert "把握" in c["state"] or "价值陷阱" in c["action"]
+
+
+def test_engine_override_momentum_trap_blocks_build():
+    # 动量陷阱：即便在回撤建仓区，决策卡也必须转防守口径，与操作预案一致
+    c = dc.decision_card("CRM", _px(-0.25), _ZONE_OK, fragile_now=False, momentum_trap=True)
+    assert c["engine_override"] == "momentum_trap"
+    assert "越跌越补" in c["action"] and c["posture"] == "caution"
+
+
+def test_engine_override_grade_f_no_build():
+    c = dc.decision_card("CRM", _px(-0.13), _ZONE_OK, fragile_now=False, grade={"grade": "F"})
+    assert c["engine_override"] == "grade_F" and c["posture"] == "defend"
+
+
+def test_engine_override_no_robust_zone_defers_to_defense():
+    # best_entry 无稳健入场区(has_zone=False) → 决策卡不再硬给"建仓"
+    c = dc.decision_card("SPY", _px(-0.25), {"has_zone": False}, fragile_now=False)
+    assert c["engine_override"] == "no_robust_zone"
+    assert "建仓" not in c["state"]
+
+
+def test_fragile_threshold_aligned_with_wait_or_chase():
+    # 脆弱 + dd 在 -10%~-15% 之间：旧阈值(-0.10)会落到"分批"，与市场环境横幅"降仓减半"打架；
+    # 新阈值(-0.15)统一转防守。
+    c = dc.decision_card("AAPL", _px(-0.12), _ZONE_OK, fragile_now=True)
+    assert "防守" in c["state"] and c["posture"] == "defend"
+
+
+def test_holding_advice_consistent_with_entry_posture():
+    # 已建仓视角与建仓视角同源：动量陷阱时两者都不主张越跌越补
+    c = dc.decision_card("CRM", _px(-0.12), _ZONE_OK, fragile_now=False, momentum_trap=True)
+    h = dc.holding_advice(c, {"momentum_trap": True, "tranches": [
+        {"tier": "浅", "price": 150, "target": 200, "stop": 140}]}, _ZONE_OK)
+    assert "别补" in h["stance"] or "防守" in h["stance"]
+    assert h["triggers"]  # 总给触发式止盈止损
 
 
 def test_format_card_with_entry():
