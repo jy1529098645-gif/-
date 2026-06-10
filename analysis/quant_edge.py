@@ -68,6 +68,81 @@ def alpha_beta(strat_ret: pd.Series, mkt_ret: pd.Series, n_boot: int = 1000) -> 
             "n": int(df.shape[0]), "verdict": verdict}
 
 
+def _ols_beta(a: np.ndarray, b: np.ndarray) -> float:
+    """β = cov(a,b)/var(b)（a=个股收益, b=市场收益）。"""
+    v = float(np.var(b))
+    return float(np.cov(a, b)[0, 1] / v) if v > 0 else float("nan")
+
+
+def alpha_beta_profile(stock_px: pd.Series, mkt_px: pd.Series,
+                       lookback_1y: int = 252, n_boot: int = 800) -> dict:
+    """市场模型(CAPM)全景：把个股日收益对市场(默认 SPY)回归，拆 α(选股/择时超额) 与 β(市场敏感度)，
+    再补三件风险决策真正关心的事：
+
+      • **近1年 β**——β 会漂移，近端比全样本更代表"现在"的敏感度。
+      • **下行 β / 上行 β**——市场跌的日子 vs 涨的日子分别回归。下行β>上行β = "跌时比涨时更敏感"
+        (不利的不对称，高 β 科技常见)；反之为有利。
+      • **相关性 / R²**——收益里有多少是被市场解释掉的(R² 高=基本就是 beta 玩具)。
+
+    铁律：全是**历史描述统计、非预测**；单票 α 多半不显著(verdict 诚实说明)，β 是真正的风险敞口。
+    rf≈0 近似(日频无风险利率可忽略)。返回 dict(available/beta/beta_1y/beta_down/beta_up/
+    alpha_ann/alpha_ci/alpha_significant/r2/corr/n + 三段 verdict)。"""
+    s = stock_px.dropna().pct_change()
+    m = mkt_px.dropna().pct_change()
+    df = pd.concat([s.rename("s"), m.rename("m")], axis=1).dropna()
+    if df.shape[0] < 60:
+        return {"available": False, "n": int(df.shape[0])}
+    ab = alpha_beta(df["s"], df["m"], n_boot=n_boot)
+    sv, mv = df["s"].to_numpy(), df["m"].to_numpy()
+    corr = float(np.corrcoef(sv, mv)[0, 1]) if np.var(sv) > 0 and np.var(mv) > 0 else float("nan")
+    beta_1y = _ols_beta(sv[-lookback_1y:], mv[-lookback_1y:]) if len(sv) >= lookback_1y + 5 else float("nan")
+    down, up = mv < 0, mv > 0
+    beta_down = _ols_beta(sv[down], mv[down]) if int(down.sum()) > 30 else float("nan")
+    beta_up = _ols_beta(sv[up], mv[up]) if int(up.sum()) > 30 else float("nan")
+
+    beta = ab["beta"]
+    # β 解读
+    if beta == beta:
+        if beta >= 1.3:
+            beta_note = f"β={beta:.2f}：**放大市场**(进攻型)——大盘动 1%，它约动 {beta:.1f}%，涨跌都更猛。"
+        elif beta >= 0.8:
+            beta_note = f"β={beta:.2f}：与大盘**同步**，敞口接近一份市场。"
+        elif beta >= 0.4:
+            beta_note = f"β={beta:.2f}：**偏防御**(低于市场敏感度)。"
+        else:
+            beta_note = f"β={beta:.2f}：与市场**弱关联**(独立行情成分高)。"
+    else:
+        beta_note = "β 不可用。"
+    # 下行/上行不对称
+    risk_note = ""
+    if beta_down == beta_down and beta_up == beta_up:
+        gap = beta_down - beta_up
+        if gap > 0.15:
+            risk_note = (f"⚠️ **下行β {beta_down:.2f} > 上行β {beta_up:.2f}**：跌时比涨时更敏感(不利不对称)——"
+                         "大盘下挫它往往跌更多，撤离纪律(破200线减半)更重要。")
+        elif gap < -0.15:
+            risk_note = (f"✅ 下行β {beta_down:.2f} < 上行β {beta_up:.2f}：跌时反而没涨时敏感(有利不对称)。")
+        else:
+            risk_note = f"下行β {beta_down:.2f} ≈ 上行β {beta_up:.2f}：涨跌敏感度对称。"
+    # β 漂移
+    drift_note = ""
+    if beta_1y == beta_1y and beta == beta:
+        d = beta_1y - beta
+        if abs(d) >= 0.25:
+            drift_note = (f"近1年β {beta_1y:.2f} {'高' if d>0 else '低'}于全样本 {beta:.2f}"
+                          f"（{'敏感度在上升' if d>0 else '敏感度在下降'}）——β 会漂移，按近端看更准。")
+        else:
+            drift_note = f"近1年β {beta_1y:.2f} 与全样本 {beta:.2f} 接近(β 稳定)。"
+
+    return {"available": True, "beta": beta, "beta_1y": beta_1y,
+            "beta_down": beta_down, "beta_up": beta_up,
+            "alpha_ann": ab["alpha_ann"], "alpha_ci": ab["alpha_ann_ci"],
+            "alpha_significant": ab["alpha_significant"], "r2": ab["r2"],
+            "corr": corr, "n": ab["n"],
+            "alpha_verdict": ab["verdict"], "beta_note": beta_note,
+            "risk_note": risk_note, "drift_note": drift_note}
+
+
 # 风格因子的免费 ETF 代理（相对市场的超额=风格暴露）
 FACTOR_ETFS = {"市场": "SPY", "动量": "MTUM", "价值": "IWD", "小盘": "IWM", "低波": "USMV"}
 

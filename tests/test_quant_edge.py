@@ -42,6 +42,41 @@ def test_alpha_beta_small_sample():
 
 
 # ---------------------------------------------------------------------------
+# alpha_beta_profile（β漂移 / 上下行β / 诚实α裁决）
+# ---------------------------------------------------------------------------
+def test_ab_profile_amplifier_high_beta():
+    mkt = _series(5)
+    # 个股 = 1.5x 市场收益 + 噪声 → β≈1.5、无真α
+    mr = mkt.pct_change()
+    rng = np.random.RandomState(9)
+    sr = 1.5 * mr + pd.Series(rng.randn(len(mr)) * 0.004, index=mr.index)
+    stock = (1 + sr.fillna(0)).cumprod() * 100
+    r = qe.alpha_beta_profile(stock, mkt, n_boot=300)
+    assert r["available"]
+    assert 1.3 <= r["beta"] <= 1.7
+    assert "放大市场" in r["beta_note"]
+    assert not r["alpha_significant"]  # 纯放大无真α
+    assert r["beta_down"] == r["beta_down"] and r["beta_up"] == r["beta_up"]
+
+
+def test_ab_profile_downside_beta_asymmetry():
+    # 构造跌时β更高的不对称：市场跌的日子放大2x、涨的日子1x
+    mkt = _series(6)
+    mr = mkt.pct_change().dropna()
+    sr = mr.where(mr >= 0, mr * 2.0)  # 负收益日翻倍
+    stock = (1 + sr).cumprod() * 100
+    r = qe.alpha_beta_profile(stock, mkt.reindex(stock.index), n_boot=200)
+    assert r["beta_down"] > r["beta_up"]
+    assert "下行β" in r["risk_note"]
+
+
+def test_ab_profile_small_sample():
+    s = _series(7, n=40)
+    r = qe.alpha_beta_profile(s, s)
+    assert not r["available"]
+
+
+# ---------------------------------------------------------------------------
 # regime_exposure / vol_target
 # ---------------------------------------------------------------------------
 def test_regime_exposure_bounds():

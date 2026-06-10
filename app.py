@@ -216,75 +216,19 @@ def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
 
 
 def _claude_deep_link(prompt: str) -> str:
-    """生成一键打开 Claude 并预填提示词的链接（claude.ai 新对话·q 参数预填）——本地不可用时的回退。"""
+    """生成一键打开 Claude 并预填提示词的链接（claude.ai 新对话·q 参数预填）。"""
     from urllib.parse import quote
     return "https://claude.ai/new?q=" + quote(prompt)
 
 
-@st.cache_data(show_spinner=False)
-def _find_local_claude() -> str:
-    """定位本地 Claude Code 可执行文件（桌面应用自带 / 独立安装 / PATH）。找不到返回 ""。"""
-    import os, glob, shutil
-    # 1) 系统 PATH（独立安装 / macOS / Linux）
-    exe = shutil.which("claude")
-    if exe:
-        return exe
-    # 2) Windows 桌面应用自带：%APPDATA%\Claude\claude-code\<版本>\claude.exe（取最高版本）
-    base = os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude-code")
-    cands = glob.glob(os.path.join(base, "*", "claude.exe"))
-    if cands:
-        def _ver(p):
-            v = os.path.basename(os.path.dirname(p)).split(".")
-            return tuple(int(x) if x.isdigit() else 0 for x in (v + ["0", "0", "0"])[:3])
-        return max(cands, key=_ver)
-    return ""
-
-
-def _launch_local_claude(prompt: str) -> bool:
-    """在新终端窗口里拉起本地 Claude Code，以 prompt 作为首条消息开启一个新对话。成功返回 True。"""
-    import os, subprocess
-    exe = _find_local_claude()
-    if not exe:
-        return False
-    cwd = os.path.dirname(os.path.abspath(__file__))  # 在量化工具目录开会话，便于结合本仓数据/skill
-    try:
-        if os.name == "nt":
-            # CREATE_NEW_CONSOLE：开一个全新交互式终端窗口；prompt 作为独立 argv 传入，无需 shell 转义
-            subprocess.Popen([exe, prompt], cwd=cwd,
-                             creationflags=subprocess.CREATE_NEW_CONSOLE)
-        else:
-            subprocess.Popen([exe, prompt], cwd=cwd)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def claude_deep_button(label: str, prompt: str, key: str = "", hint: bool = True):
-    """渲染"一键用 Claude 深度分析"按钮：优先在本地新开一个 Claude Code 对话并预填提示词；
-    本地 Claude 不可用时回退到 claude.ai 网页版新对话。
+    """渲染"一键用 Claude 深度分析"按钮：新标签页打开 claude.ai 并预填提示词。
 
     hint=False 时省略下方说明（用于顶部等已在别处解释过的位置，避免重复字眼）。"""
-    if not key:
-        import hashlib
-        key = "cl_" + hashlib.md5((label + prompt).encode("utf-8")).hexdigest()[:10]
-    if _find_local_claude():
-        if st.button("🚀 " + label, use_container_width=True, key=key):
-            if _launch_local_claude(prompt):
-                st.toast("已在本地新终端窗口打开 Claude，并预填好提示词——回车即开始深度分析。", icon="🚀")
-            else:
-                st.error("本地 Claude 启动失败，请改用下方网页版或在终端手动运行 `claude`。")
-                st.link_button("↗ 改用网页版 Claude", _claude_deep_link(prompt),
-                               use_container_width=True, key=key + "_web")
-        if hint:
-            st.caption("↑ 在**本地新终端**打开 Claude Code 新对话并预填提示词，**回车即开始**"
-                       "联网读全文+深度推理（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
-    else:
-        # 本地未找到 Claude Code：回退网页版，保证按钮永不失效
-        st.link_button("🚀 " + label, _claude_deep_link(prompt),
-                       use_container_width=True, key=key + "_web")
-        if hint:
-            st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
-                       "（未检测到本地 Claude Code；装好后此按钮会自动改为在本地新开对话）。")
+    st.link_button("🚀 " + label, _claude_deep_link(prompt), use_container_width=True)
+    if hint:
+        st.caption("↑ 新标签页打开 Claude 并预填提示词，**回车即开始**联网读全文+深度推理"
+                   "（需你的 Claude 已开启 quant-deep-brief / 深度分析能力）。")
 
 # ---------------------------------------------------------------------------
 # 图表周期切换：每个时序/K线图上方的「时间范围 + K线粒度」控件 + TV 渲染包装器
@@ -487,6 +431,13 @@ def c_regime_overlay(ticker: str, start: str, end: str):
     px = c_prices((ticker,), start, end)[ticker]
     macro = c_macro("1990-01-01", end)
     return {"exposure": qe.regime_exposure(px, macro), "overlay": qe.vol_target_backtest(px)}
+
+@st.cache_data(show_spinner=False)
+def c_alpha_beta(ticker: str, start: str, end: str, bench: str = "SPY"):
+    from analysis import quant_edge as qe
+    px = c_prices((ticker,), start, end)[ticker]
+    bpx = c_prices((bench,), start, end)[bench]
+    return qe.alpha_beta_profile(px, bpx)
 
 @st.cache_data(show_spinner=False)
 def c_pead(ticker: str, start: str, end: str):
@@ -2651,6 +2602,37 @@ def page_panorama():
             st.caption(f"📖 {lr['note']}　**怎么读**：右下角的方案=高回报+低痛感最优；"
                        "“建仓期最深浮亏”是投钱过程中净值相对自身峰值的最深回撤（你要扛的痛）；"
                        "“跑赢一次性”是历史上该方案期末回报高于一次性的窗口比例。**非预测、非投资建议**。")
+
+    with _T_RISK.expander("📐 Alpha / Beta（市场模型 · 拆「选股超额」与「市场敞口」）", expanded=False):
+      if _lazy_gate(f"ab_{a}"):
+        _bench = "SPY"
+        _ab = c_alpha_beta(a, "2014-01-01", end, _bench)
+        if not _ab.get("available"):
+            st.caption("样本不足，Alpha/Beta 暂不可用。")
+        else:
+            _abc = st.columns(4)
+            _bt = _ab["beta"]
+            _btcol = "#FF9F45" if (_bt == _bt and _bt >= 1.3) else ("#2BE6A8" if (_bt == _bt and _bt < 0.8) else "#7C5CFC")
+            _abc[0].markdown(stat_card(f"β（对 {_bench}）", f"{_bt:.2f}" if _bt == _bt else "—",
+                                       f"近1年 {_ab['beta_1y']:.2f}" if _ab['beta_1y'] == _ab['beta_1y'] else "市场敏感度", _btcol, tip="β"), unsafe_allow_html=True)
+            _aa = _ab["alpha_ann"]; _aci = _ab["alpha_ci"]; _asig = _ab["alpha_significant"]
+            _acol = ("#2BE6A8" if (_asig and _aa > 0) else ("#FF5C7A" if (_asig and _aa < 0) else "#8A93A6"))
+            _abc[1].markdown(stat_card("α（年化）", f"{_aa:+.1%}" if _aa == _aa else "—",
+                                       ("显著" if _asig else "**不显著**(CI跨0)") + f"·CI[{_aci[0]:+.0%},{_aci[1]:+.0%}]", _acol, tip="α"), unsafe_allow_html=True)
+            _bd, _bu = _ab["beta_down"], _ab["beta_up"]
+            _bdcol = "#FF5C7A" if (_bd == _bd and _bu == _bu and _bd - _bu > 0.15) else "#7C5CFC"
+            _abc[2].markdown(stat_card("下行β / 上行β", f"{_bd:.2f} / {_bu:.2f}" if (_bd == _bd and _bu == _bu) else "—",
+                                       "跌时vs涨时敏感度", _bdcol, tip="β"), unsafe_allow_html=True)
+            _r2 = _ab["r2"]
+            _abc[3].markdown(stat_card("R² / 相关", f"{_r2:.0%} / {_ab['corr']:.2f}" if _r2 == _r2 else "—",
+                                       "收益被市场解释的比例", "#00D4FF", tip="R²"), unsafe_allow_html=True)
+            _ablines = "<br>".join(x for x in [_ab.get("beta_note"), _ab.get("drift_note"),
+                                               _ab.get("risk_note"), "🎯 " + _ab.get("alpha_verdict", "")] if x)
+            st.markdown(f'<div class="verdict">{_ablines}</div>', unsafe_allow_html=True)
+            st.caption(f"📖 市场模型：个股日收益 对 {_bench} 日收益回归(2014至今·rf≈0近似)。"
+                       "**β=市场敞口**(放大/防御)，**α=扣掉β后的超额**(年化·带block bootstrap CI)。"
+                       "单票 α **通常不显著**——这与本工具一贯结论一致：可证明的择时/选股超额很罕见，你拿的多半是 beta。"
+                       "**下行β>上行β** 说明跌时更敏感(不利不对称)→撤离纪律更重要。全是**历史描述、非预测**(β会漂移，已附近1年值)。")
 
     with _T_RISK.expander("🛡️ Regime 风险加权暴露（高波动/避险环境自动降仓 · 改善回撤）"):
       if _lazy_gate(f"regime_{a}"):
