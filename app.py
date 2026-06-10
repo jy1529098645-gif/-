@@ -816,7 +816,7 @@ _FRAGILITY_BASKETS = {
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
+_ADV_NAMES = ["🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
               "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
@@ -2624,7 +2624,92 @@ def page_fragility():
             st.line_chart(rsdf, color=["#2BE6A8", "#8A93A6"])
     st.caption("📖 这是把工具的可部署规则用到整个聚焦组合的真实回测。结论：风险调整指标(夏普/索提诺/卡玛/回撤)优于持有与SPY。非投资建议。")
 
+def page_industry():
+    from analysis import industry as ind
+    st.markdown('<div class="hero-title">🏭 行业动向</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">半导体 / 科技板块的<b>真实可观测动向</b>（宽度·相对强度·内部相关性·成长/估值·龙头落后）'
+                '+ <b>历史类比情景分布</b>——只给"可能出现哪几种情况 + 各自历史频率/区间"，<b>不判牛熊、不给点位、不预测拐点</b>。</div>',
+                unsafe_allow_html=True)
+    st.write("")
+    sec = st.selectbox("板块", list(ind.SECTORS), index=0)
+    tks = ind.SECTORS[sec]
+    with st.spinner(f"聚合 {sec} 板块动向…"):
+        d = ind.sector_dashboard(tks, "2008-01-01", end)
+    if not d.get("available"):
+        st.warning(f"板块数据不足：{d.get('reason','')}"); return
+
+    st.markdown(f'<div class="verdict">🧭 <b>{sec} 当前动向</b>（{d["n"]}只·截至{d["asof"]}）：{ind.sector_state_label(d)}</div>',
+                unsafe_allow_html=True)
+    c = st.columns(4)
+    _bc = "#FF5C7A" if (d["breadth_pctile"] == d["breadth_pctile"] and d["breadth_pctile"] < 0.2) else "#2BE6A8"
+    c[0].markdown(stat_card("宽度(在200线上)", f"{d['breadth']:.0%}",
+                            f"历史分位 {d['breadth_pctile']:.0%}" if d["breadth_pctile"] == d["breadth_pctile"] else "—", _bc, tip="脆弱"), unsafe_allow_html=True)
+    _rc = "#2BE6A8" if d["rs_252"] > 0 else "#FF5C7A"
+    c[1].markdown(stat_card("相对大盘(近1年)", f"{d['rs_252']:+.0%}", f"近3月 {d['rs_63']:+.0%}", _rc), unsafe_allow_html=True)
+    c[2].markdown(stat_card("内部相关性", f"{d['corr']:.2f}" if d["corr"] == d["corr"] else "—",
+                            "高=β主导/低=个股分化", "#00D4FF", tip="相关"), unsafe_allow_html=True)
+    c[3].markdown(stat_card("成分分散度(近3月)", f"{d['dispersion']:.0%}", "越大=分化越剧烈", "#7C5CFC"), unsafe_allow_html=True)
+
+    lc = st.columns(2)
+    lc[0].markdown("**🏆 龙头(近3月)**：" + "　".join(f"{k} {v:+.0%}" for k, v in d["leaders"]))
+    lc[1].markdown("**🐌 落后(近3月)**：" + "　".join(f"{k} {v:+.0%}" for k, v in d["laggards"]))
+
+    # 基本面横截面（仅供人读·不入量化）
+    try:
+        f = ind.sector_fundamentals(tks)
+        if f["n_growth"] or f["n_pe"]:
+            st.caption(f"📊 成分基本面中位（{f['n']}只·仅供人读·含前视/陈旧）：营收同比 "
+                       + (f"{f['rev_growth_med']:+.0%}" if f['rev_growth_med'] == f['rev_growth_med'] else "—")
+                       + "、盈利同比 " + (f"{f['earn_growth_med']:+.0%}" if f['earn_growth_med'] == f['earn_growth_med'] else "—")
+                       + "、TTM PE " + (f"{f['pe_med']:.0f}" if f['pe_med'] == f['pe_med'] else "—") + "。")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 板块级历史类比情景分布
+    st.markdown("##### 📈📉 板块情景分布（历史类比 · 分布非预测）")
+    sc = ind.sector_scenarios(d)
+    if sc:
+        _sc_html = "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in sc["lines"])
+        st.markdown(
+            f'<div style="border-radius:12px;padding:12px 16px;background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
+            f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{sc["headline"]}</div>{_sc_html}'
+            f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {sc["price_range"]}（板块等权指数口径）</div></div>',
+            unsafe_allow_html=True)
+        st.caption("📖 " + sc["caveat"])
+    else:
+        st.caption("板块情景分布：等权指数历史不足，暂不可用。")
+
+    # 成分明细表
+    with st.expander("📋 成分明细（距200线 / 距1年高 / 波动分位 / 近3月 / 相对板块）", expanded=True):
+        t = d["table"].copy()
+        st.dataframe(t.style.format({"距200线": "{:+.0%}", "距1年高": "{:+.0%}", "波动分位": "{:.0%}",
+                                     "近63日": "{:+.0%}", "vs板块": "{:+.0%}"}, na_rep="—"),
+                     use_container_width=True, hide_index=True)
+
+    # 🌐 联网深读（按钮触发·慢·仅线索不入量化）
+    st.divider()
+    st.markdown("##### 🌐 联网深读（板块龙头新闻主题 + 情绪 · 仅线索、不入量化）")
+    if st.button("🌐 拉取板块新闻动向（联网·约 10–20 秒）", key=f"webnews_{sec}"):
+        with st.spinner("联网拉取板块龙头新闻…"):
+            try:
+                nz = ind.sector_news_themes(tks, sources=("google", "yahoo"))
+            except Exception as _e:  # noqa: BLE001
+                nz = None; st.warning(f"联网失败（{type(_e).__name__}）——可能限流，稍后再试。")
+        if nz and nz["n"]:
+            st.caption(f"共 {nz['n']} 条 · {nz['providers']} 家媒体 · 标记利好 {nz['pos']} / 利空 {nz['neg']}（启发式·非信号）。")
+            for it in nz["items"][:18]:
+                t = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
+                st.markdown(f"- `{it['date'][:10]}` **{it['ticker']}** {('['+it['sentiment']+'] ') if it['sentiment'] else ''}{t}")
+            st.caption("⚠️ 新闻仅供顺藤摸瓜、含前视、不入任何量化结果。要**全文读网+LLM深度推理**："
+                       "在 Claude 对话说「深度分析 " + tks[0] + "」触发 quant-deep-brief。")
+        elif nz is not None:
+            st.caption("暂无拉到新闻（可能限流）。")
+
+    st.caption("⚠️ 全页为**历史可观测动向 + 历史类比分布**，非预测、不判牛熊、不给点位；新闻/基本面仅供人读、不入量化。")
+
+
 _ADV_PAGES = {
+    "🏭 行业动向(半导体/科技)": page_industry,
     "🛡️ 稳定配置 & 风险": page_fragility,
     "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,
     "📈 当前快照": page_snapshot, "🗞️ 事件时间线": page_events, "📅 财报 PEAD": page_earnings,

@@ -66,3 +66,22 @@ def test_regime_path_distribution():
     # 样本不足→优雅降级
     short = px.iloc[:100]
     assert an.regime_path_distribution(short)["available"] is False
+
+
+def test_industry_dashboard_and_scenarios():
+    """行业动向：仪表盘字段完整、口径诚实(情景=分布非预测)、解析中文基本面键。"""
+    from analysis import industry as ind
+    assert ind._parse_num("85.2%") == 0.852
+    assert ind._parse_num("$4928B") == 4928.0
+    assert ind._parse_num("31.1") == 31.1
+    assert ind._parse_num(None) != ind._parse_num(None)  # nan
+    d = ind.sector_dashboard(ind.SECTORS["🔌 半导体"], "2008-01-01", "2026-06-09")
+    assert d["available"] and d["n"] >= 5
+    for k in ("breadth", "rs_252", "corr", "leaders", "laggards", "ew_index", "table"):
+        assert k in d
+    assert 0 <= d["breadth"] <= 1
+    lab = ind.sector_state_label(d)
+    assert "宽度" in lab and "相对大盘" in lab
+    sc = ind.sector_scenarios(d)
+    if sc:
+        assert "非预测" in sc["caveat"] and len(sc["lines"]) >= 3
