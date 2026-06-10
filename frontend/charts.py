@@ -301,13 +301,22 @@ def volume_profile_bars(vp: dict, title="Volume Profile（日线近似）") -> g
 
 def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None,
                          best_entry: dict | None = None, show_best=True, show_zones=True,
-                         show_vp=True, title="K线 + 图层", logy=True, best_endorsed=True) -> go.Figure:
+                         show_vp=True, show_rsi=False, rsi_window=14,
+                         title="K线 + 图层", logy=True, best_endorsed=True) -> go.Figure:
     """全景页主图（Plotly）：K线 + 量副图，并按开关叠加：
       🎯最佳入场区(绿/黄阴影带 + 历史常驻价线) · 📊回撤价位带(蓝=当前/灰=其它) · 📦换手位(筹码柱+POC+价值区)。
+      📉超买超卖(RSI)开时，价下再挂一个 RSI 振荡子图(70/30 带)。
     用 Plotly 画横线/阴影(streamlit_lightweight_charts 不支持 priceLine，故改用此图可靠渲染)。"""
     from plotly.subplots import make_subplots
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.80, 0.20])
+    # 开 RSI 时改 3 行布局；K线行(row1)的叠加副 x 轴随行数让位(2行=x3 / 3行=x4)，
+    # 避免与 make_subplots 给 row3 自动分配的 x3/y3 撞名（撞名会让叠加层或 RSI 任一不渲染）。
+    _ovx = "x4" if show_rsi else "x3"
+    if show_rsi:
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+                            row_heights=[0.64, 0.16, 0.20])
+    else:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.80, 0.20])
     ymin = float(ohlcv["low"].min()); ymax = float(ohlcv["high"].max())
     x0, x1 = ohlcv.index[0], ohlcv.index[-1]
 
@@ -344,7 +353,7 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
             va_lo, va_hi = vp["value_area"]
             bcol = ["rgba(255,159,69,0.55)" if (va_lo <= c <= va_hi) else "rgba(255,159,69,0.22)" for c in centers]
             fig.add_trace(go.Bar(x=vols, y=centers, orientation="h", width=bw, marker_color=bcol,
-                                 marker_line_width=0, xaxis="x3", yaxis="y", showlegend=False, name="筹码",
+                                 marker_line_width=0, xaxis=_ovx, yaxis="y", showlegend=False, name="筹码",
                                  hovertemplate="价位 %{y:.1f}<br>筹码量 %{x:.3s}<extra></extra>"))
 
     # —— 阴影带先画（垫在 K 线下面，不挡）：🎯最佳入场区 + 📦价值区 ——
@@ -392,11 +401,30 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
         if anc == anc and anc is not None:
             _hline(float(anc), gcol, 2.0, "solid", f"{_alab} {float(anc):.1f}", side="right")
 
-    _apply_tv(fig, 560, title)
+    # —— 📉 超买超卖 RSI 振荡子图（row3）：70=超买/30=超卖阴影带 + 50 中轴 + Wilder RSI 线 ——
+    if show_rsi:
+        from factors import signals as _sg
+        _rsi = _sg.rsi(ohlcv["close"].astype(float), int(rsi_window))
+        fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[70, 70, 100, 100, 70], fill="toself",
+                                 fillcolor="rgba(255,92,122,0.10)", line=dict(width=0), mode="lines",
+                                 hoverinfo="skip", showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[0, 0, 30, 30, 0], fill="toself",
+                                 fillcolor="rgba(43,230,168,0.10)", line=dict(width=0), mode="lines",
+                                 hoverinfo="skip", showlegend=False), row=3, col=1)
+        for _lv, _c in ((70, "rgba(255,92,122,0.55)"), (30, "rgba(43,230,168,0.55)"), (50, "rgba(138,147,166,0.40)")):
+            fig.add_trace(go.Scatter(x=[x0, x1], y=[_lv, _lv], mode="lines",
+                                     line=dict(color=_c, width=1, dash="dot"),
+                                     hoverinfo="skip", showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=ohlcv.index, y=_rsi, mode="lines", name=f"RSI({int(rsi_window)})",
+                                 line=dict(color="#00D4FF", width=1.4), showlegend=False,
+                                 hovertemplate="RSI %{y:.1f}<extra></extra>"), row=3, col=1)
+
+    _apply_tv(fig, 620 if show_rsi else 560, title)
     _vmax = (np.asarray(vp["volumes"], float).max() if (show_vp and vp is not None and np.asarray(vp["volumes"], float).size) else 0)
+    _ov_axis = dict(overlaying="x", side="top", range=[0, (_vmax * 4.5) if _vmax > 0 else 1],
+                    showgrid=False, showticklabels=False, zeroline=False, fixedrange=True)
     fig.update_layout(xaxis_rangeslider_visible=False, barmode="overlay",
-                      xaxis3=dict(overlaying="x", side="top", range=[0, (_vmax * 4.5) if _vmax > 0 else 1],
-                                  showgrid=False, showticklabels=False, zeroline=False, fixedrange=True))
+                      **{"xaxis4" if show_rsi else "xaxis3": _ov_axis})
     fig.update_xaxes(rangeselector=_RANGE_BUTTONS, row=1, col=1)
     # y 轴范围：把已画的叠加层一并纳入（否则深档价位带/历史常驻价会被裁出视野=用户说的"不显示"）；
     # 但对极端深档设下限，避免 K 线被过度压扁（叠加层最多把下界压到近端低点的 0.78×）。
@@ -411,6 +439,8 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
     else:
         fig.update_yaxes(range=[_lo * 0.97, _hi * 1.03], row=1, col=1)
     fig.update_yaxes(title_text="量", row=2, col=1)
+    if show_rsi:
+        fig.update_yaxes(title_text="RSI", range=[0, 100], tickvals=[30, 50, 70], fixedrange=True, row=3, col=1)
     return fig
 
 

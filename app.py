@@ -842,7 +842,7 @@ _ETF_SET = {"SPY", "QQQ", "DIA", "IWM", "XLK", "SMH", "SOXX", "XLC", "XLY", "XLF
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
+_ADV_NAMES = ["🎖️ 建仓/撤离作战卡", "🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
               "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
@@ -2198,11 +2198,14 @@ def page_panorama():
     st.write("")
 
     # —— 图层开关：控制 K 线上叠加什么（默认都开；嫌乱可关）——
-    _ovc = st.columns([1.2, 1, 1.2, 2.6])
+    _ovc = st.columns([1.2, 1, 1.2, 1.4, 1.6])
     _show_best = _ovc[0].toggle("🎯 最佳入场区", value=True, key=f"ovbest_{a}",
                                 help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（历史常驻价 + 区间上下沿）")
     _show_zones = _ovc[1].toggle("📊 价位带", value=True, key=f"ovzone_{a}", help="历史回撤价位带（蓝=当前·灰=其它）")
     _show_vp = _ovc[2].toggle("📦 换手位", value=True, key=f"ovvp_{a}", help="POC 最高换手价 / 价值区（橙）")
+    _show_rsi = _ovc[3].toggle("📉 超买超卖", value=False, key=f"ovrsi_{a}",
+                               help="价下加一个 Wilder RSI(14) 振荡子图：>70 超买带(红)、<30 超卖带(绿)、50 中轴。"
+                                    "校准口径——超卖≠买点、超买≠卖点，只标动量极值，须与裁决/价位带合看")
 
     cL, cR = st.columns([3, 2])
     with cL:
@@ -2227,11 +2230,14 @@ def page_panorama():
             st.plotly_chart(
                 ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
                                         show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
+                                        show_rsi=_show_rsi,
                                         title=f"{a} · K线 + 图层", logy=False, best_endorsed=_endorse),
                 use_container_width=True, config=ch.TV_CONFIG)
             st.caption("🖱️ **滚轮缩放·拖动平移·十字光标贴价读数**（双击复位；顶部按钮切时间范围）。"
                        + ("**绿/黄阴影带=🎯推荐最佳入场区(+历史常驻价线)**；" if _endorse else "**灰阴影带=📍历史常驻价(裁决判定暂非买点)**；")
-                       + "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
+                       + "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。"
+                       + ("**下方 RSI 子图：>70 超买带/红、<30 超卖带/绿、50 中轴**——只标动量极值，超卖≠买点、须与裁决合看。" if _show_rsi else "")
+                       + "用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
         except Exception as _ce:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
             st.caption(f"主图降级（{type(_ce).__name__}）。")
@@ -2923,7 +2929,80 @@ def page_industry():
     st.caption("⚠️ 全页为**历史可观测动向 + 历史类比分布**，非预测、不判牛熊、不给点位；新闻/基本面仅供人读、不入量化。")
 
 
+def page_position_card():
+    st.markdown('<div class="hero-title">🎖️ 建仓 / 撤离作战卡</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">把<b>全套回测验证过</b>的逻辑落成一张卡：今天该建多少仓、什么时候撤。'
+                'v3 连续定仓(DSR 0.999)+回撤桶+趋势死亡触发——<b>证伪的逻辑(固定止损/快速二元出场)一律不进</b>。</div>',
+                unsafe_allow_html=True)
+    st.write("")
+    from analysis import position_guidance as pg
+
+    with st.spinner(f"生成 {asset} 作战卡…"):
+        try:
+            g = pg.position_guidance(asset, start=start, end=end, horizon=gl_horizon)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"作战卡生成失败：{type(e).__name__}: {e}")
+            return
+    r, b, x = g["regime"], g["build"], g["exit"]
+    st.info(g["headline"])
+
+    # —— 今日三档暴露 ——
+    st.markdown("##### 📊 今日建议暴露（v3 连续定仓·已验证；非投资建议）")
+    ec = st.columns(3)
+    _pcol = {"conservative": "#00D4FF", "moderate": "#2BE6A8", "aggressive": "#FF9F45"}
+    for i, k in enumerate(["conservative", "moderate", "aggressive"]):
+        ev = g["exposure"][k]
+        ec[i].markdown(stat_card(f"{pg.PROFILE_ZH[k]}档（波动目标 {ev['target_vol']:.0%}）",
+                                 f"{ev['exposure_pct']}%", "建议暴露", _pcol[k]), unsafe_allow_html=True)
+    st.caption(f"当前触发：{x['active_trigger']}")
+    st.write("")
+
+    # —— 暴露历史图（中性档）——
+    hist = g.get("exposure_history")
+    if hist is not None and not hist.empty:
+        st.markdown("##### 📈 历史暴露轨迹（中性档·复核引擎在崩盘年是否真的减仓）")
+        norm = (hist["price"] / hist["price"].iloc[0])
+        chart_df = pd.DataFrame({"价格(归一)": norm, "建议暴露(0-1)": hist["exposure"]})
+        st.line_chart(chart_df, color=["#8A93A6", "#2BE6A8"])
+        st.caption("绿线=v3 建议暴露(0-1)，灰线=价格归一。崩盘段绿线应明显下沉(自动减仓)，平时贴近满仓。")
+    st.write("")
+
+    cL, cR = st.columns(2)
+    with cL:
+        st.markdown(f"##### 🎯 建仓：{b['stance']}　`{b['grade']}`")
+        st.caption(b["why"])
+        bk = b["drawdown_bucket"]
+        if bk.get("available"):
+            tag = "⚠️动量陷阱(超额≤0)" if bk["momentum_trap"] else ("🟡正倾斜·suggestive" if bk["excess"] > 0 else "证据弱")
+            st.markdown(f"- 回撤桶证据（{tag}）：回撤中 {bk['horizon']}日 **超额(vs随机买入) {bk['excess']:+.1%}**，"
+                        f"N独立={bk['n_independent']}")
+            st.caption(f"桶内绝对收益中位 {bk['median']:+.1%}、CI[{bk['ci'][0]:+.1%},{bk['ci'][1]:+.1%}]"
+                       "——此CI是绝对收益非超额，牛股恒正≠择时有优势。")
+        if b["zones"]:
+            st.markdown("- 候选建仓区间（**若到达就行动**，非预测点位）：")
+            for z in b["zones"]:
+                mark = " ✅已到达" if z["reached"] else ""
+                st.markdown(f"    - {z['tier']}（{z['band']}）：≈ **{z['price_low']:.1f}–{z['price_high']:.1f}**，"
+                            f"{z['size_hint']}{mark}")
+            st.caption(b["sizing_rule"] + " " + b["anti_chase"])
+        if b["pead"]:
+            p = b["pead"]
+            st.markdown(f"- 📅 PEAD窗口：上次{'超预期' if p['beat'] else '不及'}(surprise {p['surprise']:+.1f}%)、"
+                        f"距今{p['days_since']:.0f}天，历史同类漂移中位 {p['drift_median']:+.1%}(N={p['n']})")
+    with cR:
+        st.markdown("##### 📉 撤离：触发条件（已验证·崩盘保险口径）")
+        for t in x["triggers"]:
+            st.markdown(f"- {t}")
+        st.warning(x["honesty"])
+
+    st.caption("_" + g["disclaimer"] + "_")
+    st.divider()
+    st.download_button("⬇️ 导出作战卡(Markdown)", pg.format_guidance(g),
+                       file_name=f"{asset}_作战卡_{r['asof']}.md", mime="text/markdown")
+
+
 _ADV_PAGES = {
+    "🎖️ 建仓/撤离作战卡": page_position_card,
     "🏭 行业动向(半导体/科技)": page_industry,
     "🛡️ 稳定配置 & 风险": page_fragility,
     "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,

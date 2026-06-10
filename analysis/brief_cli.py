@@ -22,6 +22,17 @@ def _bucket(x):
                                   "reward_risk", "ci_low", "ci_high", "significant")}
 
 
+def _guidance_card(ticker: str, start: str, horizon: int) -> dict | None:
+    """v3 验证版建仓/撤离作战卡(JSON 友好：剔除 DataFrame)。"""
+    try:
+        from analysis import position_guidance as pg
+        g = pg.position_guidance(ticker.upper(), start=start, horizon=horizon)
+        return {"regime": g["regime"], "exposure": g["exposure"], "build": g["build"],
+                "exit": g["exit"], "headline": g["headline"], "markdown": pg.format_guidance(g)}
+    except Exception:  # noqa: BLE001 —— 作战卡失败不阻断整份简报
+        return None
+
+
 def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool = True) -> dict:
     from analysis import briefing as bf
 
@@ -93,6 +104,7 @@ def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool =
         "news_reason_heuristic": b.get("news_reason"),
         "news_to_read": news_list,
         "operation_playbook": __import__("analysis.playbook", fromlist=["build_playbook"]).build_playbook(b),
+        "position_guidance_card": _guidance_card(ticker, start, horizon),
         "_disclaimer": ("引擎数字/价位档=价格与历史条件分布(校准非预测)；价位档目标/止损=技术位规则推导的风险参考；"
                         "财报要点/新闻=仅供人读、不入量化、含前视。"),
     }
