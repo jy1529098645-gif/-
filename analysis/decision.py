@@ -270,7 +270,7 @@ def holding_advice(card: dict, brief: dict | None = None,
     elif dd > -0.05:
         stance, color = "🟢 持有·让利润跑", "#2BE6A8"
         headline = "接近高位且趋势在：**持有**，用移动止损保护，到减仓区再分段止盈——别因怕回调过早全平。"
-        actions.append("用移动止损(回吐约20%出场，回测验证的出场)让赢家继续跑。")
+        actions.append("用移动止损(回吐约20%出场)让赢家继续跑——锁浮盈的纪律、非择时alpha(固定止损在高波动票上会被甩下车)；真正护回撤靠破200线/宽度→减半仓。")
         actions.append("趋势仍站上200线、未到减仓区 → 持有，别过早全平。")
     elif has_edge and dd <= -0.15 and not trap:
         stance, color = "🟢 持有·可在更深档补", "#2BE6A8"

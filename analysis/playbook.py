@@ -98,7 +98,8 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
     tp_levels.sort(key=lambda x: x[0])  # 价格升序 = 先到先减
     for i, (_, txt) in enumerate(tp_levels):
         pb["if_up"].append(("第一减仓区 " if i == 0 else "下一减仓区 ") + txt)
-    pb["if_up"].append("其余仓位用**移动止损**(回吐约 20% 出场，回测验证的出场)让利润奔跑。")
+    pb["if_up"].append("其余仓位用**移动止损**(回吐约 20% 出场)让利润奔跑——这是**锁浮盈的纪律、不是择时alpha**"
+                       "(回测里固定止损在高波动票上常被甩下车、反拖累夏普；真正护回撤的是下面破200线/宽度→减半仓)。")
     pb["if_up"].append("趋势仍强（站上 MA200）且未到减仓区 → **持有，让赢家跑**，别过早全平。")
 
     # ---------- 跌了（诚实分支）----------
