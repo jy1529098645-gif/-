@@ -40,6 +40,7 @@ _SLIP = float(_CFG["costs"]["slippage"])
 __all__ = [
     "entry_zones", "format_zone_verdict", "best_entry_zone", "best_entry_across_horizons",
     "format_best_entry", "earnings_reaction_stats", "upcoming_events", "ladder_plan_backtest",
+    "entry_miss_risk", "format_miss_risk",
 ]
 
 # 默认回撤带阈值（距前高的深度），相邻两档构成一个价位带；最后一段为 ">最深档"。
@@ -423,6 +424,90 @@ def format_best_entry(bez: dict) -> str:
             f"CI[{ci[0]*100:+.1f}%,{ci[1]*100:+.1f}%]{dsr_s}｜{bez['tier']}")
     tail = "　⚠️ " + " ".join(bez.get("caveats", []))
     return head + body + tail
+
+
+# ===========================================================================
+# 块 1c：踏空风险（"没等到入场点"的机会成本）—— 校准而非预测
+# ===========================================================================
+def entry_miss_risk(price: pd.Series, bez: dict, dd_tol: float = 0.04,
+                    lookback_high: int = 252) -> dict:
+    """量化"死等推荐入场区却踏空"的风险：从今天这种回撤状态出发，历史上推荐档在 horizon 内
+    **被触及的频率** vs **价格直接走高没回该档的频率**，以及没触及时的**平均踏空涨幅(机会成本)**。
+
+    口径：条件门=历史上回撤(距 lookback_high 高点) 接近今日(±dd_tol) 的日子；
+    "触及"=未来 horizon 日内最低价跌到入场带上沿(最先可买处)；无前视(条件只用当日及之前)。
+    返回 {available, reach_prob, miss_prob, missed_oppcost(中位), fwd_median, gap, n, horizon, already_in}。
+    """
+    if not bez or not bez.get("has_zone"):
+        return {"available": False, "reason": "no_zone"}
+    px = price.dropna()
+    cur = float(px.iloc[-1])
+    band = bez.get("price_band") or [None, None]
+    edge = band[1] if band[1] is not None else bez.get("anchor_price")  # 入场带上沿=最先触及处
+    if edge is None or edge != edge or cur <= 0:
+        return {"available": False, "reason": "no_edge"}
+    gap = edge / cur - 1.0                      # 需从现价再跌多少才到带(通常<0)
+    if gap >= -0.005:                           # 现价已在/低于入场带 → 无需等、无踏空风险
+        return {"available": True, "already_in": True, "gap": gap,
+                "horizon": int(bez.get("horizon", 63))}
+    h = int(bez.get("horizon", 63))
+    high = _trailing_high(px, lookback_high)
+    dd = (px / high - 1.0)
+    dd_now = float(dd.iloc[-1])
+    p = px.to_numpy()
+    ddv = dd.to_numpy()
+    mask = (ddv >= dd_now - dd_tol) & (ddv <= dd_now + dd_tol)
+    reached, fwd_missed, fwd_all = [], [], []
+    n_total = len(p)
+    for i in np.where(mask)[0]:
+        if i + h >= n_total or i + 1 > n_total - 1:
+            continue
+        win = p[i + 1:i + h + 1]
+        path_min_ret = win.min() / p[i] - 1.0
+        fwd = p[i + h] / p[i] - 1.0
+        hit = bool(path_min_ret <= gap)        # 跌到入场带上沿
+        reached.append(hit); fwd_all.append(fwd)
+        if not hit:
+            fwd_missed.append(fwd)
+    n = len(reached)
+    if n < 20:
+        return {"available": False, "reason": "low_sample", "n": n}
+    reach_prob = float(np.mean(reached))
+    return {
+        "available": True, "already_in": False, "gap": gap, "horizon": h, "dd_now": dd_now,
+        "n": n, "reach_prob": reach_prob, "miss_prob": 1.0 - reach_prob,
+        "missed_oppcost": float(np.median(fwd_missed)) if fwd_missed else float("nan"),
+        "fwd_median": float(np.median(fwd_all)),
+    }
+
+
+def format_miss_risk(mr: dict) -> str | None:
+    """把踏空风险量化成一句裁决 + Plan B（先建底仓/突破追小仓 的两头不踏空口径）。"""
+    if not mr or not mr.get("available"):
+        return None
+    if mr.get("already_in"):
+        return "✅ **踏空风险**：现价已在/低于推荐入场区——可直接分批，无需死等、无踏空风险。"
+    rp, mp, oc = mr["reach_prob"], mr["miss_prob"], mr.get("missed_oppcost", float("nan"))
+    hm = max(1, round(mr["horizon"] / 21))
+    oc_s = f"{oc:+.0%}" if oc == oc else "—"
+    n = mr["n"]
+    long_h = mr["horizon"] >= 189            # ≥~9个月：长窗里"迟早会跌到"是常态，到达率天然偏高
+    tail = "(N=%d·校准非预测%s%s)" % (
+        n, "·样本偏少低置信" if n < 40 else "",
+        "·长持有窗到达率天然偏高、机会成本含特定regime" if long_h else "")
+    if mp >= 0.6:
+        return (f"⚠️ **踏空风险高**：历史上从今天这状态，推荐档 ~{hm}个月内**仅 {rp:.0%} 情形会到达**；"
+                f"{mp:.0%} 情形价格直接走高、踏空中位 {oc_s}。→ **别全押等深档：现在先建 1/3 底仓，"
+                f"深档来了再加；价格突破/站上 MA50 也追小仓**。{tail}")
+    if mp >= 0.4:
+        return (f"🟡 **踏空风险中**：推荐档 ~{hm}个月内到达概率 {rp:.0%}；没到的 {mp:.0%} 情形踏空中位 {oc_s}。"
+                f"→ **分两半：一半现在/突破确认就进，一半挂深档等**。{tail}")
+    # 到达率高：短窗=性价比高值得等；长窗=别为等一年踏空，重点仍是先建底仓
+    if long_h:
+        return (f"🟡 **要等很久**：推荐档虽 ~{hm}个月内 {rp:.0%} 会到达，但那是**长达 {hm} 个月的等待**——"
+                f"空仓干等的时间成本高。→ **先建 1/3~1/2 底仓在场，深档来了再加**。{tail}")
+    return (f"🟢 **踏空风险低**：历史上从今天这状态，推荐档 ~{hm}个月内 {rp:.0%} 会到达，等的性价比较高；"
+            f"仍建议留小底仓防小概率踏空。{tail}")
 
 
 # ===========================================================================

@@ -131,3 +131,24 @@ def test_defensive_when_no_positive_excess():
     else:
         # 若仍找到正超额档，至少不能是无样本的深档
         assert bez["excess_median"] > 0 and bez["n_days"] >= ec._MIN_N
+
+
+def test_entry_miss_risk_and_format():
+    """踏空风险：构造一段持续上行价格，深档锚点几乎不会被触及→应判'踏空风险高'。"""
+    import numpy as np, pandas as pd
+    from regime import entry_cockpit as ec
+    idx = pd.date_range("2012-01-01", periods=1500, freq="B")
+    px = pd.Series(np.linspace(100, 400, 1500) * (1 + 0.02*np.sin(np.arange(1500)/30)), index=idx)
+    cur = float(px.iloc[-1])
+    bez = {"has_zone": True, "anchor_price": cur*0.80, "price_band": [cur*0.78, cur*0.82],
+           "horizon": 63, "tier": "稳健最佳入场区", "zone_label": "距前高-20%档"}
+    mr = ec.entry_miss_risk(px, bez)
+    assert mr["available"] and not mr.get("already_in")
+    assert 0.0 <= mr["reach_prob"] <= 1.0 and abs(mr["reach_prob"]+mr["miss_prob"]-1.0) < 1e-9
+    assert mr["miss_prob"] > 0.5  # 单边上行，深档难触及
+    line = ec.format_miss_risk(mr)
+    assert "踏空风险" in line and "Plan" not in line  # 句子里有裁决
+    # already-in：锚点在现价之上→无需等
+    bez2 = dict(bez); bez2["price_band"] = [cur*1.0, cur*1.05]; bez2["anchor_price"] = cur*1.02
+    mr2 = ec.entry_miss_risk(px, bez2)
+    assert mr2.get("already_in") and "无踏空风险" in ec.format_miss_risk(mr2)

@@ -69,6 +69,9 @@ def build_playbook(brief: dict, gate: dict | None = None) -> dict:
         size_hint = "高波动(分位 %.0f%%)→先建计划仓位的 1/3 试探，波动回落再补中/重档" % (volp * 100) if high_vol \
             else "可按 浅30%%/中40%%/重30%% 分批落地（指该标的计划仓位，非全部资金）"
         pb["entry"].append("分批落地：" + size_hint + "。")
+        # Plan B（防踏空）：避免"只挂深档、价格直接走高踏空整波"——在场>择时
+        pb["entry"].append("🪂 **防踏空 Plan B**：若价格不回深档、直接走高 → 站上 MA50 / 突破前高确认就**追小仓**，"
+                           "别空仓干等（历史上想等的浅回调多数不来，踏空常比追高更亏）。深档与追势两手都留子弹。")
 
     # ---------- 涨了（减仓位必须按价位从低到高，先到先减）----------
     sc1 = (price * (1 + up_median)) if (up_median == up_median) else None

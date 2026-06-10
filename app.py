@@ -1746,9 +1746,9 @@ def page_panorama():
     with st.expander("ℹ️ 30 秒上手 / 这页怎么看", expanded=False):
         st.markdown(
             "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 入场参考价 + 持有周期。\n"
-            "2. **📋 操作预案**（紧跟其后）= 具体怎么建仓、涨了/跌了/到时间/触发风控 各自怎么操作。\n"
-            "3. **🧭 当前状态** = 证据等级 + 今日价格/趋势/波动 + 未来事件雷达。\n"
-            "4. **🎯 该在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
+            "2. **📋 操作预案 / 📌 已建仓怎么办** = 具体怎么建仓、涨了/跌了/到时间/触发风控；已持仓则守/加/减/离。\n"
+            "3. **🎯 该在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
+            "4. **🧭 当前状态** = 证据等级 + 多周期 + 今日价格/趋势/波动 + 未来事件雷达。\n"
             "5. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
             "> 侧栏 **🧭 风险偏好** 决定稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。"
             "重计算项默认收起、点『▶』才算。一切是历史校准+概率，非买卖指令。")
@@ -1759,6 +1759,31 @@ def page_panorama():
         z = c_zones(a, zstart, end, horizon)
         from data import loader as _ld
         price = _ld.load_prices([a], zstart, end)[a]
+
+    # ===== 💲 现价大字（最显眼）：盘中近实时(≈15min延迟)，开盘每 30 秒自动刷新；仅展示、不入量化 =====
+    _mkt_open_top = is_market_open()
+
+    @st.fragment(run_every=("30s" if _mkt_open_top else None))
+    def _hero_price(ticker=a, fb=b):
+        import datetime as _d2
+        q = c_live_quote(ticker, int(_d2.datetime.now().timestamp() // 30))
+        px = q["price"] if (q.get("ok") and q["price"] == q["price"]) else fb["price"]
+        chg = q.get("change_pct"); chv = q.get("change")
+        if q.get("ok") and chg == chg:
+            col = "#2BE6A8" if chg >= 0 else "#FF5C7A"
+            arr = "▲" if chg >= 0 else "▼"
+            sub = f'<span style="color:{col};font-weight:700">{arr} {chv:+.2f} ({chg:+.2%})</span> · {"🟢 盘中" if _mkt_open_top else "⚪ 休市"}{" · ≈15min延迟" if q.get("delayed") else ""}'
+        else:
+            col = "#E6E9EF"; sub = f'收盘 {fb["date"]} · 休市'
+        st.markdown(
+            f'<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;'
+            f'border-radius:14px;padding:12px 20px;margin:2px 0 10px;background:#ffffff06;border:1px solid #ffffff14">'
+            f'<span style="font-size:1.05rem;color:#8A93A6;font-weight:700">{ticker} 现价</span>'
+            f'<span style="font-size:2.6rem;font-weight:800;color:{col};line-height:1">{px:.2f}</span>'
+            f'<span style="font-size:0.95rem;color:#9aa3b2">{sub}</span>'
+            f'<span style="font-size:0.8rem;color:#6b7385;margin-left:auto">仅展示·不入量化</span>'
+            f'</div>', unsafe_allow_html=True)
+    _hero_price()
 
     # ===== 🎯 决策卡（合成：现在该做什么 / 入场点 / 入场后 / 离场）—— 页面第一眼 =====
     _card = None
@@ -1816,6 +1841,18 @@ def page_panorama():
         elif _enter_ok:
             _mt[1].markdown(stat_card("🎯 入场参考价", "区间分批", "当前无统计稳健点位", "#FFD166"), unsafe_allow_html=True)
             _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方最佳入场区", "#7C5CFC"), unsafe_allow_html=True)
+        # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
+        try:
+            from regime import entry_cockpit as _ecmr
+            _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc))
+            if _mrline:
+                _mrcol = "#FF9F45" if "踏空风险高" in _mrline else (
+                    "#FFD166" if ("踏空风险中" in _mrline or "要等很久" in _mrline) else "#2BE6A8")
+                st.markdown(f'<div style="border-radius:12px;padding:9px 15px;margin:6px 0 2px;'
+                            f'background:{_mrcol}1c;border:1px solid {_mrcol}55;border-left:5px solid {_mrcol};'
+                            f'color:#D2D8E3;font-size:0.84rem">🪂 {_mrline}</div>', unsafe_allow_html=True)
+        except Exception:  # noqa: BLE001
+            pass
         # 入场后 / 离场 一行操作摘要（细节见下方📋操作预案）
         st.markdown(
             f'<div style="border-radius:12px;padding:10px 16px;margin:8px 0 2px;background:#ffffff08;border:1px solid #ffffff14">'
@@ -1907,6 +1944,133 @@ def page_panorama():
                        "价位是「**到了才行动**」的触发区间，非预测、非买卖指令。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
+
+    st.divider()
+    # ---- 该在哪建仓：TradingView K线 + 价位带横线 + 建仓档 ----
+    st.markdown("#### 🎯 该在什么价位/状态建仓")
+    # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
+    horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
+    z = c_zones(a, zstart, end, horizon)
+    if horizon != gl_horizon:
+        st.caption(f"ℹ️ 此持有期（~{int(round(horizon/21))}个月）**仅重算下方价位带 / 状态扫描 / 各价位带明细**；"
+                   f"决策卡 / 操作预案 / 证据等级（页面其余处）用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
+                   "要让全页统一，请改侧栏分析周期。")
+
+    # —— 🎯 最佳入场区 + 锚点价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
+    # 整块容错：任何失败（含云端旧构建/数据缺失）只降级为提示，绝不崩整页。
+    from regime import entry_cockpit as ec
+    try:
+        bez = c_best_entry_scan(a, zstart, end)
+        if bez.get("has_zone"):
+            _band = bez["price_band"]
+            _anc = "触发价" if _band[0] is None else "锚点价"
+            _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
+            _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
+            _hm = int(round(bez.get("horizon", horizon) / 21))
+            _bc = st.columns(4)
+            _d = bez.get("anchor_distance", float("nan"))
+            _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
+                                      f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
+            _bc[1].markdown(stat_card("最佳入场区", _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166"), unsafe_allow_html=True)
+            _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
+                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
+            _ci = bez["ci"]
+            _dsr = bez.get("dsr", float("nan"))
+            _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
+            _bc[3].markdown(stat_card("置信", bez["tier"],
+                                      f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
+                                      _tc, tip="CI"), unsafe_allow_html=True)
+        st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
+        # 各持有期对比（看不同周期的置信与锚点，哪个周期最该信）
+        _scan = bez.get("horizon_scan") or []
+        if _scan:
+            _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
+                      "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
+                      "锚点价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
+                      "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
+                      "有效N": s.get("n_independent", "—"),
+                      "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
+                      "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
+                     for s in _scan]
+            with st.expander("🔭 各持有期对比（自动已选其中置信最高者为上方推荐）"):
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                st.caption("📖 同一只票在不同持有期的入场区/置信不同。工具自动挑 DSR/置信最高的那个周期作为顶部推荐；"
+                           "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
+    except Exception as _e:  # noqa: BLE001
+        st.caption(f"🎯 最佳入场区暂不可用（{type(_e).__name__}）——其余分析不受影响。若刚更新代码，请在 Streamlit 后台 Reboot 清缓存。")
+
+    # 整合：市场环境(脆弱性) + 等/追操作（一行看清"现在该追/等/防守"）
+    try:
+        from analysis import fragility as fg
+        _curfz = c_fragility(zstart, end).get("cur", {})
+        _cd = float(price.iloc[-1] / price.rolling(252, min_periods=120).max().iloc[-1] - 1.0) if len(price) > 120 else 0.0
+        _wc = fg.wait_or_chase(_cd, fragile_now=_curfz.get("fragile", False), is_index=(a in ("SPY", "QQQ", "DIA", "IWM")),
+                               momentum_trap=bool(b.get("momentum_trap")))
+        _mc = st.columns([1, 3])
+        _mc[0].markdown(stat_card("市场环境", _curfz.get("light", "—"),
+                                  f"宽度分位 {_curfz.get('pctile', float('nan')):.0%}" if _curfz.get("pctile") == _curfz.get("pctile") else "—",
+                                  "#FF5C7A" if _curfz.get("fragile") else "#2BE6A8", tip="脆弱"), unsafe_allow_html=True)
+        _mc[1].markdown(f'<div class="verdict">🧭 没到位怎么办（现价距1年高 {_cd:+.1%}）：'
+                        f'<b>{_wc["action"]}</b> — {_wc["detail"]}</div>', unsafe_allow_html=True)
+    except Exception:  # noqa: BLE001
+        pass
+    st.write("")
+
+    # —— 图层开关：控制 K 线上叠加什么（默认都开；嫌乱可关）——
+    _ovc = st.columns([1.2, 1, 1.2, 2.6])
+    _show_best = _ovc[0].toggle("🎯 最佳入场区", value=True, key=f"ovbest_{a}",
+                                help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（锚点价 + 区间上下沿）")
+    _show_zones = _ovc[1].toggle("📊 价位带", value=True, key=f"ovzone_{a}", help="历史回撤价位带（蓝=当前·灰=其它）")
+    _show_vp = _ovc[2].toggle("📦 换手位", value=True, key=f"ovvp_{a}", help="POC 最高换手价 / 价值区（橙）")
+
+    cL, cR = st.columns([3, 2])
+    with cL:
+        # 最佳入场区数据（开关开时才取；失败不影响其它图层）
+        _bz_chart = None
+        if _show_best:
+            try:
+                _bz_chart = c_best_entry_scan(a, zstart, end)
+            except Exception:  # noqa: BLE001
+                _bz_chart = None
+        # 换手位数据（开关开时才取）
+        _vp_chart = None
+        if _show_vp:
+            try:
+                _, _vp_chart = c_volume_profile(a, "2015-01-01", end, 252)
+            except Exception:  # noqa: BLE001
+                _vp_chart = None
+        # Plotly 主图（TradingView 手感：滚轮缩放/拖动平移/十字光标贴价）—— 可靠绘制阴影/横线
+        try:
+            ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
+            _endorse = bool((_card or {}).get("enter_ok", True))   # 与顶部三联卡同步：别建仓时入场区带降级为灰色"参考锚"
+            st.plotly_chart(
+                ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
+                                        show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
+                                        title=f"{a} · K线 + 图层", logy=False, best_endorsed=_endorse),
+                use_container_width=True, config=ch.TV_CONFIG)
+            st.caption("🖱️ **滚轮缩放·拖动平移·十字光标贴价读数**（双击复位；顶部按钮切时间范围）。"
+                       + ("**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；" if _endorse else "**灰阴影带=📍统计参考锚(裁决判定暂非买点)**；")
+                       + "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
+        except Exception as _ce:  # noqa: BLE001
+            st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
+            st.caption(f"主图降级（{type(_ce).__name__}）。")
+    cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
+    from regime import entry_cockpit as ec
+    cur = z[z["is_current"] & z["enough"]] if "is_current" in z.columns else z.iloc[0:0]
+    if not cur.empty:
+        st.markdown(f'<div class="verdict">当前价位带：{ec.format_zone_verdict(cur.iloc[0], horizon)}</div>', unsafe_allow_html=True)
+    if b.get("tranches"):
+        st.markdown("**建仓档（技术位共振 → 盈亏比；非预测点位）**　💡 列名可悬浮看含义")
+        _tdf = pd.DataFrame([{
+            "档": t["tier"], "价位": f"{t['price']:.1f}", "依据": t["what"],
+            "回前高目标": f"{t['target']:.0f} ({t['to_target_pct']:+.0%})",
+            "技术止损": f"{t['stop']:.0f} ({t['to_stop_pct']:+.0%})",
+            "盈亏比": f"{t['rr']:.2f}" if t["rr"] == t["rr"] else "—",
+            "引擎胜率": f"{t['engine_win_rate']:.0%}" if t["engine_win_rate"] == t["engine_win_rate"] else "—",
+        } for t in b["tranches"]])
+        st.dataframe(_tdf, use_container_width=True, hide_index=True, column_config=_col_cfg(_tdf.columns))
+        st.caption("📖 「回前高目标」=前期高点(约52周高)，只用来和技术止损算盈亏比，**非预测目标价**。")
+    st.write("")
 
     st.divider()
     # ========== 🧭 当前状态（证据等级 + 事件雷达 + 今日盘面）==========
@@ -2037,132 +2201,6 @@ def page_panorama():
                              f"分位 {vp_:.0%}" if vp_ == vp_ else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
     if b.get("next_earnings"):
         hc[4].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
-    st.write("")
-
-    # ---- 该在哪建仓：TradingView K线 + 价位带横线 + 建仓档 ----
-    st.markdown("#### 🎯 该在什么价位/状态建仓")
-    # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
-    horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
-    z = c_zones(a, zstart, end, horizon)
-    if horizon != gl_horizon:
-        st.caption(f"ℹ️ 此持有期（~{int(round(horizon/21))}个月）**仅重算下方价位带 / 状态扫描 / 各价位带明细**；"
-                   f"顶部决策卡 / 操作预案 / 证据等级用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
-                   "要让全页统一，请改侧栏分析周期。")
-
-    # —— 🎯 最佳入场区 + 锚点价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
-    # 整块容错：任何失败（含云端旧构建/数据缺失）只降级为提示，绝不崩整页。
-    from regime import entry_cockpit as ec
-    try:
-        bez = c_best_entry_scan(a, zstart, end)
-        if bez.get("has_zone"):
-            _band = bez["price_band"]
-            _anc = "触发价" if _band[0] is None else "锚点价"
-            _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
-            _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
-            _hm = int(round(bez.get("horizon", horizon) / 21))
-            _bc = st.columns(4)
-            _d = bez.get("anchor_distance", float("nan"))
-            _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
-                                      f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
-            _bc[1].markdown(stat_card("最佳入场区", _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166"), unsafe_allow_html=True)
-            _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
-                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
-            _ci = bez["ci"]
-            _dsr = bez.get("dsr", float("nan"))
-            _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
-            _bc[3].markdown(stat_card("置信", bez["tier"],
-                                      f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
-                                      _tc, tip="CI"), unsafe_allow_html=True)
-        st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-        # 各持有期对比（看不同周期的置信与锚点，哪个周期最该信）
-        _scan = bez.get("horizon_scan") or []
-        if _scan:
-            _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
-                      "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
-                      "锚点价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
-                      "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
-                      "有效N": s.get("n_independent", "—"),
-                      "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
-                      "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
-                     for s in _scan]
-            with st.expander("🔭 各持有期对比（自动已选其中置信最高者为上方推荐）"):
-                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
-                st.caption("📖 同一只票在不同持有期的入场区/置信不同。工具自动挑 DSR/置信最高的那个周期作为顶部推荐；"
-                           "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
-    except Exception as _e:  # noqa: BLE001
-        st.caption(f"🎯 最佳入场区暂不可用（{type(_e).__name__}）——其余分析不受影响。若刚更新代码，请在 Streamlit 后台 Reboot 清缓存。")
-
-    # 整合：市场环境(脆弱性) + 等/追操作（一行看清"现在该追/等/防守"）
-    try:
-        from analysis import fragility as fg
-        _curfz = c_fragility(zstart, end).get("cur", {})
-        _cd = float(price.iloc[-1] / price.rolling(252, min_periods=120).max().iloc[-1] - 1.0) if len(price) > 120 else 0.0
-        _wc = fg.wait_or_chase(_cd, fragile_now=_curfz.get("fragile", False), is_index=(a in ("SPY", "QQQ", "DIA", "IWM")),
-                               momentum_trap=bool(b.get("momentum_trap")))
-        _mc = st.columns([1, 3])
-        _mc[0].markdown(stat_card("市场环境", _curfz.get("light", "—"),
-                                  f"宽度分位 {_curfz.get('pctile', float('nan')):.0%}" if _curfz.get("pctile") == _curfz.get("pctile") else "—",
-                                  "#FF5C7A" if _curfz.get("fragile") else "#2BE6A8", tip="脆弱"), unsafe_allow_html=True)
-        _mc[1].markdown(f'<div class="verdict">🧭 没到位怎么办（现价距1年高 {_cd:+.1%}）：'
-                        f'<b>{_wc["action"]}</b> — {_wc["detail"]}</div>', unsafe_allow_html=True)
-    except Exception:  # noqa: BLE001
-        pass
-    st.write("")
-
-    # —— 图层开关：控制 K 线上叠加什么（默认都开；嫌乱可关）——
-    _ovc = st.columns([1.2, 1, 1.2, 2.6])
-    _show_best = _ovc[0].toggle("🎯 最佳入场区", value=True, key=f"ovbest_{a}",
-                                help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（锚点价 + 区间上下沿）")
-    _show_zones = _ovc[1].toggle("📊 价位带", value=True, key=f"ovzone_{a}", help="历史回撤价位带（蓝=当前·灰=其它）")
-    _show_vp = _ovc[2].toggle("📦 换手位", value=True, key=f"ovvp_{a}", help="POC 最高换手价 / 价值区（橙）")
-
-    cL, cR = st.columns([3, 2])
-    with cL:
-        # 最佳入场区数据（开关开时才取；失败不影响其它图层）
-        _bz_chart = None
-        if _show_best:
-            try:
-                _bz_chart = c_best_entry_scan(a, zstart, end)
-            except Exception:  # noqa: BLE001
-                _bz_chart = None
-        # 换手位数据（开关开时才取）
-        _vp_chart = None
-        if _show_vp:
-            try:
-                _, _vp_chart = c_volume_profile(a, "2015-01-01", end, 252)
-            except Exception:  # noqa: BLE001
-                _vp_chart = None
-        # Plotly 主图（TradingView 手感：滚轮缩放/拖动平移/十字光标贴价）—— 可靠绘制阴影/横线
-        try:
-            ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
-            _endorse = bool((_card or {}).get("enter_ok", True))   # 与顶部三联卡同步：别建仓时入场区带降级为灰色"参考锚"
-            st.plotly_chart(
-                ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
-                                        show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
-                                        title=f"{a} · K线 + 图层", logy=False, best_endorsed=_endorse),
-                use_container_width=True, config=ch.TV_CONFIG)
-            st.caption("🖱️ **滚轮缩放·拖动平移·十字光标贴价读数**（双击复位；顶部按钮切时间范围）。"
-                       + ("**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；" if _endorse else "**灰阴影带=📍统计参考锚(裁决判定暂非买点)**；")
-                       + "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
-        except Exception as _ce:  # noqa: BLE001
-            st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
-            st.caption(f"主图降级（{type(_ce).__name__}）。")
-    cR.plotly_chart(ch.entry_zone_bars(z, horizon), use_container_width=True)
-    from regime import entry_cockpit as ec
-    cur = z[z["is_current"] & z["enough"]] if "is_current" in z.columns else z.iloc[0:0]
-    if not cur.empty:
-        st.markdown(f'<div class="verdict">当前价位带：{ec.format_zone_verdict(cur.iloc[0], horizon)}</div>', unsafe_allow_html=True)
-    if b.get("tranches"):
-        st.markdown("**建仓档（技术位共振 → 盈亏比；非预测点位）**　💡 列名可悬浮看含义")
-        _tdf = pd.DataFrame([{
-            "档": t["tier"], "价位": f"{t['price']:.1f}", "依据": t["what"],
-            "回前高目标": f"{t['target']:.0f} ({t['to_target_pct']:+.0%})",
-            "技术止损": f"{t['stop']:.0f} ({t['to_stop_pct']:+.0%})",
-            "盈亏比": f"{t['rr']:.2f}" if t["rr"] == t["rr"] else "—",
-            "引擎胜率": f"{t['engine_win_rate']:.0%}" if t["engine_win_rate"] == t["engine_win_rate"] else "—",
-        } for t in b["tranches"]])
-        st.dataframe(_tdf, use_container_width=True, hide_index=True, column_config=_col_cfg(_tdf.columns))
-        st.caption("📖 「回前高目标」=前期高点(约52周高)，只用来和技术止损算盈亏比，**非预测目标价**。")
     st.write("")
 
     # ========== 第四区：深入分析（全部收进 Tab，保持主区简洁）==========
