@@ -1849,9 +1849,10 @@ def page_panorama():
             _mt[1].markdown(stat_card("🎯 入场参考价", "区间分批", "当前无统计稳健点位", "#FFD166"), unsafe_allow_html=True)
             _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方最佳入场区", "#7C5CFC"), unsafe_allow_html=True)
         # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
+        # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
         try:
             from regime import entry_cockpit as _ecmr
-            _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc))
+            _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc)) if _enter_ok else None
             if _mrline:
                 _mrcol = "#FF9F45" if "踏空风险高" in _mrline else (
                     "#FFD166" if ("踏空风险中" in _mrline or "要等很久" in _mrline) else "#2BE6A8")
@@ -1924,7 +1925,8 @@ def page_panorama():
 
     # ========== 📋 操作预案（紧跟行动面板：具体怎么建仓 · 涨了/跌了/到时间/风控）==========
     from analysis.playbook import build_playbook
-    pbk = build_playbook(b)
+    _eok = bool(_card.get("enter_ok", True)) if _card else True   # 与决策卡同口径：别建仓时预案转防守
+    pbk = build_playbook(b, enter_ok=_eok)
     st.markdown("#### 📋 操作预案（具体怎么操作）")
 
     def _pcard(col, title, accent, items):
@@ -2447,6 +2449,7 @@ def page_panorama():
     from analysis import briefing as bf
     try:
         b["regime_path"] = c_regime_path(a, zstart, end)   # 与页面显示同源，报告含趋势全程分布
+        b["enter_ok"] = bool(_card.get("enter_ok", True)) if _card else True  # 报告里的预案也随裁决转防守
     except Exception:  # noqa: BLE001
         pass
     md = bf.render_markdown([b], bf.auto_weights([b]), horizon)

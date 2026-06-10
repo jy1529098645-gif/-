@@ -147,3 +147,22 @@ def test_exit_warning_levels():
     # 字段完整
     for k in ("level", "color", "action", "signals", "dist_ma200", "vol_pctile", "overext_pctile"):
         assert k in ew
+
+
+def test_playbook_respects_enter_ok():
+    """enter_ok=False → 建仓节转防守(不出现'分批落地'/'追小仓')，与决策卡同口径。"""
+    from analysis import playbook as pb
+    brief = {"ticker": "X", "price": 100.0, "vol_percentile": 0.5, "horizon": 63,
+             "momentum_trap": False, "engine_state": {"median": 0.05, "excess": 0.03},
+             "engine_value": {"median": 0.04, "excess": 0.02},
+             "tranches": [{"tier": "浅", "price": 95, "target": 120, "stop": 88, "rr": 3.0,
+                           "to_target_pct": 0.26, "to_stop_pct": -0.07, "what": "MA50"}]}
+    ok = pb.build_playbook(brief, enter_ok=True)
+    no = pb.build_playbook(brief, enter_ok=False)
+    joined_ok = " ".join(ok["entry"]); joined_no = " ".join(no["entry"])
+    assert "分批落地" in joined_ok and "防踏空 Plan B" in joined_ok
+    assert "分批落地" not in joined_no and "追小仓" not in joined_no
+    assert any("不建议主动建新仓" in e for e in no["entry"])
+    assert "不建议建新仓" in no["headline"]
+    # 跌了不主动加仓
+    assert any("不主动加仓" in d for d in no["if_down"])

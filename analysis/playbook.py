@@ -34,13 +34,20 @@ def conviction_tier(brief: dict, gate: dict | None) -> tuple[str, str]:
     return "⚪ 低/中性", "引擎未给出显著正倾斜，按低把握处理。"
 
 
-def build_playbook(brief: dict, gate: dict | None = None) -> dict:
-    """生成结构化操作预案。返回各分节 + steps 文本列表。"""
+def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True) -> dict:
+    """生成结构化操作预案。返回各分节 + steps 文本列表。
+
+    enter_ok=False（决策卡判定"暂不建仓"：动量陷阱/弱证据/半导体浅中跌无edge/杠杆回撤/无稳健入场区）
+    时，建仓节转防守口径、跌了不补、不给"追小仓"Plan B——与决策卡同口径，杜绝"裁决别接、预案却分批落地"。
+    """
     tk = brief.get("ticker", "")
     price = brief.get("price", float("nan"))
     volp = brief.get("vol_percentile", float("nan"))
     horizon = brief.get("horizon", 63)
     trap = bool(brief.get("momentum_trap"))
+    # enter_ok 优先用显式入参；未传时回退到 brief 里(若 panorama 已附)；默认 True
+    if "enter_ok" in brief and enter_ok is True:
+        enter_ok = bool(brief.get("enter_ok"))
     tranches = brief.get("tranches", []) or []
     es = brief.get("engine_state") or {}
     ev = brief.get("engine_value") or {}
@@ -65,6 +72,10 @@ def build_playbook(brief: dict, gate: dict | None = None) -> dict:
         pb["entry"].append("⚠️ 动量陷阱：**不主动在回撤中建仓**。等趋势确认（站回 MA50/MA100）或"
                            "波动分位回落后，**只在浅档轻仓试探**，不要重仓抢跌。")
         pb["entry"].append("建议起始仓位 ≤ 计划仓位的 1/3，且每加一档都要同时上移整体止损。")
+    elif not enter_ok:
+        pb["entry"].append("⚠️ 裁决当前**不建议主动建新仓**（见决策卡：如半导体浅/中跌无edge、弱证据、杠杆回撤、"
+                           "无稳健入场区）。上列价位仅作**参考**；要建仓请按裁决条件（等更深回撤 / 趋势或宽度确认），"
+                           "已持仓者直接看『📌 已建仓怎么办』。")
     else:
         size_hint = "高波动(分位 %.0f%%)→先建计划仓位的 1/3 试探，波动回落再补中/重档" % (volp * 100) if high_vol \
             else "可按 浅30%%/中40%%/重30%% 分批落地（指该标的计划仓位，非全部资金）"
@@ -94,6 +105,8 @@ def build_playbook(brief: dict, gate: dict | None = None) -> dict:
         pb["if_down"].append("**不要越跌越补**——历史上该票逢跌买无统计优势(回撤桶超额≤0)。")
         if tranches:
             pb["if_down"].append(f"跌破 浅档止损 {tranches[0]['stop']:.0f} 即减/离场，**认错优先于摊平**。")
+    elif not enter_ok:
+        pb["if_down"].append("裁决不建议建仓 → 跌了**不主动加仓**；已持仓按止损纪律走，要参与等裁决转正(更深档/趋势确认)。")
     else:
         if (es.get("excess", 0) > 0 or ev.get("excess", 0) > 0):
             mids = [t for t in tranches[1:]]
@@ -126,6 +139,9 @@ def build_playbook(brief: dict, gate: dict | None = None) -> dict:
     # ---------- 一句话总纲 ----------
     if trap:
         pb["headline"] = (f"{tier}：别抢跌。等确认再轻仓，跌破浅档止损就走——这是动量票，摊平是陷阱。")
+    elif not enter_ok:
+        pb["headline"] = (f"{tier}：裁决当前**不建议建新仓**(见决策卡)——以观察/持仓管理为主，"
+                          "要参与等裁决转正(更深档或趋势/宽度确认)；已持仓走撤离/已建仓口径。")
     elif gate and not gate.get("overall"):
         pb["headline"] = (f"{tier}：规则未过验收闸门，按**低把握**操作——轻仓、严格止损、不重仓不摊平。")
     else:
