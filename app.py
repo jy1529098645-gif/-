@@ -842,7 +842,7 @@ _ETF_SET = {"SPY", "QQQ", "DIA", "IWM", "XLK", "SMH", "SOXX", "XLC", "XLY", "XLF
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 _VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🎖️ 建仓/撤离作战卡", "🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
+_ADV_NAMES = ["🎖️ 建仓/撤离作战卡", "🏆 最推荐买入(选股榜)", "🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
               "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
@@ -3004,8 +3004,75 @@ def page_position_card():
                        file_name=f"{asset}_作战卡_{r['asof']}.md", mime="text/markdown")
 
 
+def page_stock_ranking():
+    st.markdown('<div class="hero-title">🏆 最推荐买入 · 选股榜</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">多因子横截面综合评分(风险调整动量+趋势健康+相对强度)→排名，'
+                '<b>带 Alphalens 口径的 IC 验证</b>。诚实：科技窄池横截面预测力弱——这是<b>健康趋势票筛选器</b>，'
+                '不是"top1会跑赢"的预测。</div>', unsafe_allow_html=True)
+    st.write("")
+    from analysis import stock_ranking as sr
+
+    _groups = {"科技+半导体(默认)": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "QCOM", "MU", "TXN", "INTC", "AMAT",
+                                  "LRCX", "KLAC", "ADI", "MRVL", "ON", "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+                                  "TSLA", "ORCL", "CRM", "ADBE", "NFLX"],
+               "纯半导体": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "QCOM", "MU", "TXN", "INTC", "AMAT", "LRCX",
+                          "KLAC", "ADI", "MRVL", "ON"],
+               "Mag7+": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "NFLX"]}
+    gsel = st.selectbox("票池", list(_groups), index=0)
+    tickers = _groups[gsel]
+
+    if st.button("🚀 生成选股榜 + IC 验证", use_container_width=True):
+        st.session_state["_rank_go"] = True
+    if not st.session_state.get("_rank_go"):
+        st.info("选好票池 → 点🚀。约 10–20s(含 IC 验证 + 前名 v3 暴露)。")
+        return
+
+    with st.spinner("计算多因子综合分 + IC 验证…"):
+        res = sr.rank_stocks(tickers, start=str(start))
+        val = sr.validate_ranking(tickers, start="2013-01-01")
+        verd = sr.ranking_verdict(val)
+
+    # —— 诚实裁决横幅 ——
+    if verd["grade"].startswith("🔴"):
+        st.error(f"**{verd['grade']}**　{verd['verdict']}")
+    elif verd["grade"].startswith("🟡"):
+        st.warning(f"**{verd['grade']}**　{verd['verdict']}")
+    else:
+        st.success(f"**{verd['grade']}**　{verd['verdict']}")
+    st.caption("✅ 正确用法：" + verd["usage"])
+    st.write("")
+
+    # —— 排名表 ——
+    st.markdown(f"##### 🏆 选股榜（{res['asof']}）")
+    tab = res["table"].copy()
+    show = tab[["排名", "票", "综合分", "风险调整动量z", "趋势健康z", "相对强度z", "站上200线", "v3中性暴露%", "tier"]]
+    st.dataframe(show, use_container_width=True, hide_index=True,
+                 column_config={"综合分": st.column_config.NumberColumn(format="%+.2f"),
+                                "v3中性暴露%": st.column_config.NumberColumn("v3暴露%", format="%d%%")})
+    st.caption(res["note"])
+
+    # —— IC 验证表 ——
+    st.markdown("##### 🔬 IC 验证（Alphalens 口径·诚实检验预测力）")
+    vr = []
+    for h in (21, 63):
+        d = val[h]
+        vr.append({"持有期": f"{h}日", "RankIC均": d["ic_mean"], "ICIR": d["icir"],
+                   "IC>0占比": d["ic_positive_rate"], "分位价差(top-bot)": d["quantile_spread_mean"],
+                   "安慰剂IC": d["placebo_ic_mean"], "期数N": d["n_periods"]})
+    st.dataframe(pd.DataFrame(vr), use_container_width=True, hide_index=True,
+                 column_config={"RankIC均": st.column_config.NumberColumn(format="%+.3f"),
+                                "ICIR": st.column_config.NumberColumn(format="%.2f"),
+                                "IC>0占比": st.column_config.NumberColumn(format="%.0f%%"),
+                                "分位价差(top-bot)": st.column_config.NumberColumn(format="%+.2f%%"),
+                                "安慰剂IC": st.column_config.NumberColumn(format="%+.3f")})
+    st.caption(val["_note"])
+    st.download_button("⬇️ 导出选股榜(Markdown)", sr.format_ranking(res, top_n=len(tab)),
+                       file_name=f"选股榜_{gsel}_{res['asof']}.md", mime="text/markdown")
+
+
 _ADV_PAGES = {
     "🎖️ 建仓/撤离作战卡": page_position_card,
+    "🏆 最推荐买入(选股榜)": page_stock_ranking,
     "🏭 行业动向(半导体/科技)": page_industry,
     "🛡️ 稳定配置 & 风险": page_fragility,
     "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,
