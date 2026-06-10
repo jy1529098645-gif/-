@@ -2068,6 +2068,27 @@ def page_panorama():
     st.divider()
     # ---- 该在哪建仓：TradingView K线 + 价位带横线 + 建仓档 ----
     st.markdown("#### 🎯 该在什么价位/状态建仓")
+    # 解释"最佳入场区(相对排名) vs 是否建仓(绝对闸门)"的关系——直接回答"到了最佳区为何仍不建议"
+    _eok2 = _card.get("enter_ok", True) if _card else True
+    _ov2 = _card.get("engine_override") if _card else None
+    _why = {"momentum_trap": "**动量陷阱**——当前回撤桶历史超额≤0，逢跌买这只票整体不优于随机进场",
+            "grade_F": "**证据等级 F**——该状态历史显著吃亏",
+            "no_robust_zone": "各回撤档历史上都没跑赢无条件基准"}.get(_ov2)
+    if not _why and _card:
+        if "半导体" in _card.get("state", ""): _why = "**半导体浅/中跌(10–20%)历史无edge甚至为负**"
+        elif "杠杆" in _card.get("state", ""): _why = "**3x杠杆ETF回撤里不宜建标准仓**(复利衰减)"
+    if not _eok2:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:#FF9F451c;border:1px solid #FF9F4555;border-left:6px solid #FF9F45;color:#D2D8E3;font-size:0.86rem">'
+            '⚠️ <b>为什么价格到了"最佳入场区"却仍不建议建仓？</b> 因为这两件事用的是<b>不同标尺</b>：'
+            '「最佳入场区」是该票<b>各回撤档里相对最优的那一档（相对排名）</b>，不等于"绝对值得买"；'
+            f'而是否建仓看的是更高的闸门——本票当前{_why or "证据不足"}，<b>整体没有统计优势</b>，'
+            '故即便价格到了那个相对最优档，也<b>暂不建仓</b>。下面的锚点/区间仅供你了解"历史相对最优档在哪"，'
+            '按裁决条件（等更深回撤 / 趋势或宽度确认）再说。</div>', unsafe_allow_html=True)
+    else:
+        st.caption("📖 「最佳入场区」=该票各回撤档里历史远期收益**相对最优**的一档（跨档按 CI 下界择优、已做多重检验折扣）；"
+                   "锚点=该档历史价格中位。它是**相对排名**，仍需结合上方裁决与置信度。")
     # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
     horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
     z = c_zones(a, zstart, end, horizon)
@@ -2087,11 +2108,15 @@ def page_panorama():
             _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
             _tc = {"稳健最佳入场区": "#2BE6A8", "最佳入场区(样本偏少)": "#FFD166"}.get(bez["tier"], "#FF9F45")
             _hm = int(round(bez.get("horizon", horizon) / 21))
+            if not _eok2:
+                _tc = "#8A93A6"   # 裁决暂不建仓时，统一灰化为"相对参考"，不发绿/黄"可买"信号
+            _t0 = (f"📍 相对参考{_anc}（暂非买点）" if not _eok2 else f"🎯 {_anc}")
+            _t1 = ("📍 相对最优档（暂非买点）" if not _eok2 else "最佳入场区")
             _bc = st.columns(4)
             _d = bez.get("anchor_distance", float("nan"))
-            _bc[0].markdown(stat_card(f"🎯 {_anc}", f"{bez['anchor_price']:.1f}",
+            _bc[0].markdown(stat_card(_t0, f"{bez['anchor_price']:.1f}",
                                       f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
-            _bc[1].markdown(stat_card("最佳入场区", _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166"), unsafe_allow_html=True)
+            _bc[1].markdown(stat_card(_t1, _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166" if _eok2 else "#8A93A6"), unsafe_allow_html=True)
             _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
                                       f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
             _ci = bez["ci"]
