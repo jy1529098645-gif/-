@@ -37,7 +37,7 @@ def build(ticker: str, horizon: int = 63, broad: bool = False, with_news: bool =
             news_list.append({"date": str(r.get("date")), "title": r.get("title"),
                               "provider": r.get("provider"), "url": r.get("url")})
 
-    # 最佳入场区 + 锚点价（校准式，含置信分层）
+    # 最佳入场区 + 历史常驻价（校准式，含置信分层）
     best_entry = None
     try:
         from data import loader as _ld

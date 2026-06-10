@@ -1782,9 +1782,9 @@ def page_panorama():
                "只校准不预测，给的是历史分布+区间+概率，**非目标价/买卖指令**。卡片标题/列名可**鼠标悬浮**看名词含义。")
     with st.expander("ℹ️ 30 秒上手 / 这页怎么看", expanded=False):
         st.markdown(
-            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 入场参考价 + 持有周期。\n"
+            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 历史常驻价 + 持有周期。\n"
             "2. **📋 操作预案 / 📌 已建仓怎么办** = 具体怎么建仓、涨了/跌了/到时间/触发风控；已持仓则守/加/减/离。\n"
-            "3. **🎯 该在哪建仓** = 最佳入场区(锚点价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
+            "3. **🎯 该在哪建仓** = 最佳入场区(历史常驻价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
             "4. **🧭 当前状态** = 证据等级 + 多周期 + 今日价格/趋势/波动 + 未来事件雷达。\n"
             "5. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
             "> 侧栏 **🧭 风险偏好** 决定稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。"
@@ -1895,10 +1895,10 @@ def page_panorama():
                          if _posnow is not None else "引擎不建议在此建新仓（见上方裁决）；已持仓者见下方『已建仓』")
                 _mt[0].markdown(stat_card("📊 现在该建多少新仓", "暂不建仓", _sub0, "#FF9F45"), unsafe_allow_html=True)
                 if _e and _e.get("anchor") == _e.get("anchor"):
-                    _mt[1].markdown(stat_card("🎯 统计参考锚（暂非买点）", f"{_e['anchor']:.1f}",
+                    _mt[1].markdown(stat_card("🎯 历史常驻价（暂非买点）", f"{_e['anchor']:.1f}",
                                               f"{_e['zone']}·{'稳健档但裁决未背书' if _e.get('confident') else '低置信·引擎未背书此处建仓'}", "#8A93A6"), unsafe_allow_html=True)
                 else:
-                    _mt[1].markdown(stat_card("🎯 统计参考锚", "无", "当前无统计稳健点位", "#8A93A6"), unsafe_allow_html=True)
+                    _mt[1].markdown(stat_card("🎯 历史常驻价", "无", "当前无统计稳健点位", "#8A93A6"), unsafe_allow_html=True)
                 _mt[2].markdown(stat_card("⏳ 触发条件", "等更深/确认", "见上方裁决：等深跌或趋势/宽度确认再议", "#8A93A6"), unsafe_allow_html=True)
             elif _posnow is not None:
                 _pos_col = "#2BE6A8" if _posnow >= 0.66 else ("#FFD166" if _posnow >= 0.33 else "#FF9F45")
@@ -1909,12 +1909,12 @@ def page_panorama():
             if _enter_ok and _e and _e.get("anchor") == _e.get("anchor"):
                 _conf_e = _e.get("confident")
                 _ecol = "#2BE6A8" if _conf_e else "#FFD166"
-                _et = "✅ 入场参考价(已过闸门)" if _conf_e else "🎯 候选入场价(低置信)"
+                _et = "✅ 入场参考价(已过闸门)" if _conf_e else "🟢 可分批建仓价(低置信)"
                 _mt[1].markdown(stat_card(_et, f"{_e['anchor']:.1f}",
-                                          f"{_e['zone']}·{'✅稳健可执行' if _conf_e else '低置信·分批参考'}", _ecol), unsafe_allow_html=True)
+                                          f"{_e['zone']}·{'✅稳健可执行' if _conf_e else '历史正期望·分批进'}", _ecol), unsafe_allow_html=True)
                 _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", "#7C5CFC"), unsafe_allow_html=True)
             elif _enter_ok:
-                _mt[1].markdown(stat_card("🎯 候选入场区", "区间分批", "当前无统计稳健点位·按区间分批", "#FFD166"), unsafe_allow_html=True)
+                _mt[1].markdown(stat_card("🟢 可分批建仓", "区间分批", "历史正期望·按区间分批进", "#34C779"), unsafe_allow_html=True)
                 _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方候选执行区间", "#7C5CFC"), unsafe_allow_html=True)
         # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
         # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
@@ -1939,10 +1939,10 @@ def page_panorama():
         if _is_holder:
             st.caption("📦 已持仓口径：上方=撤离状态 / 距撤离线 / 现在该怎么办；详细守/加/减/离 + 触发式止盈止损见下方『📌 已经持有』。")
         elif _enter_ok:
-            st.caption("📍 说明：上方『入场参考价』=**统计最佳入场区锚点**（历史远期收益最佳处）；下方『📋操作预案/建仓档』=**技术支撑位**"
+            st.caption("📍 说明：上方『历史常驻价』=**统计最佳入场区里历史价格最常驻处**（远期收益最佳档）；下方『📋操作预案/建仓档』=**技术支撑位**"
                        "（MA/POC 等）用于分批。两者是不同视角、互为补充，合起来当一个入场区间用，不是互相矛盾。")
         else:
-            st.caption("📍 说明：裁决判定**当前不是建新仓的统计买点**，故上方不给建仓仓位/入场价，只留『统计参考锚』供你了解历史最优档位置。"
+            st.caption("📍 说明：裁决判定**当前不是建新仓的统计买点**，故上方不给建仓仓位/入场价，只留『历史常驻价』供你了解历史最优档位置。"
                        "想建仓请按裁决条件（等更深回撤 / 趋势或宽度确认）；已持仓者直接看下方『📌 已建仓怎么办』。")
         # 桥接两个仓位口径：杜绝"现在该持多少仓 75%"与下方"证据等级封顶 20%"看似打架
         try:
@@ -1971,7 +1971,7 @@ def page_panorama():
                 "decision_state": _card.get("state"), "decision_action": _card.get("action"),
                 "rec_position": (round(_posnow, 3) if _posnow is not None else None),
                 "entry_anchor": (_card.get("entry") or {}).get("anchor")})
-            st.caption("🗂️ 已自动留痕今日指导（决策状态/建议仓位/入场锚点/引擎预期）→ "
+            st.caption("🗂️ 已自动留痕今日指导（决策状态/建议仓位/历史常驻价/引擎预期）→ "
                        "「📂深入分析 → 🧰工具&校准 → 🎯校准追踪」看历史有效性。" if _logged
                        else "🗂️ 今日该标的指导已留痕（去重）。")
         except Exception:  # noqa: BLE001
@@ -2085,7 +2085,7 @@ def page_panorama():
         if "半导体" in _card.get("state", ""): _why = "**半导体浅/中跌(10–20%)历史无edge甚至为负**"
         elif "杠杆" in _card.get("state", ""): _why = "**3x杠杆ETF回撤里不宜建标准仓**(复利衰减)"
     # 统一原则：下面这些价位是"候选执行区间"，非买点；只有总裁决(闸门)通过才升级为"建仓区"
-    _principle = ('下面的锚点/价位带/档位是 <b>候选执行区间</b>（历史相对较优档 / 技术共振支撑）——'
+    _principle = ('下面的历史常驻价/价位带/档位是 <b>候选执行区间</b>（历史相对较优档 / 技术共振支撑）——'
                   '<b>价格"到了"不等于"买"</b>：真正决定能不能买的是上方<b>总裁决（统计闸门）</b>；'
                   '过了裁决，这些才升级为可分批执行的"建仓区"。')
     if not _eok2:
@@ -2100,13 +2100,18 @@ def page_panorama():
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
             'background:#2BE6A81c;border:1px solid #2BE6A855;border-left:6px solid #2BE6A8;color:#D2D8E3;font-size:0.86rem">'
             f'✅ <b>当前总裁决：可建仓 · 且有"稳健入场区"</b>（过了 DSR≥0.95 / CI下界>基准 等闸门）。{_principle} '
-            '这是少数闸门全过的情况，下面价位可<b>按档分批执行</b>（仍按置信度控仓）。</div>', unsafe_allow_html=True)
+            '这是<b>极少数</b>闸门全过的情况（回测显示个股/科技半导体历史上几乎不出现），'
+            '下面价位可<b>按档分批执行</b>（仍按置信度控仓）。</div>', unsafe_allow_html=True)
     else:
         st.markdown(
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:#FFD16614;border:1px solid #FFD16655;border-left:6px solid #FFD166;color:#D2D8E3;font-size:0.86rem">'
-            f'🟡 <b>当前总裁决：可分批，但入场区为低置信</b>（未过 DSR≥0.95 / CI下界>基准 等闸门）。{_principle} '
-            '故按"<b>区间分批 + 认低置信</b>"执行，别当精准买点。</div>', unsafe_allow_html=True)
+            'background:#2BE6A814;border:1px solid #34C77955;border-left:6px solid #34C779;color:#D2D8E3;font-size:0.86rem">'
+            '🟢 <b>当前总裁决：可分批建仓</b>（温和正期望 · 择时低置信）。'
+            '回测（<b>PIT 无前视</b>）显示这类「正期望回撤档」分批进<b>历史上跑赢「随便买」</b>'
+            '（浅跌 0–10% 档尤佳、胜率约 70–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
+            '<b>这就是常态可买信号</b>——按「<b>分批 + 控仓 + 认尾部</b>」执行，'
+            '别空等几乎从不出现的「稳健档」（严口径下个股历史上基本不触发）。'
+            '下方 K 线价位带是技术共振支撑，用于<b>分档挂单</b>。</div>', unsafe_allow_html=True)
     # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
     horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
     z = c_zones(a, zstart, end, horizon)
@@ -2115,14 +2120,14 @@ def page_panorama():
                    f"决策卡 / 操作预案 / 证据等级（页面其余处）用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
                    "要让全页统一，请改侧栏分析周期。")
 
-    # —— 🎯 最佳入场区 + 锚点价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
+    # —— 🎯 最佳入场区 + 历史常驻价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
     # 整块容错：任何失败（含云端旧构建/数据缺失）只降级为提示，绝不崩整页。
     from regime import entry_cockpit as ec
     try:
         bez = c_best_entry_scan(a, zstart, end)
         if bez.get("has_zone"):
             _band = bez["price_band"]
-            _anc = "触发价" if _band[0] is None else "锚点价"
+            _anc = "触发价" if _band[0] is None else "历史常驻价"
             _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
             _hm = int(round(bez.get("horizon", horizon) / 21))
             # 命名随"闸门状态"升降，杜绝把候选区间当买点：
@@ -2131,7 +2136,7 @@ def page_panorama():
             elif _conf2:
                 _tc = "#2BE6A8"; _t0 = f"✅ 入场区·{_anc}（可执行）"; _t1 = "✅ 稳健入场区（已过闸门）"
             else:
-                _tc = "#FFD166"; _t0 = f"🎯 候选入场区·{_anc}（低置信·参考）"; _t1 = "🎯 候选入场区（低置信）"
+                _tc = "#34C779"; _t0 = f"🟢 可分批建仓·{_anc}（低置信·正期望）"; _t1 = "🟢 可分批建仓区（低置信）"
             _bc = st.columns(4)
             _d = bez.get("anchor_distance", float("nan"))
             _bc[0].markdown(stat_card(_t0, f"{bez['anchor_price']:.1f}",
@@ -2146,12 +2151,12 @@ def page_panorama():
                                       f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
                                       _tc, tip="CI"), unsafe_allow_html=True)
         st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-        # 各持有期对比（看不同周期的置信与锚点，哪个周期最该信）
+        # 各持有期对比（看不同周期的置信与历史常驻价，哪个周期最该信）
         _scan = bez.get("horizon_scan") or []
         if _scan:
             _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
                       "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
-                      "锚点价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
+                      "历史常驻价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
                       "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
                       "有效N": s.get("n_independent", "—"),
                       "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
@@ -2184,7 +2189,7 @@ def page_panorama():
     # —— 图层开关：控制 K 线上叠加什么（默认都开；嫌乱可关）——
     _ovc = st.columns([1.2, 1, 1.2, 2.6])
     _show_best = _ovc[0].toggle("🎯 最佳入场区", value=True, key=f"ovbest_{a}",
-                                help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（锚点价 + 区间上下沿）")
+                                help="在K线上用绿/黄线标出工具推荐的最佳入场价位区（历史常驻价 + 区间上下沿）")
     _show_zones = _ovc[1].toggle("📊 价位带", value=True, key=f"ovzone_{a}", help="历史回撤价位带（蓝=当前·灰=其它）")
     _show_vp = _ovc[2].toggle("📦 换手位", value=True, key=f"ovvp_{a}", help="POC 最高换手价 / 价值区（橙）")
 
@@ -2207,14 +2212,14 @@ def page_panorama():
         # Plotly 主图（TradingView 手感：滚轮缩放/拖动平移/十字光标贴价）—— 可靠绘制阴影/横线
         try:
             ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
-            _endorse = bool((_card or {}).get("enter_ok", True))   # 与顶部三联卡同步：别建仓时入场区带降级为灰色"参考锚"
+            _endorse = bool((_card or {}).get("enter_ok", True))   # 与顶部三联卡同步：别建仓时入场区带降级为灰色"历史常驻价"
             st.plotly_chart(
                 ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
                                         show_best=_show_best, show_zones=_show_zones, show_vp=_show_vp,
                                         title=f"{a} · K线 + 图层", logy=False, best_endorsed=_endorse),
                 use_container_width=True, config=ch.TV_CONFIG)
             st.caption("🖱️ **滚轮缩放·拖动平移·十字光标贴价读数**（双击复位；顶部按钮切时间范围）。"
-                       + ("**绿/黄阴影带=🎯推荐最佳入场区(+锚点线)**；" if _endorse else "**灰阴影带=📍统计参考锚(裁决判定暂非买点)**；")
+                       + ("**绿/黄阴影带=🎯推荐最佳入场区(+历史常驻价线)**；" if _endorse else "**灰阴影带=📍历史常驻价(裁决判定暂非买点)**；")
                        + "蓝/灰虚线=回撤价位带(▶=当前)；橙=POC换手密集价/价值区+左侧筹码柱。用上方开关增删图层；完整筹码分布见『📦 筹码分布』。")
         except Exception as _ce:  # noqa: BLE001
             st.plotly_chart(ch.price_with_zones(price, z), use_container_width=True, config=ch.CHART_CONFIG)
@@ -2482,7 +2487,15 @@ def page_panorama():
             "- **已知偏差/边界**：单票深档有**幸存者偏差**(只统计到活下来的)；**未做**退市/成分变更回填；"
             "基本面/新闻是 yfinance **当前快照**(含前视/重述，**仅供人读、不入量化**)；估值非 point-in-time。\n"
             "- **唯一 OOS 验证过的可交易规则**：跌破200线/宽度恶化→减半仓(ETF夏普7/7改善、回撤砍约40%、2015+样本外稳健)；"
-            "其余(最佳入场区/因子/桶)是**校准**，非择时 alpha。")
+            "其余(最佳入场区/因子/桶)是**校准**，非择时 alpha。\n"
+            "- **「稳健 vs 低置信」大规模回测(科技17只/半导体13只·2008–2026)**："
+            "严口径『稳健入场区』(DSR≥0.95)在科技/半导体乃至 SPY/防御股**历史上一次都没触发**(单票择时 DSR 上限≈0.78–0.92，过不了多重检验线)——"
+            "所以它是个**实际不可达**的标准；现实里你看到的几乎都是『**可分批建仓·低置信**』。"
+            "后者经 **PIT 走查(扩张窗口·无前视)** 仍**跑赢「随便买」**：按回撤档分，"
+            "**浅跌 0–10% 档**最优(科技6月超基准+3.6%/12月+9.7%、半导体+7.9%/+12.2%，胜率72–82%)，"
+            "中档(10–20%)边际、**深档(>20%)绝对收益高但尾部 p10 −18~−30%、胜率更低**；"
+            "频率上『低置信』每股每年约 9–11 次、『稳健』0 次。半导体 edge 比科技大但尾部更深→**更该分批+严控仓**。"
+            "（口径：PIT 只用当日之前数据判该档是否正期望，再看真未来收益；故这是扣掉 look-ahead 的**保守**估计。）")
         st.caption("一句话：本工具给**历史条件分布 + 区间 + 有效样本 + 多重检验折扣**，是研究校准、**非投资建议**；"
                    "醒目结论(等级/仓位/最佳入场区)都需结合 CI、有效 N、裁决与本页口径一起看。")
     with _T_TOOL.expander("🩺 数据质量体检（新鲜度 / 缺口 / 异常跳空）"):

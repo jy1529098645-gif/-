@@ -303,7 +303,7 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                          best_entry: dict | None = None, show_best=True, show_zones=True,
                          show_vp=True, title="K线 + 图层", logy=True, best_endorsed=True) -> go.Figure:
     """全景页主图（Plotly）：K线 + 量副图，并按开关叠加：
-      🎯最佳入场区(绿/黄阴影带 + 锚点线) · 📊回撤价位带(蓝=当前/灰=其它) · 📦换手位(筹码柱+POC+价值区)。
+      🎯最佳入场区(绿/黄阴影带 + 历史常驻价线) · 📊回撤价位带(蓝=当前/灰=其它) · 📦换手位(筹码柱+POC+价值区)。
     用 Plotly 画横线/阴影(streamlit_lightweight_charts 不支持 priceLine，故改用此图可靠渲染)。"""
     from plotly.subplots import make_subplots
 
@@ -348,11 +348,11 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                                  hovertemplate="价位 %{y:.1f}<br>筹码量 %{x:.3s}<extra></extra>"))
 
     # —— 阴影带先画（垫在 K 线下面，不挡）：🎯最佳入场区 + 📦价值区 ——
-    # best_endorsed=False（引擎判定当前别建仓）时，带/线降级为灰色"统计参考锚(暂非买点)"，
+    # best_endorsed=False（引擎判定当前别建仓）时，带/线降级为灰色"历史常驻价(暂非买点)"，
     # 与顶部三联卡口径一致，杜绝"卡说暂非买点、图却画绿色最佳入场区"的冲突。
     if show_best and best_entry and best_entry.get("has_zone"):
         if not best_endorsed:
-            gcol = "rgba(138,147,166,0.95)"; gfill = "rgba(138,147,166,0.12)"; _blab = "📍统计参考锚(暂非买点)"
+            gcol = "rgba(138,147,166,0.95)"; gfill = "rgba(138,147,166,0.12)"; _blab = "📍历史常驻价(暂非买点)"
         elif best_entry.get("tier") == "稳健最佳入场区":
             gcol = "#2BE6A8"; gfill = "rgba(43,230,168,0.15)"; _blab = "🎯最佳入场区"
         else:
@@ -373,7 +373,7 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
     fig.add_trace(go.Bar(x=ohlcv.index, y=ohlcv["volume"], marker_color=vcol, showlegend=False,
                   hovertemplate="量 %{y:.3s}<extra></extra>"), row=2, col=1)
 
-    # —— 横线叠在 K 线之上：📊回撤价位带 · 📦POC · 🎯锚点 ——
+    # —— 横线叠在 K 线之上：📊回撤价位带 · 📦POC · 🎯历史常驻价 ——
     if show_zones and zones is not None and len(zones):
         zz = zones[zones["enough"]] if "enough" in zones.columns else zones
         for _, r in zz.iterrows():
@@ -385,9 +385,9 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
         _hline(vp["poc"], "#FF9F45", 1.6, "dash", f"POC {vp['poc']:.1f}", side="right")
     if show_best and best_entry and best_entry.get("has_zone"):
         if not best_endorsed:
-            gcol = "rgba(138,147,166,0.95)"; _alab = "📍参考锚"
+            gcol = "rgba(138,147,166,0.95)"; _alab = "📍历史常驻价"
         else:
-            gcol = "#2BE6A8" if best_entry.get("tier") == "稳健最佳入场区" else "#FFD166"; _alab = "🎯锚点"
+            gcol = "#2BE6A8" if best_entry.get("tier") == "稳健最佳入场区" else "#FFD166"; _alab = "🎯历史常驻价"
         anc = best_entry.get("anchor_price")
         if anc == anc and anc is not None:
             _hline(float(anc), gcol, 2.0, "solid", f"{_alab} {float(anc):.1f}", side="right")
@@ -398,7 +398,7 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                       xaxis3=dict(overlaying="x", side="top", range=[0, (_vmax * 4.5) if _vmax > 0 else 1],
                                   showgrid=False, showticklabels=False, zeroline=False, fixedrange=True))
     fig.update_xaxes(rangeselector=_RANGE_BUTTONS, row=1, col=1)
-    # y 轴范围：把已画的叠加层一并纳入（否则深档价位带/锚点会被裁出视野=用户说的"不显示"）；
+    # y 轴范围：把已画的叠加层一并纳入（否则深档价位带/历史常驻价会被裁出视野=用户说的"不显示"）；
     # 但对极端深档设下限，避免 K 线被过度压扁（叠加层最多把下界压到近端低点的 0.78×）。
     _lo = ymin; _hi = ymax
     if _lvls:

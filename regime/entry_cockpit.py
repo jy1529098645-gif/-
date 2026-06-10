@@ -6,16 +6,16 @@
 
 五块：
   1. entry_zones        —— 距前高各回撤带 → 对应价位 + 历史远期收益分布/盈亏比/期望值/CI/超额。
-  1b. best_entry_zone   —— 从各档中**按 CI 下界(保守地板超额)排名选出最佳入场区 + 锚点价**。
+  1b. best_entry_zone   —— 从各档中**按 CI 下界(保守地板超额)排名选出最佳入场区 + 历史常驻价**。
   2. earnings_reaction_stats / upcoming_events —— 未来日程(财报/期权到期) + 历史财报前后 drift。
   3. ladder_plan_backtest —— 阶梯式分批建仓(在各回撤带补仓)历史回测 vs lump/DCA，带 CI。
   4. （整合页在 app.py: page_cockpit）
 
-关于"最佳入场点"(2026 升级，用户明确要求)：best_entry_zone **会**给一个锚点价，但它是
-**校准式锚点**不是预测：(a) 它是历史 reward/risk 最优档的**价位区间中值**，区间一并给出，
-锚点只是区内代表；(b) 永远附 N / CI / 置信分层；CI 跨 0 → 降级"低置信"，开口深档 → 锚点
+关于"最佳入场点"(2026 升级，用户明确要求)：best_entry_zone **会**给一个历史常驻价，但它是
+**校准式参考**不是预测：(a) 它是历史 reward/risk 最优档的**价位区间中值**，区间一并给出，
+历史常驻价只是区内代表；(b) 永远附 N / CI / 置信分层；CI 跨 0 → 降级"低置信"，开口深档 → 历史常驻价
 改报**触发价**且强制低置信；没有任何档正超额 → **不硬给点**，转防守("观望/轻仓")；(c) 个股
-附幸存者偏差提醒。仍**不给**"上涨概率 73%"这类单一概率。锚点是「若到达就分批行动」的区间参考，
+附幸存者偏差提醒。仍**不给**"上涨概率 73%"这类单一概率。历史常驻价是「若到达就分批行动」的区间参考，
 非"会涨到/必反弹"。
 """
 from __future__ import annotations
@@ -141,7 +141,7 @@ def entry_zones(
         n_events = _count_independent_events(mask.reindex(fwd.index))
         # 有效独立窗口：远期窗口重叠，n_days//horizon 才是真·独立样本数（防 CI 假性变窄）
         n_independent = max(1, n_days // max(1, horizon))
-        # 锚点：历史命中的**回撤深度中位**投影到当前前高（"当前价位"口径，反映档内聚集位置，
+        # 历史常驻价：历史命中的**回撤深度中位**投影到当前前高（"当前价位"口径，反映档内聚集位置，
         #       必落在 [price_low, price_high] 内；比几何中点更贴历史分布）。
         hit_dd = dd[mask].dropna()
         if hit_dd.shape[0]:
@@ -212,7 +212,7 @@ def format_zone_verdict(row: pd.Series, horizon: int) -> str:
 
 
 # ===========================================================================
-# 块 1b：最佳入场区 + 锚点价（按历史 reward/risk 排名，诚实标注置信度）
+# 块 1b：最佳入场区 + 历史常驻价（按历史 reward/risk 排名，诚实标注置信度）
 # ===========================================================================
 # 比 DEFAULT_BANDS 更深，覆盖"资本投降档"（深跌/急跌往往才是历史最优入场区）。
 DEEP_BANDS = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50)
@@ -228,7 +228,7 @@ def best_entry_zone(
     n_boot: int = 400,
     single_name: bool = True,
 ) -> dict:
-    """从条件价位带中**排名选出最佳入场区**，并给出区内锚点价（校准式，非预测）。
+    """从条件价位带中**排名选出最佳入场区**，并给出区内历史常驻价（校准式，非预测）。
 
     排名口径：以每档中位远期收益的 **block bootstrap CI 下界** 为主排序键（保守地板超额），
     且「稳健」要求 ci_low > 基准中位（即**超额**的 CI 下界>0，强势股每档绝对收益 CI 都>0 会让
@@ -238,7 +238,7 @@ def best_entry_zone(
       2. **有效独立样本**：远期窗口重叠，真·独立样本 = n_days//horizon。有效N<5 → 强制低置信。
       3. **幸存者偏差 / regime 聚集**：个股深档(>30%回撤)永不"稳健"；命中日 >70% 挤在单一年份
          → 标 regime_clustered 降置信。
-    锚点价 = 历史上落在该档的价格**中位**(anchor_median，比几何中点更贴历史分布)；开口档报触发价。
+    历史常驻价 = 历史上落在该档的价格**中位**(anchor_median，比几何中点更贴历史分布)；开口档报触发价。
     无任何正超额档 → 防守裁决，绝不硬凑买点。single_name=True 附幸存者偏差提醒。
     """
     zones = entry_zones(prices, asset=asset, horizon=horizon, bands=bands,
@@ -331,12 +331,12 @@ def best_entry_zone(
     if regime_clustered:
         caveats.append(f"该档 {ryf:.0%} 的历史样本挤在单一年份，是特定 regime 而非稳定规律。")
     if open_ended:
-        caveats.append("开口深跌档无价格下限，锚点为触发价非中值。")
+        caveats.append("开口深跌档无价格下限，历史常驻价以触发价计、非区间中值。")
     if deep_single:
         caveats.append("个股深档(>30%)幸存者偏差最重，已封顶为低置信。")
     if single_name:
         caveats.append("个股深跌存在幸存者偏差：历史回升样本天然偏多，下一个深跌可能是不回头的价值陷阱。")
-    caveats.append("锚点价=历史落在该档价格的中位，是「**若到达就分批行动**」的参考"
+    caveats.append("历史常驻价=历史落在该档价格的中位，是「**若到达就分批行动**」的参考"
                    + ("触发价" if open_ended else "价") + "，不是预测/不是保证会到。")
 
     return {
@@ -407,7 +407,7 @@ def best_entry_across_horizons(
 
 
 def format_best_entry(bez: dict) -> str:
-    """把最佳入场区裁决渲染成一句话（含锚点价/区间/超额/盈亏比/N/CI/置信标注）。"""
+    """把最佳入场区裁决渲染成一句话（含历史常驻价/区间/超额/盈亏比/N/CI/置信标注）。"""
     if not bez.get("has_zone"):
         return f"🛡️ {bez['verdict']}"
     h_m = bez["horizon"] / 21
@@ -418,11 +418,11 @@ def format_best_entry(bez: dict) -> str:
     dist = bez.get("anchor_distance", float("nan"))
     dist_s = (f"，距现价 {dist:+.1%}" if dist == dist else "")
     badge = {"稳健最佳入场区": "✅", "最佳入场区(样本偏少)": "🟡"}.get(bez["tier"], "🟠")
-    if band[0] is None:  # 开口深跌档：锚点是触发价，区间为"≤ 触发价"
+    if band[0] is None:  # 开口深跌档：历史常驻价以触发价计，区间为"≤ 触发价"
         anchor_label = "触发价"
         band_s = f"≤ {band[1]:.1f}{dist_s}"
     else:
-        anchor_label = "锚点价"
+        anchor_label = "历史常驻价"
         band_s = f"区间 {band[0]:.1f}–{band[1]:.1f}{dist_s}"
     head = (f"{badge} 最佳入场区[{bez['zone_label']}·持有约{h_m:.0f}个月]　"
             f"{anchor_label} ≈ **{bez['anchor_price']:.1f}**（{band_s}）")

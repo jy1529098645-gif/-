@@ -1,6 +1,6 @@
-"""最佳入场区 + 锚点价（regime.entry_cockpit.best_entry_zone）离线测试。
+"""最佳入场区 + 历史常驻价（regime.entry_cockpit.best_entry_zone）离线测试。
 
-铁律：给"最佳入场区+锚点价"，但锚点必须落在区间内、CI 跨 0 时降级标注、
+铁律：给"最佳入场区+历史常驻价"，但常驻价必须落在区间内、CI 跨 0 时降级标注、
 无正超额档时转防守，绝不硬凑买点。
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ def test_best_entry_zone_found_and_anchor_in_band():
     bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=200, single_name=True)
     assert bez["has_zone"] is True
     lo, hi = bez["price_band"]
-    assert lo <= bez["anchor_price"] <= hi          # 锚点必须在区间内
+    assert lo <= bez["anchor_price"] <= hi          # 历史常驻价必须落在区间内
     assert bez["n_events"] >= 1
     assert bez["excess_median"] > 0                  # 最佳档必须正超额
     # 个股口径必须带幸存者偏差提醒
@@ -39,7 +39,7 @@ def test_format_best_entry_string():
     bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=200)
     s = ec.format_best_entry(bez)
     assert "最佳入场区" in s
-    assert "锚点价" in s
+    assert "历史常驻价" in s
     assert "CI" in s
 
 
@@ -71,7 +71,7 @@ def test_confident_implies_all_gates_pass():
 
 
 def test_anchor_is_median_dd_projection_in_band():
-    # 锚点=历史命中回撤深度中位投影到当前前高 → 必落在 [price_low, price_high]
+    # 历史常驻价=历史命中回撤深度中位投影到当前前高 → 必落在 [price_low, price_high]
     px = _mean_reverting_series()
     bez = ec.best_entry_zone(px, asset="X", horizon=21, n_boot=150)
     if bez.get("has_zone") and not bez.get("open_ended"):
@@ -134,7 +134,7 @@ def test_defensive_when_no_positive_excess():
 
 
 def test_entry_miss_risk_and_format():
-    """踏空风险：构造一段持续上行价格，深档锚点几乎不会被触及→应判'踏空风险高'。"""
+    """踏空风险：构造一段持续上行价格，深档历史常驻价几乎不会被触及→应判'踏空风险高'。"""
     import numpy as np, pandas as pd
     from regime import entry_cockpit as ec
     idx = pd.date_range("2012-01-01", periods=1500, freq="B")
@@ -148,7 +148,7 @@ def test_entry_miss_risk_and_format():
     assert mr["miss_prob"] > 0.5  # 单边上行，深档难触及
     line = ec.format_miss_risk(mr)
     assert "踏空风险" in line and "Plan" not in line  # 句子里有裁决
-    # already-in：锚点在现价之上→无需等
+    # already-in：历史常驻价在现价之上→无需等
     bez2 = dict(bez); bez2["price_band"] = [cur*1.0, cur*1.05]; bez2["anchor_price"] = cur*1.02
     mr2 = ec.entry_miss_risk(px, bez2)
     assert mr2.get("already_in") and "无踏空风险" in ec.format_miss_risk(mr2)
