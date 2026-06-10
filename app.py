@@ -1931,6 +1931,30 @@ def page_panorama():
             _hold = _dec.holding_advice(_card, b, _bezc)
             _hcol = _hold["color"]
             st.markdown("#### 📌 已经建仓了？现在该怎么办")
+            # 🚨 撤离预警状态灯（绿/黄/红 · 四信号 · 含防过热止盈）—— 持仓者最该先看的一盏灯
+            try:
+                _ef = c_fragility(zstart, end).get("cur", {})
+                _ew = _dec.exit_warning(price, _ef.get("fragile", False), _ef.get("pctile"))
+                _ewc = _ew["color"]
+                _chips = "".join(
+                    f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:2px 9px;border-radius:7px;'
+                    f'background:#ffffff0a;border:1px solid #ffffff1f;font-size:0.78rem;color:#C7CEDA">{s["state"]}</span>'
+                    for s in _ew.get("signals", []))
+                st.markdown(
+                    f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 10px;'
+                    f'background:linear-gradient(92deg,{_ewc}2e,{_ewc}08);border:1px solid {_ewc}66;border-left:8px solid {_ewc}">'
+                    f'<div style="font-size:1.12rem;font-weight:800;color:#F0F3F8">🚨 撤离预警 · {_ew["level"]}</div>'
+                    f'<div style="margin:6px 0 4px">{_chips}</div>'
+                    f'<div style="color:#D2D8E3;font-size:0.86rem">▸ {_ew["action"]}</div>'
+                    f'</div>', unsafe_allow_html=True)
+                with st.expander("🚨 撤离预警明细（四信号 + 历史校准口径）"):
+                    for s in _ew.get("signals", []):
+                        st.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
+                    st.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
+                               "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
+                               "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
+            except Exception:  # noqa: BLE001
+                pass
             st.markdown(
                 f'<div style="border-radius:14px;padding:14px 18px;margin:2px 0 8px;'
                 f'background:linear-gradient(92deg,{_hcol}26,{_hcol}08);border:1px solid {_hcol}55;border-left:7px solid {_hcol}">'

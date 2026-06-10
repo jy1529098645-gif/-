@@ -305,3 +305,84 @@ def holding_advice(card: dict, brief: dict | None = None,
 
     return {"asset": card.get("asset"), "stance": stance, "color": color,
             "headline": headline, "actions": actions, "triggers": triggers}
+
+
+def exit_warning(price: pd.Series, fragile_now: bool = False,
+                 breadth_pctile: float | None = None) -> dict:
+    """🚨 撤离预警状态灯：把'撤离/减仓'从触发式升级成**分级预警**，并补上现在缺的"防过热止盈"维度。
+
+    综合四个**已有但没整合**的信号，全部历史校准、不预测：
+      ① 距200线临近度——离撤离线(200日均线)还有多少；跌破=红、4%内=黄(接近)。
+      ② 市场宽度脆弱——一篮子跌破自身200线比例的历史分位(领先指数·诚实误报~60%)。
+      ③ 波动跳升——近21日已实现波动的历史分位。
+      ④ 过热/乖离——价格距200线的乖离处历史高分位 → 分批止盈(防过热，红/黄规则不含此维度)。
+    返回 {level, color, action, signals[], dist_ma200, vol_pctile, overext_pctile, red, amber}。
+    红=触发已验证的减半仓规则；黄=提前预警(收紧止损/止盈/降仓)；绿=无撤离信号。
+    """
+    px = price.dropna()
+    if len(px) < 120:
+        return {"level": "—", "color": "#8A93A6", "action": "样本不足，撤离预警暂不可用。",
+                "signals": [], "red": False, "amber": False,
+                "dist_ma200": float("nan"), "vol_pctile": float("nan"), "overext_pctile": float("nan")}
+    cur = float(px.iloc[-1])
+    ma200 = px.rolling(200, min_periods=100).mean()
+    dist = float(cur / ma200.iloc[-1] - 1.0) if ma200.notna().iloc[-1] else float("nan")
+    tp = (px / ma200 - 1.0).dropna()
+    overext = float((tp.iloc[-1] >= tp.tail(756)).mean()) if len(tp) > 120 else float("nan")
+    rv = px.pct_change().rolling(21, min_periods=10).std() * np.sqrt(252)
+    vol_pct = float((rv.iloc[-1] >= rv.tail(252)).mean()) if rv.notna().iloc[-1] else float("nan")
+
+    signals: list[dict] = []
+    red = amber = False
+    # ① 趋势 / 距200线
+    if dist == dist:
+        if dist < 0:
+            signals.append({"name": "趋势", "state": "🔴 已跌破200线",
+                            "detail": f"距200线 {dist:+.0%}（趋势破位·历史 2.4x 未来回撤概率）"}); red = True
+        elif dist < 0.04:
+            signals.append({"name": "趋势", "state": "🟡 接近减仓线",
+                            "detail": f"距200线仅 {dist:+.0%}（快到撤离阈值，收紧止损、待确认）"}); amber = True
+        else:
+            signals.append({"name": "趋势", "state": "🟢 趋势健康", "detail": f"距200线 {dist:+.0%}（在均线上方）"})
+    # ② 市场宽度
+    if fragile_now:
+        signals.append({"name": "市场宽度", "state": "🔴 宽度恶化",
+                        "detail": "一篮子跌破自身200线比例处历史低分位（约 3x 未来大跌概率·略领先指数）"}); red = True
+    elif breadth_pctile is not None and breadth_pctile == breadth_pctile and breadth_pctile < 0.25:
+        signals.append({"name": "市场宽度", "state": "🟡 宽度转弱",
+                        "detail": f"宽度分位 {breadth_pctile:.0%}（接近脆弱阈值 15%，留意领先恶化）"}); amber = True
+    else:
+        signals.append({"name": "市场宽度", "state": "🟢 宽度healthy",
+                        "detail": (f"宽度分位 {breadth_pctile:.0%}" if (breadth_pctile is not None and breadth_pctile == breadth_pctile) else "正常")})
+    # ③ 波动
+    if vol_pct == vol_pct:
+        if vol_pct > 0.90:
+            signals.append({"name": "波动", "state": "🟡 波动飙升",
+                            "detail": f"近21日已实现波动分位 {vol_pct:.0%}（高波动→按波动降仓）"}); amber = True
+        else:
+            signals.append({"name": "波动", "state": "🟢 波动正常", "detail": f"波动分位 {vol_pct:.0%}"})
+    # ④ 过热 / 乖离（防过热止盈——红/黄减半仓规则不含此维度）
+    if overext == overext:
+        if overext > 0.90 and dist == dist and dist > 0.05:
+            signals.append({"name": "过热", "state": "🟡 乖离过大",
+                            "detail": f"距200线 {dist:+.0%} 处近3年第 {overext:.0%} 分位（高位拉伸→分批止盈、移动止损）"}); amber = True
+        else:
+            signals.append({"name": "过热", "state": "🟢 不过热", "detail": f"乖离分位 {overext:.0%}"})
+
+    if red:
+        level, color = "🔴 撤离预警", "#FF5C7A"
+        action = "**减到半仓 + 按波动降仓**（已验证规则：历史砍回撤约 40%）；站回200线上方且宽度healthy 再加回。"
+    elif amber:
+        level, color = "🟡 撤离黄灯（提前预警）", "#FFD166"
+        acts = []
+        if any("接近减仓线" in s["state"] for s in signals): acts.append("接近撤离线→收紧止损、别加仓、待确认")
+        if any("乖离过大" in s["state"] for s in signals): acts.append("高位拉伸→分批止盈减 1/3、移动止损让利润奔跑")
+        if any("波动飙升" in s["state"] for s in signals): acts.append("波动高→按波动降仓")
+        if any("宽度转弱" in s["state"] for s in signals): acts.append("宽度转弱→停止加仓、盯领先恶化")
+        action = "；".join(acts) or "观察为主、收紧止损。"
+    else:
+        level, color = "🟢 无撤离信号", "#2BE6A8"
+        action = "趋势健康 + 宽度healthy + 波动正常 + 不过热——持有，让赢家跑（移动止损保护）。"
+    return {"level": level, "color": color, "action": action, "signals": signals,
+            "dist_ma200": dist, "vol_pctile": vol_pct, "overext_pctile": overext,
+            "fragile": bool(fragile_now), "red": red, "amber": amber}

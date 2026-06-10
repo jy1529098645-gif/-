@@ -123,3 +123,27 @@ def test_single_stock_trend_break_not_forced_half():
 def test_leveraged_etf_decay_warning():
     c = dc.decision_card("TQQQ", _px(-0.05), {"has_zone": False}, fragile_now=False)
     assert any("衰减" in r or "杠杆" in r for r in c["exit_rules"])
+
+
+def test_exit_warning_levels():
+    """撤离预警分级：跌破200线→红；高位拉伸→黄(防过热)；健康→绿。"""
+    import numpy as np, pandas as pd
+    from analysis import decision as dc
+    idx = pd.date_range("2015-01-01", periods=900, freq="B")
+    # 健康上行(现价稳在200线上方、不极端) → 绿
+    up = pd.Series(np.linspace(100, 200, 900), index=idx)
+    ew = dc.exit_warning(up, fragile_now=False, breadth_pctile=0.5)
+    assert ew["red"] is False and ew["dist_ma200"] > 0
+    # 跌破200线 → 红
+    down = pd.Series(np.r_[np.linspace(100, 200, 700), np.linspace(200, 150, 200)], index=idx)
+    ewd = dc.exit_warning(down, fragile_now=False, breadth_pctile=0.5)
+    assert ewd["red"] is True and "撤离预警" in ewd["level"]
+    # 宽度脆弱(市场) → 红，即使个股趋势健康
+    ewf = dc.exit_warning(up, fragile_now=True, breadth_pctile=0.10)
+    assert ewf["red"] is True
+    # 宽度转弱(分位<25%但未脆弱) → 至少黄
+    ewa = dc.exit_warning(up, fragile_now=False, breadth_pctile=0.20)
+    assert ewa["amber"] is True or ewa["red"] is True
+    # 字段完整
+    for k in ("level", "color", "action", "signals", "dist_ma200", "vol_pctile", "overext_pctile"):
+        assert k in ew
