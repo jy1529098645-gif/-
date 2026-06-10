@@ -1871,30 +1871,46 @@ def page_panorama():
         # 不再显示与裁决打架的建仓仓位/入场参考价；风控暴露降级为"若已持仓"的副信息。
         _enter_ok = _card.get("enter_ok", True)
         _mt = st.columns(3)
-        if not _enter_ok:
-            _sub0 = (f"引擎不建议在此建新仓（见上方裁决）；若已持仓，风控暴露上限≈{_posnow:.0%}，见下方『已建仓』"
-                     if _posnow is not None else "引擎不建议在此建新仓（见上方裁决）；已持仓者见下方『已建仓』")
-            _mt[0].markdown(stat_card("📊 现在该建多少新仓", "暂不建仓", _sub0, "#FF9F45"), unsafe_allow_html=True)
-            if _e and _e.get("anchor") == _e.get("anchor"):
-                _mt[1].markdown(stat_card("🎯 统计参考锚（暂非买点）", f"{_e['anchor']:.1f}",
-                                          f"{_e['zone']}·{'稳健档但裁决未背书' if _e.get('confident') else '低置信·引擎未背书此处建仓'}", "#8A93A6"), unsafe_allow_html=True)
-            else:
-                _mt[1].markdown(stat_card("🎯 统计参考锚", "无", "当前无统计稳健点位", "#8A93A6"), unsafe_allow_html=True)
-            _mt[2].markdown(stat_card("⏳ 触发条件", "等更深/确认", "见上方裁决：等深跌或趋势/宽度确认再议", "#8A93A6"), unsafe_allow_html=True)
-        elif _posnow is not None:
-            _pos_col = "#2BE6A8" if _posnow >= 0.66 else ("#FFD166" if _posnow >= 0.33 else "#FF9F45")
-            _mt[0].markdown(stat_card("📊 现在该持多少仓", f"{_posnow:.0%}",
-                                      f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·这只票满仓=100%(风控暴露·非占组合比例)", _pos_col), unsafe_allow_html=True)
+        if _is_holder:
+            # 📦 持仓者口径：撤离状态 / 距撤离线 / 现在该怎么办（与身份 toggle 联动）
+            try:
+                _eft = c_fragility(zstart, end).get("cur", {})
+                _ewt = _dec.exit_warning(price, _eft.get("fragile", False), _eft.get("pctile"))
+                _holdt = _dec.holding_advice(_card, b, _bezc)
+                _mt[0].markdown(stat_card("🚨 撤离状态", _ewt["level"], _ewt["action"][:26], _ewt["color"], tip="脆弱"), unsafe_allow_html=True)
+                _d2 = _ewt.get("dist_ma200", float("nan"))
+                _dcol = "#FF5C7A" if (_d2 == _d2 and _d2 < 0.04) else "#2BE6A8"
+                _dsub = ("已跌破200线→减半仓" if (_d2 == _d2 and _d2 < 0) else "跌破即趋势破位→减半仓")
+                _mt[1].markdown(stat_card("距撤离线(200日线)", f"{_d2:+.0%}" if _d2 == _d2 else "—", _dsub, _dcol, tip="regime"), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("📦 现在该怎么办", _holdt["stance"], "守/加/减/离·详见下方", _holdt["color"]), unsafe_allow_html=True)
+            except Exception:  # noqa: BLE001
+                _mt[0].markdown(stat_card("📦 已持仓", "见下方", "🚨撤离预警 / 守加减离", "#7C5CFC"), unsafe_allow_html=True)
         else:
-            _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", "#8A93A6"), unsafe_allow_html=True)
-        if _enter_ok and _e and _e.get("anchor") == _e.get("anchor"):
-            _ecol = "#2BE6A8" if _e.get("confident") else "#FFD166"
-            _mt[1].markdown(stat_card("🎯 入场参考价", f"{_e['anchor']:.1f}",
-                                      f"{_e['zone']}·{'✅稳健' if _e.get('confident') else '低置信'}", _ecol), unsafe_allow_html=True)
-            _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", "#7C5CFC"), unsafe_allow_html=True)
-        elif _enter_ok:
-            _mt[1].markdown(stat_card("🎯 入场参考价", "区间分批", "当前无统计稳健点位", "#FFD166"), unsafe_allow_html=True)
-            _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方最佳入场区", "#7C5CFC"), unsafe_allow_html=True)
+            # 🆕 新建仓口径
+            if not _enter_ok:
+                _sub0 = (f"引擎不建议在此建新仓（见上方裁决）；若已持仓，风控暴露上限≈{_posnow:.0%}，见下方『已建仓』"
+                         if _posnow is not None else "引擎不建议在此建新仓（见上方裁决）；已持仓者见下方『已建仓』")
+                _mt[0].markdown(stat_card("📊 现在该建多少新仓", "暂不建仓", _sub0, "#FF9F45"), unsafe_allow_html=True)
+                if _e and _e.get("anchor") == _e.get("anchor"):
+                    _mt[1].markdown(stat_card("🎯 统计参考锚（暂非买点）", f"{_e['anchor']:.1f}",
+                                              f"{_e['zone']}·{'稳健档但裁决未背书' if _e.get('confident') else '低置信·引擎未背书此处建仓'}", "#8A93A6"), unsafe_allow_html=True)
+                else:
+                    _mt[1].markdown(stat_card("🎯 统计参考锚", "无", "当前无统计稳健点位", "#8A93A6"), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 触发条件", "等更深/确认", "见上方裁决：等深跌或趋势/宽度确认再议", "#8A93A6"), unsafe_allow_html=True)
+            elif _posnow is not None:
+                _pos_col = "#2BE6A8" if _posnow >= 0.66 else ("#FFD166" if _posnow >= 0.33 else "#FF9F45")
+                _mt[0].markdown(stat_card("📊 现在该持多少仓", f"{_posnow:.0%}",
+                                          f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·这只票满仓=100%(风控暴露·非占组合比例)", _pos_col), unsafe_allow_html=True)
+            else:
+                _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", "#8A93A6"), unsafe_allow_html=True)
+            if _enter_ok and _e and _e.get("anchor") == _e.get("anchor"):
+                _ecol = "#2BE6A8" if _e.get("confident") else "#FFD166"
+                _mt[1].markdown(stat_card("🎯 入场参考价", f"{_e['anchor']:.1f}",
+                                          f"{_e['zone']}·{'✅稳健' if _e.get('confident') else '低置信'}", _ecol), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", "#7C5CFC"), unsafe_allow_html=True)
+            elif _enter_ok:
+                _mt[1].markdown(stat_card("🎯 入场参考价", "区间分批", "当前无统计稳健点位", "#FFD166"), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方最佳入场区", "#7C5CFC"), unsafe_allow_html=True)
         # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
         # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
         try:
@@ -1915,7 +1931,9 @@ def page_panorama():
             f'<span style="color:#9aa3b2;font-size:0.84rem">📈 <b>入场后</b>：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</span><br>'
             f'<span style="color:#9aa3b2;font-size:0.84rem">🚪 <b>离场</b>：{"；".join(_card["exit_rules"])}</span>'
             f'</div>', unsafe_allow_html=True)
-        if _enter_ok:
+        if _is_holder:
+            st.caption("📦 已持仓口径：上方=撤离状态 / 距撤离线 / 现在该怎么办；详细守/加/减/离 + 触发式止盈止损见下方『📌 已经持有』。")
+        elif _enter_ok:
             st.caption("📍 说明：上方『入场参考价』=**统计最佳入场区锚点**（历史远期收益最佳处）；下方『📋操作预案/建仓档』=**技术支撑位**"
                        "（MA/POC 等）用于分批。两者是不同视角、互为补充，合起来当一个入场区间用，不是互相矛盾。")
         else:
@@ -1925,7 +1943,7 @@ def page_panorama():
         try:
             from analysis import engine_discipline as _edx
             _graw = b.get("grade")
-            if _posnow is not None and _graw:
+            if _posnow is not None and _graw and not _is_holder:   # 桥接说明只对新建仓视角；持仓者上方已是撤离口径
                 _gcap = _edx.apply_risk_profile(_graw, gl_profile).get("max_position_fraction")
                 if _gcap is not None and _gcap == _gcap:
                     if _enter_ok:
