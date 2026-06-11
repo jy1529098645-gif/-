@@ -98,8 +98,10 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
     tp_levels.sort(key=lambda x: x[0])  # 价格升序 = 先到先减
     for i, (_, txt) in enumerate(tp_levels):
         pb["if_up"].append(("第一减仓区 " if i == 0 else "下一减仓区 ") + txt)
-    pb["if_up"].append("其余仓位用**移动止损**(回吐约 20% 出场)让利润奔跑——这是**锁浮盈的纪律、不是择时alpha**"
-                       "(回测里固定止损在高波动票上常被甩下车、反拖累夏普；真正护回撤的是下面破200线/宽度→减半仓)。")
+    pb["if_up"].append("**让赢家跑·主撤离按作战卡口径**：核心仓**不靠固定%移动止损护盘**"
+                       "(回测证明固定止损对趋势票显著负α、反拖累夏普、高波动票常被甩下车)——"
+                       "**主撤离 = 跌破200线+斜率转负→清/减、波动突刺→按波动目标降仓**(见🎖️建仓/撤离作战卡·已验证)。"
+                       "想锁部分浮盈可在上述减仓区分批了结，但别用一刀切止损把趋势票甩下车。")
     pb["if_up"].append("趋势仍强（站上 MA200）且未到减仓区 → **持有，让赢家跑**，别过早全平。")
 
     # ---------- 跌了（诚实分支）----------
@@ -149,7 +151,7 @@ def build_playbook(brief: dict, gate: dict | None = None, enter_ok: bool = True)
     elif gate and not gate.get("overall"):
         pb["headline"] = (f"{tier}：规则未过验收闸门，按**低把握**操作——轻仓、严格止损、不重仓不摊平。")
     else:
-        pb["headline"] = (f"{tier}：在 浅/中/重 共振价位分批建仓，涨了分段减仓+移动止损，"
+        pb["headline"] = (f"{tier}：在 浅/中/重 共振价位分批建仓，涨了分段减仓、破200线+斜率转负撤离(主口径)，"
                           f"跌到下一档可补但同步下移止损，跌破硬止损离场。")
     return pb
 
