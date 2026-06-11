@@ -531,12 +531,13 @@ def c_best_entry_scan(asset: str, start: str, end: str):
     return ec.best_entry_across_horizons(px, asset=asset, single_name=(asset != "SPY"), n_boot=350)
 
 @st.cache_data(show_spinner=False)
-def c_entry_confluence(asset: str, start: str, end: str):
-    """合理入场位：统计正边际档 × 技术支撑共振（含飞刀防护）。"""
+def c_entry_confluence(asset: str, start: str, end: str,
+                       warn_red: bool = False, warn_amber: bool = False, warn_label: str = ""):
+    """合理入场位：regime/飞刀/离场预警门控 + 可执行回踩支撑（统计锚定价已降级）。"""
     from data import loader
     from regime import entry_cockpit as ec
     ohlcv = loader.load_ohlcv(asset, start, end).dropna()
-    return ec.entry_confluence(ohlcv, asset=asset)
+    return ec.entry_confluence(ohlcv, asset=asset, warn_red=warn_red, warn_amber=warn_amber, warn_label=warn_label)
 
 # 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
 _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
@@ -806,7 +807,7 @@ _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 2
 
 with st.sidebar:
     st.markdown("### 📊 量化研究工具")
-    st.caption("选股 → 自动全景分析 · 校准而非预测")
+    st.caption("合理入场 · 离场警示 · 分散长持 — 校准非预测，不许诺跑赢市场")
     tm.toggle(st)   # 🌙/☀️ 明暗主题切换
 
     # —— 😱 恐慌指数 VIX（侧栏置顶·盘中高频自刷新）——
@@ -910,6 +911,16 @@ with st.sidebar:
 def page_overview():
     st.markdown('<div class="hero-title">量化研究工具</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-sub">面向长期个人投资者的<b>规则校准器</b>——把"建仓/进出场/因子"从感觉变成带置信区间和样本数的经验分布。</div>', unsafe_allow_html=True)
+    st.write("")
+    # —— 产品定位（防误用：别当复利机器/市场跑赢器）——
+    st.info(
+        "🧭 **这个工具是什么（请先读）**：它是一个**合理入场 + 离场警示 + 分散长持**的"
+        "**校准 / 风控**工具。\n\n"
+        "- ✅ 它帮你：在技术支撑回踩处分批入场、避开破位飞刀、用分级预警提示减仓、"
+        "用一篮子分散+轻保护把回撤压到能扛住（别在崩盘底部割肉）。\n"
+        "- ❌ 它**不**做：预测涨跌、给目标价/单一概率、选出会暴涨的票（实测选股无可靠 edge）、"
+        "**跑赢市场**——回测一致显示：减暴露必让出复利，绝对收益上没有任何配置跑赢闭眼长持。\n\n"
+        "**一句话**：长期最优=买一篮子优质、长期持有；它只帮你**真能拿住**，不替你预测、不许诺超额。")
     st.write("")
 
     c1, c2, c3 = st.columns(3)
@@ -1850,6 +1861,8 @@ def page_panorama():
     # ===== 🎯 决策卡（合成：现在该做什么 / 入场点 / 入场后 / 离场）—— 页面第一眼 =====
     _card = None
     _bezc = None
+    # 入场门控状态（函数级初始化，确保下方"候选执行区间"总裁决横幅也能引用，保持全页同口径）
+    _efc = None; _enter_ok = True; _warn_red = False; _warn_amber = False; _no_stat_edge = False
     try:
         from analysis import decision as _dec
         _bezc = c_best_entry_scan(a, zstart, end)
@@ -1881,10 +1894,17 @@ def page_panorama():
             _ewt = _dec.exit_warning(price, _eft0.get("fragile", False), _eft0.get("pctile"))
         except Exception:  # noqa: BLE001
             _ewt = {"red": False, "amber": False, "level": "", "color": "#8A93A6", "action": "", "dist_ma200": float("nan")}
-        _warn_active = bool(_ewt.get("red") or _ewt.get("amber"))
-        # 门控：引擎判定"别建新仓"(enter_ok=False) **或** 有离场预警(红/黄灯) → 三联卡转"暂不建仓"，
-        # 与下方持仓者的撤离预警保持一致（同一 regime，不能一边喊撤离一边喊建仓）。
-        _enter_ok = bool(_card.get("enter_ok", True)) and not _warn_active
+        _warn_red = bool(_ewt.get("red"))
+        _warn_amber = bool(_ewt.get("amber"))
+        # 入场以 entry_confluence(regime + 技术支撑) 为准，与作战卡同口径——只有飞刀/红灯=🔴 才真不建新仓
+        # (已回测：黄灯远期不更差、只小仓即可)。decision_card 的"动量陷阱/无稳健档"(基于噪声回撤桶)
+        # 降级为"可买但此跌无统计优势"的提示，不再硬挡，杜绝"panorama暂不建仓 vs 作战卡可分批"的跨页矛盾。
+        try:
+            _efc = c_entry_confluence(a, zstart, end, _warn_red, _warn_amber, _ewt.get("level", ""))
+        except Exception:  # noqa: BLE001
+            _efc = None
+        _enter_ok = (_efc is None) or (_efc.get("grade_tag") != "🔴")
+        _no_stat_edge = bool(_enter_ok and not _card.get("enter_ok", True))  # 技术面允许、但统计层想挡
         _mt = st.columns(3)
         if _is_holder:
             # 📦 持仓者口径：撤离状态 / 距撤离线 / 现在该怎么办（与身份 toggle 联动）
@@ -1916,16 +1936,32 @@ def page_panorama():
                                           f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·这只票满仓=100%(风控暴露·非占组合比例)", _pos_col), unsafe_allow_html=True)
             else:
                 _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", T["muted"]), unsafe_allow_html=True)
-            if _enter_ok and _e and _e.get("anchor") == _e.get("anchor"):
-                _conf_e = _e.get("confident")
-                _ecol = T["good"] if _conf_e else T["gold"]
-                _et = "✅ 入场参考价(已过闸门)" if _conf_e else "🟢 可分批建仓价(低置信)"
-                _mt[1].markdown(stat_card(_et, f"{_e['anchor']:.1f}",
-                                          f"{_e['zone']}·{'✅稳健可执行' if _conf_e else '历史正期望·分批进'}", _ecol), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", T["primary"]), unsafe_allow_html=True)
+            if _enter_ok and _efc is not None:
+                # 入场位：用 entry_confluence 的**可执行回踩支撑**(替代旧噪声锚定价)，与作战卡口径一致
+                _gcol = T["good"] if _efc["grade_tag"] == "🟢" else (T["gold"] if _efc["grade_tag"] == "🟡" else T["muted"])
+                _near = _efc.get("supports_near_now") or []
+                _below = _efc.get("supports_below") or []
+                if _efc.get("at_support_now") and _near:
+                    _mt[1].markdown(stat_card("🎯 入场位·可分批", f"现价 {_efc['current_price']:.1f}",
+                                              f"在支撑共振区（{_near[0]['label']}）", _gcol), unsafe_allow_html=True)
+                elif _below:
+                    _s0 = _below[0]
+                    _mt[1].markdown(stat_card("🎯 回踩分批价", f"{_s0['price']:.1f}",
+                                              f"{_s0['label']}（{_s0['dist_pct']:+.0%}）·回踩到此分批", _gcol), unsafe_allow_html=True)
+                else:
+                    _mt[1].markdown(stat_card("🎯 入场位", "小仓/等回踩", "现价下方近处无明显支撑", _gcol), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 入场判断", _efc["grade_tag"], _efc["grade"][:16], _gcol), unsafe_allow_html=True)
             elif _enter_ok:
-                _mt[1].markdown(stat_card("🟢 可分批建仓", "区间分批", "历史正期望·按区间分批进", T["good"]), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方候选执行区间", T["primary"]), unsafe_allow_html=True)
+                _mt[1].markdown(stat_card("🎯 入场位", "回踩支撑分批", "见下方候选区间", T["muted"]), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方", T["primary"]), unsafe_allow_html=True)
+        # 黄灯(非红)：不暂停建仓、只提示小仓（回测：黄灯远期不更差、仅 MAE 略深）
+        if (not _is_holder) and _enter_ok and _warn_amber:
+            st.caption("⚠️ 当前有**离场黄灯**（波动飙升/高位拉伸/临近撤离线）——回测显示远期收益并不更差、"
+                       "只是进场后浮亏略深，故建议**小仓 / 分批**降暴露，不必完全暂停。")
+        # 动量陷阱/无稳健档(统计层想挡、但技术面允许)：降级为诚实提示，不再硬"暂不建仓"
+        if (not _is_holder) and _no_stat_edge:
+            st.caption("ℹ️ 注意：此回撤档**历史上没有抄底超额**（动量陷阱/单票样本不足）——"
+                       "意思是**别指望「逢跌买」的统计 alpha**；若你看好基本面想建仓，按上方**技术支撑回踩分批**即可，别越跌越重仓。")
         # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
         # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
         try:
@@ -2089,25 +2125,27 @@ def page_panorama():
     st.divider()
     # ---- 候选执行区间：TradingView K线 + 价位带横线 + 候选执行档 ----
     st.markdown("#### 🎯 在什么价位/状态执行（**候选区间** · 过裁决才升级为建仓区）")
-    _eok2 = _card.get("enter_ok", True) if _card else True
+    # 总裁决横幅与上方三联卡**同口径**(entry_confluence)：只有飞刀/红灯=🔴 才"暂不建仓"；
+    # 动量陷阱/无稳健档(统计层)降级为"可小仓·但此跌无统计alpha"，不再硬挡(杜绝同页两处裁决打架)。
+    _eok2 = _enter_ok
     _conf2 = bool((_bezc or {}).get("confident")) if _bezc else False
-    _ov2 = _card.get("engine_override") if _card else None
-    _why = {"momentum_trap": "**动量陷阱**——当前回撤桶历史超额≤0，逢跌买这只票整体不优于随机进场",
-            "grade_F": "**证据等级 F**——该状态历史显著吃亏",
-            "no_robust_zone": "各回撤档历史上都没跑赢无条件基准"}.get(_ov2)
-    if not _why and _card:
-        if "半导体" in _card.get("state", ""): _why = "**半导体浅/中跌(10–20%)历史无edge甚至为负**"
-        elif "杠杆" in _card.get("state", ""): _why = "**3x杠杆ETF回撤里不宜建标准仓**(复利衰减)"
-    # 统一原则：下面这些价位是"候选执行区间"，非买点；只有总裁决(闸门)通过才升级为"建仓区"
-    _principle = ('下面的历史常驻价/价位带/档位是 <b>候选执行区间</b>（历史相对较优档 / 技术共振支撑）——'
-                  '<b>价格"到了"不等于"买"</b>：真正决定能不能买的是上方<b>总裁决（统计闸门）</b>；'
-                  '过了裁决，这些才升级为可分批执行的"建仓区"。')
+    _knife_red = bool(_efc and _efc.get("grade_tag") == "🔴")
+    _principle = ('下面的历史常驻价/价位带/档位是 <b>候选执行区间</b>（技术共振支撑 / 历史相对较优档）——'
+                  '<b>价格"到了"不等于"无脑买"</b>：先看上方<b>能不能建仓</b>，再按这些**技术支撑回踩分批**。')
     if not _eok2:
         st.markdown(
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:var(--bad-weak);border:1px solid var(--bad-border);border-left:6px solid var(--bad);color:var(--text);font-size:0.86rem">'
+            f'🔴 <b>当前总裁决：暂不建新仓</b>（{(_efc or {}).get("grade","破位/离场红灯")}）。{_principle} '
+            '故下面只当"历史相对较优档/支撑在哪"看，<b>不是买入信号</b>；等站回200线 / 企稳 / 预警解除再议。</div>',
+            unsafe_allow_html=True)
+    elif _no_stat_edge:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
             'background:var(--amber-weak);border:1px solid var(--amber-border);border-left:6px solid var(--amber);color:var(--text);font-size:0.86rem">'
-            f'⚠️ <b>当前总裁决：暂不建仓</b>（{_why or "证据不足"}）。{_principle} '
-            '故下面只当"历史相对较优档在哪"看，<b>不是买入信号</b>；按裁决条件（等更深回撤 / 趋势或宽度确认）再议。</div>',
+            '🟡 <b>当前总裁决：可小仓建仓（但此跌无统计 alpha）</b>。技术面趋势健康、可在下方**支撑回踩分批**；'
+            '但该回撤档**历史上没有抄底超额**（动量陷阱/单票样本不足）——'
+            f'{_principle} <b>别指望"逢跌买"的超额、别越跌越重仓</b>，看好基本面才小仓参与。</div>',
             unsafe_allow_html=True)
     elif _conf2:
         st.markdown(
@@ -3027,9 +3065,10 @@ def page_position_card():
                                                    _eft2.get("fragile", False), _eft2.get("pctile"))
             except Exception:  # noqa: BLE001
                 pass
-            _wa = bool(_ew_for_entry and (_ew_for_entry.get("red") or _ew_for_entry.get("amber")))
+            _wred = bool(_ew_for_entry and _ew_for_entry.get("red"))
+            _wamb = bool(_ew_for_entry and _ew_for_entry.get("amber"))
             _wl = (_ew_for_entry or {}).get("level", "")
-            _ef = c_entry_confluence(asset, start, end, _wa, _wl)
+            _ef = c_entry_confluence(asset, start, end, _wred, _wamb, _wl)
             _cur = _ef["current_price"]
             _ecol = (T["bad"] if _ef["grade_tag"] == "🔴" else
                      T["good"] if _ef["grade_tag"] == "🟢" else

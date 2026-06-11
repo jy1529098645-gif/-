@@ -804,7 +804,7 @@ def _tech_supports(ohlcv: pd.DataFrame, lookback: int = 252) -> list[dict]:
 
 def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict | None = None,
                      horizon: int = 252, tol: float = 0.025, lookback: int = 252,
-                     warn_active: bool = False, warn_label: str = "") -> dict:
+                     warn_red: bool = False, warn_amber: bool = False, warn_label: str = "") -> dict:
     """**合理入场位**：把'统计正边际档'(best_entry_zone) 与'技术支撑共振'融合。
 
     逻辑：① 取统计最佳入场区的锚定价/区间(回撤桶里 CI 下界最优、已过反过拟合关)；
@@ -859,24 +859,26 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     confirms = [s for s in supports if anchor == anchor and anchor and abs(s["price"] / anchor - 1.0) <= tol]
     confluence = len(confirms)
 
-    # —— 主评级：先答"现在能不能碰"(regime/飞刀/预警) → 再答"在哪买"(回踩支撑)。统计档已降级。——
+    # —— 主评级：先答"现在能不能碰" → 再答"在哪买"。统计档已降级。——
+    # 红/黄灯区别(已回测验证)：红灯(破位/宽度恶化=确认趋势坏)→暂停建仓；黄灯(波动/临近线/高位拉伸)→
+    # 远期收益并不变差、只是 MAE 略深 → **降为小仓/分批**而非全停(数据不支持暂停)。
     if falling_knife:
         grade, gtag = "观望（破位接飞刀）", "🔴"
         note = ("⚠️ 飞刀防护：价在200线下方且均线下行——历史上'接飞刀'胜率差。别在此抢反弹，"
                 "等**站回200线 / 构筑双底**确认企稳，或只极轻仓试探+严止损。")
-    elif warn_active:
-        grade, gtag = "预警中·别急建新仓", "🟡"
-        note = (f"⚠️ 当前有**离场预警**（{warn_label or '见下方撤离信号'}）。入场和离场是**同一个 regime**——"
-                "预警期别建新仓（避免'一边喊撤离一边喊建仓'自相矛盾），等预警解除/站稳再分批。")
-    elif near_ma200:
-        grade, gtag = "临近撤离线·只小仓试探", "🟡"
-        note = (f"现价just在200线上方（距撤离线 {dist_ma200:+.1%}），趋势薄弱——只小仓试探，"
-                "**跌破200线即按撤离口径**，别重仓押反弹。")
+    elif warn_red:
+        grade, gtag = "离场红灯·暂不建新仓", "🔴"
+        note = (f"⚠️ 当前是**离场红灯**（{warn_label or '破位/宽度恶化'}）——确认趋势坏了，别建新仓。"
+                "入场和离场同一 regime：等站回200线、宽度转健康再说（与下方撤离口径一致）。")
     elif at_support_now:
         _names = "、".join(s["label"] for s in near_now)
         grade, gtag = "现价即在支撑共振区·可分批", "🟢"
         note = (f"现价正落在 **{len(near_now)} 个技术支撑**（{_names}）——可在此分批。"
                 "提醒：技术共振**不提高远期收益**，只让进场后浮亏更浅、更拿得住；入场对长期收益影响本就小。")
+    elif near_ma200:
+        grade, gtag = "临近撤离线·只小仓试探", "🟡"
+        note = (f"现价just在200线上方（距撤离线 {dist_ma200:+.1%}），趋势薄弱——只小仓试探，"
+                "**跌破200线即按撤离口径**，别重仓押反弹。")
     elif supports_below:
         _b = "、".join(f"{s['label']} {s['price']:.1f}({s['dist_pct']:+.1%})" for s in supports_below[:3])
         grade, gtag = "趋势健康·等回踩支撑分批", "🟡"
@@ -886,9 +888,15 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
         grade, gtag = "趋势健康但离支撑远·小仓或等回踩", "⚪"
         note = ("趋势健康，但现价下方近处无明显技术支撑——小仓参与或耐心等回踩，别空等'完美买点'。")
 
+    # 黄灯(非红/非飞刀)：不改买/不买结论，只附"小仓"提示(回测：黄灯远期不更差、仅MAE略深)
+    if warn_amber and not (falling_knife or warn_red):
+        note += (f"　⚠️ 当前有离场黄灯（{warn_label or '波动/高位/临近线'}）——回测显示远期收益并不更差、"
+                 "只是进场后浮亏略深，故**建议小仓/分批降暴露**，不必完全暂停。")
+
     return {
         "asset": asset, "current_price": cur, "ma200": ma200, "dist_ma200": dist_ma200,
-        "falling_knife": falling_knife, "near_ma200": near_ma200, "warn_active": bool(warn_active),
+        "falling_knife": falling_knife, "near_ma200": near_ma200,
+        "warn_red": bool(warn_red), "warn_amber": bool(warn_amber),
         "stat_confident": stat_conf, "stat_has_zone": stat_ok, "anchor_actionable": anchor_actionable,
         "anchor": float(anchor) if anchor == anchor else None, "band": band, "stat_note": stat_note,
         "confluence": confluence, "confirms": confirms, "supports": supports,
