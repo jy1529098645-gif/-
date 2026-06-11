@@ -212,6 +212,38 @@ def c_prices(tickers: tuple, start: str, end: str | None):
     return loader.load_prices(list(tickers), start, end)
 
 @st.cache_data(show_spinner=False)
+def c_ohlcv(ticker: str, start: str, end: str | None):
+    """单票 OHLCV（缓存）——替代页面里散落的裸 loader.load_ohlcv，避免每次 rerun 重载全历史。"""
+    from data import loader
+    return loader.load_ohlcv(ticker, start, end)
+
+@st.cache_data(show_spinner=False)
+def c_position_guidance(asset: str, start: str | None, end: str | None, horizon: int = 63):
+    """作战卡引擎（缓存）——原 page_position_card 每次 rerun 都整张重算(暴露序列+回撤桶+撤离回测)。"""
+    from analysis import position_guidance as _pg
+    return _pg.position_guidance(asset, start=start, end=end, horizon=horizon)
+
+@st.cache_data(show_spinner=False)
+def c_sector_dashboard(sec: str, end: str):
+    """行业动向聚合（缓存）——原 page_industry 每次切板块/rerun 都全量重算宽度/相关/RS。"""
+    from analysis import industry as _ind
+    return _ind.sector_dashboard(_ind.SECTORS[sec], "2008-01-01", end)
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def c_sector_fundamentals(sec: str):
+    """行业成分基本面（缓存·ttl1h）——原裸调 yfinance 每次 rerun 重拉。"""
+    from analysis import industry as _ind
+    return _ind.sector_fundamentals(_ind.SECTORS[sec])
+
+@st.cache_data(show_spinner=False)
+def c_ranking(tickers: tuple, start: str):
+    """选股榜 + IC 验证（缓存）——原 page_stock_ranking 按钮闸开后每次 rerun 都重跑 10–20s。"""
+    from analysis import stock_ranking as sr
+    res = sr.rank_stocks(list(tickers), start=start)
+    val = sr.validate_ranking(list(tickers), start="2013-01-01")
+    return res, val, sr.ranking_verdict(val)
+
+@st.cache_data(show_spinner=False)
 def c_macro(start: str, end: str | None):
     from data import loader
     return loader.load_macro(start, end)
@@ -1423,9 +1455,7 @@ def page_rule():
         a.plotly_chart(ch.mae_hist(trades["mae"], n=p["n_trades"]), use_container_width=True)
         b.plotly_chart(ch.equity_underwater(trades), use_container_width=True)
     with t3:
-        from data import loader
-        px = loader.load_prices(MAG7, start, end)
-        corr = px.pct_change().corr()
+        corr = c_prices(tuple(MAG7), start, end).pct_change().corr()   # 走缓存(原裸 loader 每次切到该Tab重载7票)
         st.plotly_chart(ch.corr_heatmap(corr), use_container_width=True, config=ch.CHART_CONFIG)
         st.caption("📖 相关矩阵：越红=两只票越同涨同跌。七姐妹普遍 0.4–0.6，所以 7 只≈不到 3 个独立赌注(N_eff)，证据要打折。")
         pt = pd.DataFrame(res["per_ticker"]).T.rename(
@@ -1945,8 +1975,7 @@ def page_panorama():
     with st.spinner(f"正在生成 {a} 全景分析（首次约 10 秒，之后秒开）…"):
         b = c_brief(a, horizon, end)
         z = c_zones(a, zstart, end, horizon)
-        from data import loader as _ld
-        price = _ld.load_prices([a], zstart, end)[a]
+        price = c_prices((a,), zstart, end)[a]   # 走缓存(原裸 loader 每次 rerun 重载全历史)
 
     # ===== 💲 现价大字（最显眼）：盘中近实时(≈15min延迟)，开盘每 30 秒自动刷新；仅展示、不入量化 =====
     _mkt_open_top = is_market_open()
@@ -2339,7 +2368,7 @@ def page_panorama():
                 _vp_chart = None
         # Plotly 主图（TradingView 手感：滚轮缩放/拖动平移/十字光标贴价）—— 可靠绘制阴影/横线
         try:
-            ohlcv_pan = _ld.load_ohlcv(a, zstart, end).tail(504)
+            ohlcv_pan = c_ohlcv(a, zstart, end).tail(504)
             _endorse = bool((_card or {}).get("enter_ok", True))   # 与顶部三联卡同步：别建仓时入场区带降级为灰色"历史常驻价"
             st.plotly_chart(
                 ch.panorama_price_chart(ohlcv_pan, zones=z, vp=_vp_chart, best_entry=_bz_chart,
@@ -3056,7 +3085,7 @@ def page_industry():
     sec = st.selectbox("板块", list(ind.SECTORS), index=0)
     tks = ind.SECTORS[sec]
     with st.spinner(f"聚合 {sec} 板块动向…"):
-        d = ind.sector_dashboard(tks, "2008-01-01", end)
+        d = c_sector_dashboard(sec, end)
     if not d.get("available"):
         st.warning(f"板块数据不足：{d.get('reason','')}"); return
 
@@ -3078,7 +3107,7 @@ def page_industry():
 
     # 基本面横截面（仅供人读·不入量化）
     try:
-        f = ind.sector_fundamentals(tks)
+        f = c_sector_fundamentals(sec)
         if f["n_growth"] or f["n_pe"]:
             st.caption(f"📊 成分基本面中位（{f['n']}只·仅供人读·含前视/陈旧）：营收同比 "
                        + (f"{f['rev_growth_med']:+.0%}" if f['rev_growth_med'] == f['rev_growth_med'] else "—")
@@ -3150,11 +3179,10 @@ def page_position_card():
                 'v3 连续定仓(DSR 0.999)+回撤桶+趋势死亡触发——<b>证伪的逻辑(固定止损/快速二元出场)一律不进</b>。</div>',
                 unsafe_allow_html=True)
     st.write("")
-    from analysis import position_guidance as pg
-
+    from analysis import position_guidance as pg   # 仅用其常量 PROFILE_ZH；重算走 c_position_guidance 缓存
     with st.spinner(f"生成 {asset} 作战卡…"):
         try:
-            g = pg.position_guidance(asset, start=start, end=end, horizon=gl_horizon)
+            g = c_position_guidance(asset, start, end, gl_horizon)
         except Exception as e:  # noqa: BLE001
             st.error(f"作战卡生成失败：{type(e).__name__}: {e}")
             return
@@ -3174,7 +3202,7 @@ def page_position_card():
     if g["exposure"]["leveraged"].get("lev_gated_off"):
         st.info("🔒 低波动门：当前波动分位偏高(>50%) → **🔥杠杆档今日不上杠杆**(封顶100%)。只在低波动+确认趋势时才放大。")
     if x.get("leverage_warning"):
-        st.error(x["leverage_warning"])
+        st.warning(x["leverage_warning"])   # 杠杆是风险"提示"非报错——用黄色warning而非红色error，避免正常页常驻红框
     st.write("")
 
     # —— 暴露历史图（中性档）——
@@ -3337,9 +3365,7 @@ def page_stock_ranking():
         return
 
     with st.spinner("计算多因子综合分 + IC 验证…"):
-        res = sr.rank_stocks(tickers, start=str(start))
-        val = sr.validate_ranking(tickers, start="2013-01-01")
-        verd = sr.ranking_verdict(val)
+        res, val, verd = c_ranking(tuple(tickers), str(start))
 
     # —— 诚实裁决横幅 ——
     if verd["grade"].startswith("🔴"):
