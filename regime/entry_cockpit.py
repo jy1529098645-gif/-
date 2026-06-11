@@ -828,12 +828,36 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     near_ma200 = bool(dist_ma200 == dist_ma200 and 0 <= dist_ma200 < 0.04)
 
     supports = _tech_supports(ohlcv, lookback=lookback)
+    # —— 每个支撑位挂"历史胜率"：本票历史上在该回撤深度(±tol)且趋势健康时，进场 horizon 日远期为正的占比 ——
+    # 校准非预测：单票样本可能少(N标注)；'胜率'是历史经验分布，非保证；长趋势牛股普遍 60~75%。
+    _hi252 = px.rolling(252, min_periods=120).max()
+    _dd_hist = (px / _hi252 - 1.0)
+    _up_hist = (px > ma200_s)
+    _hz = int(min(horizon, 126))   # 用 126 日(半年)作"入场胜率"口径，决策更相关
+    _fwd_hist = px.shift(-_hz) / px - 1.0
+    _cur_high = float(px.tail(252).max()) if len(px) >= 120 else float(px.max())
+
+    def _level_winrate(level):
+        if not (level and level > 0 and _cur_high):
+            return (float("nan"), 0, float("nan"))
+        depth = level / _cur_high - 1.0                      # 该支撑相对当前52周高的回撤深度(≤0)
+        m = (_dd_hist >= depth - tol) & (_dd_hist <= depth + tol) & _up_hist & _fwd_hist.notna()
+        f = _fwd_hist[m].dropna()
+        if len(f) < 30:               # 样本<30 不报胜率（单票深档样本少、幸存者偏差重，报了是骗自己）
+            return (float("nan"), int(len(f)), float("nan"))
+        return (float((f > 0).mean()), int(len(f)), float(f.median()))
+
+    for s in supports:
+        s["win"], s["win_n"], s["win_med"] = _level_winrate(s["price"])
+
     # 现价**下方**最近的技术支撑 = 可执行的"回踩分批区"（按距现价由近到远）
     supports_below = sorted([s for s in supports if s["dist_pct"] < -0.005],
                             key=lambda s: -s["dist_pct"])
     # 现价正落在支撑共振区？(≥2 技术位 ±tol 聚集) → 现在就能分批
     near_now = [s for s in supports if abs(s["price"] / cur - 1.0) <= tol]
     at_support_now = bool(len(near_now) >= 2)
+    # 现价本身的历史胜率（"现在就买"的胜率）
+    win_now, win_now_n, _ = _level_winrate(cur)
 
     # —— 优质回踩（趋势 + 恐慌折价）：回测验证(scripts/vix_rsi_signals.py)的更准入场 ——
     # 趋势健康 × RSI回踩<40 × VIX分位>70% → 历史胜率/收益均高于裸"趋势健康"(两段样本外均胜)。
@@ -920,6 +944,7 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
         "anchor": float(anchor) if anchor == anchor else None, "band": band, "stat_note": stat_note,
         "confluence": confluence, "confirms": confirms, "supports": supports,
         "supports_below": supports_below, "at_support_now": at_support_now, "supports_near_now": near_now,
+        "win_now": win_now, "win_now_n": win_now_n, "win_horizon": _hz,
         "grade": grade, "grade_tag": gtag, "note": note,
         "tier": best_entry.get("tier", ""), "stat_excess": best_entry.get("excess_median", float("nan")),
     }

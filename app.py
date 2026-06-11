@@ -584,10 +584,12 @@ def c_build_scan(tickers: tuple, end: str):
             sup = below[0] if below else None
             sup_txt = ("现价在支撑共振区" if ef.get("at_support_now")
                        else (f"{sup['label']} {sup['price']:.1f}（{sup['dist_pct']:+.0%}）" if sup else "—"))
+            _wn = ef.get("win_now")
             rows.append({
                 "票": tk, "_tag": ef["grade_tag"], "评级": f'{ef["grade_tag"]} {ef["grade"]}',
                 "回调": cur / hi - 1.0, "RSI": ef.get("rsi", float("nan")),
                 "距200线": (cur / ma200 - 1.0) if ma200 == ma200 and ma200 else float("nan"),
+                "现价买胜率": (_wn * 100 if _wn == _wn else float("nan")),
                 "离场": ew["level"], "现价": cur, "回踩支撑位/状态": sup_txt,
                 "_fear": bool(ef.get("fear_pullback")), "_atsup": bool(ef.get("at_support_now")),
             })
@@ -2245,18 +2247,24 @@ def page_panorama():
         if _efc.get("fear_pullback"):
             st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_efc.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                        f"{(_efc.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证胜率约 67%→72%(两段样本外均胜)，"
-                       f"相对更准的入场窗口，相对更准的入场窗口·**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
+                       f"**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
+        if _efc.get("win_now") == _efc.get("win_now"):
+            st.markdown(f"**现价买入历史胜率 ≈ {_efc['win_now']*100:.0f}%**（N={_efc.get('win_now_n')}·{_efc.get('win_horizon')}日远期为正占比）")
+        def _wtag2(s):
+            return (f' · 胜率{s["win"]*100:.0f}%' if s.get("win") == s.get("win") else ' · 样本少')
         if _efc.get("at_support_now") and _near:
             st.markdown("**现价即在支撑共振区**：" + "".join(
                 f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
                 f'background:var(--good-weak);border:1px solid var(--good-border);font-size:0.74rem;color:var(--text)">'
-                f'{s["label"]} {s["price"]:.1f}</span>' for s in _near[:5]), unsafe_allow_html=True)
+                f'{s["label"]} {s["price"]:.1f}{_wtag2(s)}</span>' for s in _near[:5]), unsafe_allow_html=True)
         if _below:
-            st.markdown("**📉 回踩分批区（现价下方最近支撑，回踩到此分批）**：" + "".join(
+            st.markdown("**📉 回踩分批区（现价下方最近支撑·附历史胜率）**：" + "".join(
                 f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
                 f'background:var(--card2);border:1px solid var(--border);font-size:0.74rem;color:var(--text)">'
-                f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%})</span>' for s in _below[:5]),
+                f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%}){_wtag2(s)}</span>' for s in _below[:5]),
                 unsafe_allow_html=True)
+            st.caption("⚠️ 胜率=本票历史上在该回撤深度+趋势健康时半年后为正占比。**牛股普遍 70~95%、越深越高=幸存者偏差**"
+                       "（没回来的早破位被剔）——别把高胜率当'越深越该重仓'，深档样本少、尾部更肥。")
         st.caption(_efc["note"])
         if _efc.get("stat_note"):
             st.caption(_efc["stat_note"])
@@ -3144,19 +3152,26 @@ def page_position_card():
             if _ef.get("fear_pullback"):
                 st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_ef.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                            f"{(_ef.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证：这种'趋势内逢恐慌回踩'进场"
-                           f"**历史胜率约 67%→72%**(两段样本外均胜)，是相对更准的入场窗口，相对更准的入场窗口·**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
-            # 可执行回踩分批区（现价下方最近支撑）—— 这是真正能用的"在哪买"
+                           f"**历史胜率约 67%→72%**(两段样本外均胜)，**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
+            # 现价买入的历史胜率
+            if _ef.get("win_now") == _ef.get("win_now"):
+                st.markdown(f"**现价买入历史胜率 ≈ {_ef['win_now']*100:.0f}%**（N={_ef.get('win_now_n')}·{_ef.get('win_horizon')}日远期为正占比）")
+            # 可执行回踩分批区（现价下方最近支撑）+ 每个价位历史胜率
+            def _wtag(s):
+                return (f' · 胜率{s["win"]*100:.0f}%' if s.get("win") == s.get("win") else ' · 样本少')
             if _ef.get("at_support_now") and _near:
                 st.markdown("**现价即在支撑共振区**：" + "".join(
                     f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
                     f'background:var(--good-weak);border:1px solid var(--good-border);font-size:0.72rem;color:var(--text)">'
-                    f'{s["label"]} {s["price"]:.1f}</span>' for s in _near[:5]), unsafe_allow_html=True)
+                    f'{s["label"]} {s["price"]:.1f}{_wtag(s)}</span>' for s in _near[:5]), unsafe_allow_html=True)
             if _below:
-                st.markdown("**📉 回踩分批区（现价下方最近支撑，若到达分批）**：" + "".join(
+                st.markdown("**📉 回踩分批区（现价下方最近支撑·附历史胜率）**：" + "".join(
                     f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
                     f'background:var(--card2);border:1px solid var(--border);font-size:0.72rem;color:var(--text)">'
-                    f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%})</span>' for s in _below[:4]),
+                    f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%}){_wtag(s)}</span>' for s in _below[:4]),
                     unsafe_allow_html=True)
+                st.caption("⚠️ 胜率=本票历史上在该回撤深度+趋势健康时、半年后为正的占比。**牛股普遍 70~95%、且越深越高，"
+                           "是幸存者偏差(没回来的早破位被剔)**——别把高胜率当'越深越该重仓'，深档样本少、尾部更肥。")
             st.caption(_ef["note"])
             if _ef.get("stat_note"):
                 st.caption(_ef["stat_note"])
@@ -3304,9 +3319,10 @@ def page_build_scan():
     green = df[df["_tag"].isin(["🟢", "✨"])].sort_values("回调")
     amber = df[df["_tag"] == "🟡"].sort_values("回调")
     red = df[df["_tag"] == "🔴"].sort_values("回调")
-    cols = ["票", "评级", "回调", "RSI", "距200线", "离场", "回踩支撑位/状态"]
+    cols = ["票", "评级", "回调", "RSI", "距200线", "现价买胜率", "离场", "回踩支撑位/状态"]
     cfg = {"回调": st.column_config.NumberColumn(format="%+.0f%%"),
            "距200线": st.column_config.NumberColumn(format="%+.0f%%"),
+           "现价买胜率": st.column_config.NumberColumn(format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(幸存者偏差)·非保证"),
            "RSI": st.column_config.NumberColumn(format="%.0f")}
     # %列后端是小数，转百分显示
     def _pct(d):
@@ -3333,7 +3349,7 @@ def page_build_scan():
     st.divider()
     st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯。"
                "数据按上一收盘计。下单按你券商实时价 + 支撑位挂分批单。")
-    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "RSI", "距200线", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
+    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "RSI", "距200线", "现价买胜率", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
     st.download_button("⬇️ 导出扫描结果(Markdown)", _md, file_name=f"建仓扫描_{uni}_{end}.md", mime="text/markdown")
 
 
