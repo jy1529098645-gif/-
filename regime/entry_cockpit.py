@@ -40,7 +40,7 @@ _SLIP = float(_CFG["costs"]["slippage"])
 __all__ = [
     "entry_zones", "format_zone_verdict", "best_entry_zone", "best_entry_across_horizons",
     "format_best_entry", "earnings_reaction_stats", "upcoming_events", "ladder_plan_backtest",
-    "entry_miss_risk", "format_miss_risk",
+    "entry_miss_risk", "format_miss_risk", "entry_confluence",
 ]
 
 # 默认回撤带阈值（距前高的深度），相邻两档构成一个价位带；最后一段为 ">最深档"。
@@ -760,3 +760,121 @@ def _ladder_verdict(asset: str, per: dict, vs_lump: dict) -> str:
                 f"而浮亏只少 {max(mdd_gain,0):+.0%}——等跌的机会成本 > 抗跌收益。除非你强烈想压低短期回撤。")
     return (f"📌 {asset}：**两者接近**。分批 vs 一次性中位回报差 {ret_cost:+.0%}、最深浮亏差 {mdd_gain:+.0%}，"
             f"历史上分批跑赢一次性的概率 {beat:.0%}。按你的心理承受力选即可。")
+
+
+# ===========================================================================
+# 块 1c：入场位技术共振（合理入场位 = 统计正边际 × 技术支撑共振）
+# ===========================================================================
+def _tech_supports(ohlcv: pd.DataFrame, lookback: int = 252) -> list[dict]:
+    """当前价**附近/下方**的技术支撑位清单（合理入场位的'技术'依据）。
+
+    收录：MA50/MA200、Volume Profile POC/价值区下沿、近20/60/120日前低、
+    52周区间斐波那契回撤(38.2/50/61.8%)。每个支撑标 {label, price, kind}。
+    只是客观技术位，非预测——用于和'统计正边际档'求共振。
+    """
+    from analysis.volume_profile import volume_profile
+    px = ohlcv["close"].dropna()
+    cur = float(px.iloc[-1])
+    out: list[dict] = []
+
+    def _add(label, lvl, kind):
+        if lvl == lvl and lvl > 0:
+            out.append({"label": label, "price": float(lvl), "kind": kind,
+                        "dist_pct": float(lvl / cur - 1.0)})
+
+    ma50 = px.rolling(50, min_periods=25).mean().iloc[-1]
+    ma200 = px.rolling(200, min_periods=100).mean().iloc[-1]
+    _add("MA50", ma50, "均线")
+    _add("MA200", ma200, "均线")
+    try:
+        vp = volume_profile(ohlcv, lookback=lookback)
+        _add("POC换手密集价", vp["poc"], "筹码")
+        _add("价值区下沿", vp["value_area"][0], "筹码")
+    except Exception:  # noqa: BLE001
+        pass
+    for w, nm in ((20, "近20日低"), (60, "近60日低"), (120, "近120日低")):
+        _add(nm, px.rolling(w, min_periods=max(5, w // 2)).min().iloc[-1], "前低")
+    seg = px.tail(lookback)
+    hi, lo = float(seg.max()), float(seg.min())
+    if hi > lo:
+        for f, nm in ((0.382, "Fib38.2%"), (0.5, "Fib50%"), (0.618, "Fib61.8%")):
+            _add(nm, hi - (hi - lo) * f, "斐波那契")
+    return out
+
+
+def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict | None = None,
+                     horizon: int = 252, tol: float = 0.025, lookback: int = 252) -> dict:
+    """**合理入场位**：把'统计正边际档'(best_entry_zone) 与'技术支撑共振'融合。
+
+    逻辑：① 取统计最佳入场区的锚定价/区间(回撤桶里 CI 下界最优、已过反过拟合关)；
+         ② 找当前价附近/下方的技术支撑(均线/POC/前低/Fib)；
+         ③ 数锚定价 ±tol 内有几个技术支撑 → **共振度**(confluence)；共振越多=该价位越'合理'(多重技术认同)；
+         ④ **飞刀防护**：跌破200线且均线下行 → 标 falling_knife，建议等企稳别接；
+         ⑤ 评级 = 统计置信 × 技术共振，给 强/中/弱-观望。
+    返回 dict：anchor/band/confluence/confirms[]/grade/falling_knife/at_support_now/supports[]/note。
+    校准非预测：入场区是'若到达就分批行动'的参考，共振高≠保证反弹。
+    """
+    px = ohlcv["close"].dropna()
+    cur = float(px.iloc[-1])
+    ma200_s = px.rolling(200, min_periods=100).mean()
+    ma200 = float(ma200_s.iloc[-1]) if ma200_s.notna().iloc[-1] else float("nan")
+    slope_dn = bool(ma200_s.notna().iloc[-1] and ma200_s.notna().iloc[-21]
+                    and ma200_s.iloc[-1] < ma200_s.iloc[-21])
+    falling_knife = bool(ma200 == ma200 and cur < ma200 and slope_dn)
+
+    if best_entry is None:
+        best_entry = best_entry_zone(px, asset=asset, horizon=horizon)
+    supports = _tech_supports(ohlcv, lookback=lookback)
+
+    stat_ok = bool(best_entry.get("has_zone"))
+    anchor = best_entry.get("anchor_price", float("nan")) if stat_ok else float("nan")
+    band = best_entry.get("price_band", [None, None]) if stat_ok else [None, None]
+
+    # 锚定价附近的技术共振
+    confirms = []
+    if anchor == anchor and anchor:
+        for s in supports:
+            if abs(s["price"] / anchor - 1.0) <= tol:
+                confirms.append(s)
+    confluence = len(confirms)
+
+    # 现价是否正处在'有共振的支撑'(≥2 技术位聚集，且统计正边际)——回答"现在能不能分批"
+    near_now = [s for s in supports if abs(s["price"] / cur - 1.0) <= tol]
+    at_support_now = bool(len(near_now) >= 2)
+
+    stat_conf = bool(best_entry.get("confident"))
+    if falling_knife:
+        grade, gtag = "弱·观望（飞刀）", "🔴"
+    elif stat_conf and confluence >= 2:
+        grade, gtag = "强（统计+技术双确认）", "🟢"
+    elif (stat_conf and confluence >= 1) or (not stat_conf and confluence >= 2):
+        grade, gtag = "中（单边确认）", "🟡"
+    elif stat_ok or confluence >= 1:
+        grade, gtag = "偏弱（仅一类弱证据）", "🟡"
+    else:
+        grade, gtag = "无（既无统计正边际也无技术共振）", "⚪"
+
+    if falling_knife:
+        note = ("⚠️ 飞刀防护：价在200线下方且均线下行——历史上'接飞刀'胜率差。别在此抢反弹，"
+                "等**站回200线/构筑双底**确认企稳，或只极轻仓试探+严止损。")
+    elif confluence >= 2:
+        _names = "、".join(c["label"] for c in confirms)
+        note = (f"该入场区附近有 **{confluence} 个技术支撑共振**（{_names}）。"
+                "**验证口径**：历史上多支撑处进场，远期收益**并不更高**(共振非收益alpha)，但**进场后浮亏更浅、"
+                "尾部更稳=更拿得住**——配合回撤桶正边际分批，是'更舒服的入场点'，非'涨更多'的保证。")
+    elif confluence == 1:
+        note = (f"入场区附近有 1 个技术支撑（{confirms[0]['label']}）——单一支撑，入场质量改善有限，轻仓试探。")
+    elif stat_ok:
+        note = "有历史回撤桶正边际，但锚定价附近无技术支撑共振——可等回踩到技术位(均线/POC/前低)再分批，进场更不易被套。"
+    else:
+        note = "当前既无统计正边际档、也无技术支撑共振——不硬给买点，观望或等更深/企稳。"
+
+    return {
+        "asset": asset, "current_price": cur, "ma200": ma200,
+        "falling_knife": falling_knife, "stat_confident": stat_conf, "stat_has_zone": stat_ok,
+        "anchor": float(anchor) if anchor == anchor else None, "band": band,
+        "confluence": confluence, "confirms": confirms, "supports": supports,
+        "at_support_now": at_support_now, "supports_near_now": near_now,
+        "grade": grade, "grade_tag": gtag, "note": note,
+        "tier": best_entry.get("tier", ""), "stat_excess": best_entry.get("excess_median", float("nan")),
+    }

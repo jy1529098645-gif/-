@@ -530,6 +530,14 @@ def c_best_entry_scan(asset: str, start: str, end: str):
     px = loader.load_prices([asset], start, end)[asset]
     return ec.best_entry_across_horizons(px, asset=asset, single_name=(asset != "SPY"), n_boot=350)
 
+@st.cache_data(show_spinner=False)
+def c_entry_confluence(asset: str, start: str, end: str):
+    """合理入场位：统计正边际档 × 技术支撑共振（含飞刀防护）。"""
+    from data import loader
+    from regime import entry_cockpit as ec
+    ohlcv = loader.load_ohlcv(asset, start, end).dropna()
+    return ec.entry_confluence(ohlcv, asset=asset)
+
 # 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
 _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
                    "JNJ", "LLY", "XOM", "CVX", "WMT", "HD", "PG", "KO", "CAT", "BA",
@@ -2983,6 +2991,38 @@ def page_position_card():
 
     cL, cR = st.columns(2)
     with cL:
+        # —— 🎯 合理入场位（统计正边际 × 技术支撑共振 × 飞刀防护）——
+        try:
+            _ef = c_entry_confluence(asset, start, end)
+            _cur = _ef["current_price"]
+            _ecol = (T["bad"] if _ef["falling_knife"] else
+                     T["good"] if _ef["grade"].startswith("强") else
+                     T["gold"] if _ef["grade"].startswith("中") else T["muted"])
+            _anchor_txt = (f"{_ef['anchor']:.1f}" if _ef.get("anchor") else "—")
+            _bd = _ef.get("band") or [None, None]
+            _band_txt = (f"{_bd[0]:.1f}–{_bd[1]:.1f}" if _bd[0] and _bd[1] else
+                         (f"≤{_bd[1]:.1f}" if _bd[1] else "—"))
+            st.markdown(
+                f'<div style="border-radius:12px;padding:11px 15px;margin:0 0 8px;'
+                f'background:{_ecol}1f;border:1px solid {_ecol}55;border-left:5px solid {_ecol}">'
+                f'<div style="font-size:0.74rem;color:var(--muted);letter-spacing:.4px">🎯 合理入场位 · {_ef["grade_tag"]} <b style="color:{_ecol}">{_ef["grade"]}</b></div>'
+                f'<div style="font-size:0.92rem;color:var(--text);margin-top:3px">'
+                f'统计锚定价 <b>{_anchor_txt}</b>（区间 {_band_txt}）· 现价 {_cur:.1f} · '
+                f'技术共振 <b style="color:{_ecol}">{_ef["confluence"]}</b> 个</div>'
+                f'</div>', unsafe_allow_html=True)
+            if _ef.get("confirms"):
+                _chips = "".join(
+                    f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
+                    f'background:var(--card2);border:1px solid var(--border);font-size:0.72rem;color:var(--text)">'
+                    f'{c["label"]} {c["price"]:.1f}</span>' for c in _ef["confirms"])
+                st.markdown("锚定价附近共振：" + _chips, unsafe_allow_html=True)
+            if _ef.get("supports_near_now"):
+                st.caption("现价附近技术支撑：" + " · ".join(
+                    f"{s['label']} {s['price']:.1f}({s['dist_pct']:+.1%})" for s in _ef["supports_near_now"][:5]))
+            st.caption(_ef["note"])
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"合理入场位暂不可用：{type(_e).__name__}")
+
         st.markdown(f"##### 🎯 建仓：{b['stance']}　`{b['grade']}`")
         st.caption(b["why"])
         bk = b["drawdown_bucket"]

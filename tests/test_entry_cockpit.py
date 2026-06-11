@@ -21,6 +21,42 @@ def aapl_edates():
     return loader.load_earnings_dates("AAPL", limit=80)
 
 
+@pytest.fixture(scope="module")
+def aapl_ohlcv():
+    return loader.load_ohlcv("AAPL", "2010-01-01", "2024-12-31").dropna()
+
+
+def test_entry_confluence_structure(aapl_ohlcv):
+    c = ec.entry_confluence(aapl_ohlcv, asset="AAPL")
+    # 必含关键字段 + 类型合理
+    for k in ("current_price", "falling_knife", "confluence", "confirms", "supports",
+              "grade", "grade_tag", "note", "at_support_now"):
+        assert k in c
+    assert c["confluence"] == len(c["confirms"]) >= 0
+    assert isinstance(c["supports"], list) and len(c["supports"]) >= 2     # 至少均线两条
+    # 每个技术支撑都有 label/price/dist_pct
+    for s in c["supports"]:
+        assert s["price"] > 0 and "label" in s and "dist_pct" in s
+    # 共振确认必是支撑的子集、且确实落在锚定价 ±tol 内
+    if c.get("anchor"):
+        for cf in c["confirms"]:
+            assert abs(cf["price"] / c["anchor"] - 1.0) <= 0.025 + 1e-9
+
+
+def test_entry_confluence_falling_knife_guard(aapl_ohlcv):
+    # 构造'飞刀'：跌破200线 + 均线下行的深跌段 → 必标 falling_knife + 观望
+    px = aapl_ohlcv["close"]
+    ma200 = px.rolling(200, min_periods=100).mean()
+    # 找一个 价<ma200 且 ma200 下行 的日期切片
+    cond = (px < ma200) & (ma200 < ma200.shift(21))
+    knife_days = cond[cond].index
+    if len(knife_days):
+        cut = knife_days[-1]
+        c = ec.entry_confluence(aapl_ohlcv.loc[:cut], asset="AAPL")
+        assert c["falling_knife"] is True
+        assert "飞刀" in c["grade"] and c["grade_tag"] == "🔴"
+
+
 def test_third_friday():
     # 2024-06 第三个周五 = 6/21
     assert ec._third_friday(2024, 6) == pd.Timestamp("2024-06-21")
