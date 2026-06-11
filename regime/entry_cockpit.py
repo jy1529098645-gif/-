@@ -804,7 +804,8 @@ def _tech_supports(ohlcv: pd.DataFrame, lookback: int = 252) -> list[dict]:
 
 def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict | None = None,
                      horizon: int = 252, tol: float = 0.025, lookback: int = 252,
-                     warn_red: bool = False, warn_amber: bool = False, warn_label: str = "") -> dict:
+                     warn_red: bool = False, warn_amber: bool = False, warn_label: str = "",
+                     rsi_window: int = 14, vix_pctile: float | None = None) -> dict:
     """**合理入场位**：把'统计正边际档'(best_entry_zone) 与'技术支撑共振'融合。
 
     逻辑：① 取统计最佳入场区的锚定价/区间(回撤桶里 CI 下界最优、已过反过拟合关)；
@@ -833,6 +834,15 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     # 现价正落在支撑共振区？(≥2 技术位 ±tol 聚集) → 现在就能分批
     near_now = [s for s in supports if abs(s["price"] / cur - 1.0) <= tol]
     at_support_now = bool(len(near_now) >= 2)
+
+    # —— 优质回踩（趋势 + 恐慌折价）：回测验证(scripts/vix_rsi_signals.py)的更准入场 ——
+    # 趋势健康 × RSI回踩<40 × VIX分位>70% → 历史胜率/收益均高于裸"趋势健康"(两段样本外均胜)。
+    from factors import signals as _sg
+    _rsi_s = _sg.rsi(px, int(rsi_window))
+    rsi_now = float(_rsi_s.iloc[-1]) if _rsi_s.notna().iloc[-1] else float("nan")
+    trend_up = bool(ma200 == ma200 and cur > ma200)
+    fear_pullback = bool(trend_up and not falling_knife and rsi_now == rsi_now and rsi_now < 40
+                         and vix_pctile is not None and vix_pctile == vix_pctile and vix_pctile > 0.70)
 
     # 统计'最佳档'降级为参考：单票常 N独立=1、且趋势股最佳档在高点(锚定价>现价)，是噪声非买点。
     if best_entry is None:
@@ -870,6 +880,11 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
         grade, gtag = "离场红灯·暂不建新仓", "🔴"
         note = (f"⚠️ 当前是**离场红灯**（{warn_label or '破位/宽度恶化'}）——确认趋势坏了，别建新仓。"
                 "入场和离场同一 regime：等站回200线、宽度转健康再说（与下方撤离口径一致）。")
+    elif fear_pullback:
+        grade, gtag = "优质回踩（趋势+恐慌折价）·可加码分批", "🟢"
+        note = (f"✅ **优质回踩**：趋势健康(>200线) + RSI回踩{rsi_now:.0f}(<40) + VIX处历史高分位(恐慌折价)。"
+                "回测验证(含两段样本外)：这种'趋势内逢恐慌回踩'进场**历史胜率/收益均高于普通健康进场**"
+                "(约+3~5pt胜率)——是相对更准的入场窗口，可在支撑处**积极些分批**(仍非保证)。")
     elif at_support_now:
         _names = "、".join(s["label"] for s in near_now)
         grade, gtag = "现价即在支撑共振区·可分批", "🟢"
@@ -896,6 +911,7 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     return {
         "asset": asset, "current_price": cur, "ma200": ma200, "dist_ma200": dist_ma200,
         "falling_knife": falling_knife, "near_ma200": near_ma200,
+        "rsi": rsi_now, "vix_pctile": vix_pctile, "fear_pullback": fear_pullback,
         "warn_red": bool(warn_red), "warn_amber": bool(warn_amber),
         "stat_confident": stat_conf, "stat_has_zone": stat_ok, "anchor_actionable": anchor_actionable,
         "anchor": float(anchor) if anchor == anchor else None, "band": band, "stat_note": stat_note,

@@ -530,14 +530,28 @@ def c_best_entry_scan(asset: str, start: str, end: str):
     px = loader.load_prices([asset], start, end)[asset]
     return ec.best_entry_across_horizons(px, asset=asset, single_name=(asset != "SPY"), n_boot=350)
 
+@st.cache_data(show_spinner=False, ttl=1800)
+def c_vix_pctile(end: str):
+    """当前 VIX 在过去 252 交易日的历史分位（供'优质回踩=趋势+恐慌折价'入场信号）。失败返回 None。"""
+    try:
+        from data import loader
+        v = loader.load_ohlcv("^VIX", "1995-01-01", end)["close"].dropna()
+        if len(v) < 60:
+            return None
+        return float((v.tail(252) <= v.iloc[-1]).mean())
+    except Exception:  # noqa: BLE001
+        return None
+
 @st.cache_data(show_spinner=False)
 def c_entry_confluence(asset: str, start: str, end: str,
-                       warn_red: bool = False, warn_amber: bool = False, warn_label: str = ""):
-    """合理入场位：regime/飞刀/离场预警门控 + 可执行回踩支撑（统计锚定价已降级）。"""
+                       warn_red: bool = False, warn_amber: bool = False, warn_label: str = "",
+                       vix_pctile: float | None = None):
+    """合理入场位：regime/飞刀/离场预警门控 + 可执行回踩支撑（统计锚定价已降级）+ 优质回踩(VIX/RSI)。"""
     from data import loader
     from regime import entry_cockpit as ec
     ohlcv = loader.load_ohlcv(asset, start, end).dropna()
-    return ec.entry_confluence(ohlcv, asset=asset, warn_red=warn_red, warn_amber=warn_amber, warn_label=warn_label)
+    return ec.entry_confluence(ohlcv, asset=asset, warn_red=warn_red, warn_amber=warn_amber,
+                               warn_label=warn_label, vix_pctile=vix_pctile)
 
 # 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
 _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
@@ -1900,7 +1914,7 @@ def page_panorama():
         # (已回测：黄灯远期不更差、只小仓即可)。decision_card 的"动量陷阱/无稳健档"(基于噪声回撤桶)
         # 降级为"可买但此跌无统计优势"的提示，不再硬挡，杜绝"panorama暂不建仓 vs 作战卡可分批"的跨页矛盾。
         try:
-            _efc = c_entry_confluence(a, zstart, end, _warn_red, _warn_amber, _ewt.get("level", ""))
+            _efc = c_entry_confluence(a, zstart, end, _warn_red, _warn_amber, _ewt.get("level", ""), c_vix_pctile(end))
         except Exception:  # noqa: BLE001
             _efc = None
         _enter_ok = (_efc is None) or (_efc.get("grade_tag") != "🔴")
@@ -3067,7 +3081,7 @@ def page_position_card():
             _wred = bool(_ew_for_entry and _ew_for_entry.get("red"))
             _wamb = bool(_ew_for_entry and _ew_for_entry.get("amber"))
             _wl = (_ew_for_entry or {}).get("level", "")
-            _ef = c_entry_confluence(asset, start, end, _wred, _wamb, _wl)
+            _ef = c_entry_confluence(asset, start, end, _wred, _wamb, _wl, c_vix_pctile(end))
             _cur = _ef["current_price"]
             _ecol = (T["bad"] if _ef["grade_tag"] == "🔴" else
                      T["good"] if _ef["grade_tag"] == "🟢" else
