@@ -196,14 +196,16 @@ def sector_news_themes(tickers: list[str], limit_per: int = 6, n_tickers: int = 
         if df is None or df.empty:
             continue
         an = analyze_news(df) or {}
-        per_ticker_tone[t] = int(an.get("tone", 0))
+        # 修：analyze_news 返回的是 net_tone(float·非"tone")，情绪标签是 正面/负面/中性(非 利好/利空)。
+        # 原代码读 an["tone"]/比对"利好/利空" 全部命中不到 → 板块情绪面板恒为 0/0/空(静默失效)。
+        per_ticker_tone[t] = float(an.get("net_tone", 0.0))
         for th, c in an.get("theme_count", {}).items():
             theme_total[th] = theme_total.get(th, 0) + c
         meta = {it["title"]: it for it in an.get("items", [])}
         for _, r in df.iterrows():
             m = meta.get(r["title"], {})
             s = m.get("sentiment", "")
-            pos += (s == "利好"); neg += (s == "利空")
+            pos += (s == "正面"); neg += (s == "负面")
             providers.add(r.get("provider", ""))
             items.append({"ticker": t, "date": str(r.get("date", "")), "title": r.get("title", ""),
                           "sentiment": s, "themes": [_THEME_CN.get(x, x) for x in m.get("themes", [])],

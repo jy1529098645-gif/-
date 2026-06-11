@@ -307,9 +307,12 @@ def live_quote(ticker: str) -> dict:
         return out
     except Exception:  # noqa: BLE001
         pass
-    try:  # 回退：最近缓存收盘
-        s = _load_one_cached(ticker, "2024-01-01", None).dropna()
-        if len(s):
+    try:  # 回退：最近缓存收盘——**只读**缓存(_read_price_cache)，不触发下载/落盘
+        # 修：原用 _load_one_cached 会在缓存缺该区间时下载并改写 price_*.parquet，
+        # 把"现价展示"这条只读路径污染成会动回测取数缓存。现仅读已有缓存。
+        s = _read_price_cache(ticker)
+        s = s.dropna() if s is not None else None
+        if s is not None and len(s):
             out.update(price=float(s.iloc[-1]), ok=True, delayed=True,
                        source=f"缓存收盘 {s.index[-1].date()}（实时取价失败）")
     except Exception:  # noqa: BLE001
@@ -327,7 +330,9 @@ def load_earnings_dates(ticker: str, limit: int = 160, refresh: bool = False) ->
     带 parquet 缓存。未来已排期但未公布的行 Reported EPS 为 NaN。
     """
     path = _CACHE / f"earnings_{ticker.replace('/', '_').replace('^', '_')}.parquet"
-    if path.exists() and not refresh:
+    # TTL 7天：财报日期会被公司重排(提前/推迟)，无 TTL 的缓存会永远用旧排期 → days_to_earnings/PEAD 对齐到过期日。
+    _fresh = path.exists() and (pd.Timestamp.now().timestamp() - path.stat().st_mtime) < 7 * 86400
+    if _fresh and not refresh:
         df = _safe_read_parquet(path)
         if df is not None:
             df.index = pd.to_datetime(df.index)

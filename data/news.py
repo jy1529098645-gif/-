@@ -182,6 +182,14 @@ def stock_news(ticker: str, limit: int = 12, sources=("google", "yahoo"),
 
     df = pd.DataFrame(uniq, columns=_COLS)
     if not df.empty:
+        # 防未来日期：GDELT(UTC seendate)/google(RFC822带时区)解析后可能比本地"今天"超前，
+        # 倒序会把"明天"的条目排到最上、误导"最近发生了什么"。把 date 截到 ≤ 今天(本地)。
+        try:
+            _today = pd.Timestamp.now().normalize()
+            _d = pd.to_datetime(df["date"], errors="coerce")
+            df.loc[_d > _today, "date"] = _today
+        except Exception:  # noqa: BLE001
+            pass
         df = df.sort_values("date", ascending=False, na_position="last").head(limit).reset_index(drop=True)
     if use_cache:
         _NEWS_CACHE[key] = (time.time(), df.copy())

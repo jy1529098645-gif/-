@@ -1196,7 +1196,9 @@ def page_regime():
         fp2["估值"] = fp2["估值"].map(lambda v: _vmap.get(v, v))
         fp2["信用趋势"] = fp2["信用趋势"].map(lambda v: _cmap.get(v, v))
         st.dataframe(fp2.style.format({"距历史高": "{:+.0%}"}), use_container_width=True)
-        st.caption("把今天环境和历史几次大底当时并排，**供你对照**，不替你下结论。")
+        st.caption("把今天环境和历史几次大底当时并排，**供你对照**，不替你下结论。"
+                   "⚠️ 注：『估值』三分位用**全样本**分位划线(含未来数据)，是事后描述性分桶、**不能实时复制**——"
+                   "当年并不知道未来的分位边界；信用/曲线维度无此问题。")
 
 # ===========================================================================
 # 页面：因子评估
@@ -3180,8 +3182,8 @@ def page_industry():
         st.markdown(f"**板块主导主题**：" + ("、".join(f"{t}({c})" for t, c in _nz["top_themes"]) or "无明显主题")
                     + f"　|　情绪天平 利好 {_nz['pos']} / 利空 {_nz['neg']}（{_nz['n']}条·{_nz['providers']}家媒体·启发式非信号）")
         if _nz["hot_pos"] or _nz["hot_neg"]:
-            st.caption("情绪偏多成分：" + ("、".join(f"{k}(+{v})" for k, v in _nz["hot_pos"]) or "—")
-                       + "　|　情绪偏空成分：" + ("、".join(f"{k}({v})" for k, v in _nz["hot_neg"]) or "—"))
+            st.caption("情绪偏多成分：" + ("、".join(f"{k}({v:+.0%})" for k, v in _nz["hot_pos"]) or "—")
+                       + "　|　情绪偏空成分：" + ("、".join(f"{k}({v:+.0%})" for k, v in _nz["hot_neg"]) or "—"))
         for it in _nz["items"][:20]:
             t = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
             th = ("·".join(it["themes"][:2])) if it.get("themes") else ""
@@ -3429,6 +3431,10 @@ def page_stock_ranking():
                                 "分位价差(top-bot)": st.column_config.NumberColumn(format="%+.2f%%"),
                                 "安慰剂IC": st.column_config.NumberColumn(format="%+.3f")})
     st.caption(val["_note"])
+    st.caption(f"⚠️ **统计可信度警示**：① 票池仅 {len(tickers)} 只——横截面 RankIC/分位价差在 N<15 时噪声极大、"
+               "单期 top/bot 各仅几只，ICIR 别当强信号；② 默认池是**已知十年大赢家(科技/半导体)**，在赢家池里跑动量/IC "
+               "天然显著但**不可外推到全市场**(幸存者偏差)；③ h=63 的 IC 序列按 21 日重叠采样、ICIR 标准差被低估(偏乐观)。"
+               "把本页当**健康趋势票筛选器**，不是'top1 会跑赢'的预测。")
     st.download_button("⬇️ 导出选股榜(Markdown)", sr.format_ranking(res, top_n=len(tab)),
                        file_name=f"选股榜_{gsel}_{res['asof']}.md", mime="text/markdown")
 
