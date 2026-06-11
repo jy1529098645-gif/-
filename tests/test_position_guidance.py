@@ -1,7 +1,8 @@
-"""验收：建仓/撤离作战卡引擎（v3 验证版）。
+"""验收：建仓/撤离作战卡引擎（v3 / v3.1 软地板版）。
 
-铁律检查：① 暴露遵守 v3 趋势门规则(趋势死亡→0)；② 三档单调(进取≥中性≥稳健)；
-③ 动量陷阱→建仓转防守；④ 撤离始终带"崩盘保险/不跑赢长牛"诚实口径 + 排除固定止损。
+铁律检查：① 暴露遵守趋势门规则(破位降到 floor×base，稳健 floor=0 仍清零)；② 三档单调；
+③ 动量陷阱→建仓转防守；④ 撤离始终带"崩盘保险/不跑赢长牛"诚实口径 + 排除固定止损；
+⑤ v3.1 软地板：floor/slope_floor 参数生效，各档 floor 配置正确。
 """
 import warnings
 
@@ -39,6 +40,36 @@ def test_leverage_lowvol_gate():
     assert pg._target_exposure(False, False, 0.20, 0.40, max_lev=1.5, vol_pct=0.30) == 0.0
     # max_lev=1 时不受门影响(低波动也不会>1)
     assert pg._target_exposure(True, True, 0.10, 0.25, max_lev=1.0, vol_pct=0.10) == 1.0
+
+
+def test_soft_floor_break():
+    """v3.1 软地板：破位不再一刀清零，而是降到 floor×base；slope_floor 控过渡档。"""
+    base = min(1.0, 0.25 / 0.30)                      # ewmav=0.30 → base≈0.833
+    # 趋势死亡 + floor=0.5 → 0.5×base（保留底仓，非 0）
+    assert abs(pg._target_exposure(False, False, 0.30, 0.25, floor=0.5) - 0.5 * base) < 1e-9
+    # 趋势死亡 + floor=0.0（稳健/默认）→ 仍清零
+    assert pg._target_exposure(False, False, 0.30, 0.25, floor=0.0) == 0.0
+    # 线下未死 + slope_floor=0.7 → 0.7×base
+    assert abs(pg._target_exposure(False, True, 0.30, 0.25, slope_floor=0.7) - 0.7 * base) < 1e-9
+    # floor 越高破位暴露越高（单调）
+    fs = [pg._target_exposure(False, False, 0.30, 0.25, floor=f) for f in (0.0, 0.3, 0.5)]
+    assert fs == sorted(fs) and fs[0] == 0.0 and fs[-1] > 0
+
+
+def test_profiles_have_floor_config():
+    """各档 floor/slope_floor 配置：稳健清零(0)、中性/进取软地板0.5、杠杆0.4。"""
+    for k in ("conservative", "moderate", "aggressive", "leveraged"):
+        assert "floor" in pg.PROFILES[k] and "slope_floor" in pg.PROFILES[k]
+    assert pg.PROFILES["conservative"]["floor"] == 0.0          # 稳健=最强保险(仍清零)
+    assert pg.PROFILES["moderate"]["floor"] >= 0.4              # 中性=软地板(找回复利)
+    assert pg.PROFILES["aggressive"]["floor"] >= 0.4
+    assert pg.PROFILES["leveraged"]["floor"] >= 0.3
+    # 软地板档破位暴露 > 稳健档破位暴露（同状态）
+    cons = pg._target_exposure(False, False, 0.30, pg.PROFILES["conservative"]["tvol"],
+                               floor=pg.PROFILES["conservative"]["floor"])
+    mod = pg._target_exposure(False, False, 0.30, pg.PROFILES["moderate"]["tvol"],
+                              floor=pg.PROFILES["moderate"]["floor"])
+    assert cons == 0.0 and mod > 0.0
 
 
 def test_profiles_monotonic():

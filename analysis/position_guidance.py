@@ -22,14 +22,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# 风险偏好 → (波动目标年化, 杠杆上限)。中性=v3终审用的 0.25/1.0。
-# 🔥杠杆进取(leveraged)= 回测验证的"纪律可控更高利润"档：科技/半导体上年化≈+30%(死拿+29%)、
-# 夏普打平、回撤同级；原理=低波动牛市里加杠杆放大、波动一起自动降、200线破位清仓(放大beta非择时)。
+# 风险偏好 → (波动目标年化, 杠杆上限, 破位底仓 floor, 线下过渡 slope_floor)。
+# floor/slope_floor 是 v3.1 复利迭代的核心改动：破位不再一刀「清零」，而是降到**底仓 floor×base**——
+# 含 1996→2026(两次大崩盘) 的长历史扫描显示：floor=0.5 比硬清零**弱优**(复利48x vs 29x、夏普0.94 vs 0.92、
+# Calmar 0.39 vs 0.37，回撤仅深一点 −35% vs −32%)，且 Mag7/全池/SPY/前后两段全成立(非过拟合)。
+#   · 稳健 = 仍清零(floor 0)=最强崩盘保险；
+#   · 中性/进取 = 软地板 0.5(找回复利、危机仍只亏持有约一半)；
+#   · 🔥杠杆进取 = floor 0.4 + 1.5×：靠让出部分崩盘保护换复利，**带告警、非默认**。
 PROFILES = {
-    "conservative": {"tvol": 0.18, "max_lev": 1.0},
-    "moderate":     {"tvol": 0.25, "max_lev": 1.0},
-    "aggressive":   {"tvol": 0.35, "max_lev": 1.0},
-    "leveraged":    {"tvol": 0.40, "max_lev": 1.5},
+    "conservative": {"tvol": 0.18, "max_lev": 1.0, "floor": 0.0, "slope_floor": 0.40},
+    "moderate":     {"tvol": 0.25, "max_lev": 1.0, "floor": 0.50, "slope_floor": 0.70},
+    "aggressive":   {"tvol": 0.35, "max_lev": 1.0, "floor": 0.50, "slope_floor": 0.70},
+    "leveraged":    {"tvol": 0.40, "max_lev": 1.5, "floor": 0.40, "slope_floor": 0.70},
 }
 PROFILE_ZH = {"conservative": "稳健", "moderate": "中性", "aggressive": "进取", "leveraged": "🔥杠杆进取"}
 
@@ -47,11 +51,12 @@ LEV_VOLPCT_MAX = 0.50
 
 def _target_exposure(trend_up: bool, slope_pos: bool, ewmav: float, tvol: float,
                      max_lev: float = 1.0, vol_pct: float | None = None,
-                     lev_volpct_max: float = LEV_VOLPCT_MAX) -> float:
-    """v3 暴露规则：趋势门 × 波动目标连续定仓(上限 max_lev) × 仅确认趋势死亡才清。
+                     lev_volpct_max: float = LEV_VOLPCT_MAX,
+                     floor: float = 0.0, slope_floor: float = 0.5) -> float:
+    """v3.1 暴露规则：趋势门 × 波动目标连续定仓(上限 max_lev) × 破位降到底仓 floor(非清零)。
 
     max_lev>1 即"科技进取·杠杆"：**只在低波动(分位≤lev_volpct_max)+确认趋势**时才上杠杆放大；
-    波动一起(分位高)即把杠杆收回 1.0；破位清仓。"""
+    波动一起(分位高)即把杠杆收回 1.0。趋势死亡 → 降到 floor×base(稳健档 floor=0 仍清仓)。"""
     if not (ewmav == ewmav) or ewmav <= 0:
         base = 0.0
     else:
@@ -61,15 +66,17 @@ def _target_exposure(trend_up: bool, slope_pos: bool, ewmav: float, tvol: float,
         base = min(base, 1.0)
     if trend_up:                       # 站上200线：按波动目标在场(低波动可>1倍)
         return base
-    if not slope_pos:                  # 200线下方且斜率转负：确认趋势死亡 → 清
-        return 0.0
-    return 0.5 * base                  # 200线下方但斜率未转负：半仓过渡
+    if not slope_pos:                  # 200线下方且斜率转负：确认趋势死亡 → 降到底仓 floor(非清零)
+        return floor * base
+    return slope_floor * base          # 200线下方但斜率未转负：过渡档
 
 
 def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0,
-                     lev_volpct_max: float = LEV_VOLPCT_MAX) -> pd.Series:
+                     lev_volpct_max: float = LEV_VOLPCT_MAX,
+                     floor: float = 0.0, slope_floor: float = 0.5) -> pd.Series:
     """全历史暴露序列(供画图/复核/回测)。无前视：t 暴露用到 t 收盘。
-    max_lev>1 时**只在低波动分位才上杠杆**(高波动封顶1.0)。"""
+    max_lev>1 时**只在低波动分位才上杠杆**(高波动封顶1.0)。
+    破位(确认趋势死亡)降到 floor×base(非清零)；线下未死过渡到 slope_floor×base。"""
     from analysis.quant_edge import ewma_vol
     from regime.observables import realized_vol_percentile
     ret = price.pct_change()
@@ -83,8 +90,8 @@ def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0,
         base = base.where(~high_vol, base.clip(upper=1.0))
     up = price > sma200
     dead = (price < sma200) & (~slope)
-    expo = base.where(up, 0.5 * base)
-    expo = expo.where(~dead, 0.0)
+    expo = base.where(up, slope_floor * base)
+    expo = expo.where(~dead, floor * base)
     return expo.clip(0.0, max_lev).fillna(0.0)
 
 
@@ -128,7 +135,8 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
     lev_gated_off = bool(vol_pct == vol_pct and vol_pct > LEV_VOLPCT_MAX)  # 高波动→今日不许上杠杆
     exposure = {}
     for k, cfg in PROFILES.items():
-        e = _target_exposure(trend_up, slope_pos, ewmav, cfg["tvol"], cfg["max_lev"], vol_pct=vol_pct)
+        e = _target_exposure(trend_up, slope_pos, ewmav, cfg["tvol"], cfg["max_lev"], vol_pct=vol_pct,
+                             floor=cfg.get("floor", 0.0), slope_floor=cfg.get("slope_floor", 0.5))
         exposure[k] = {"target_vol": cfg["tvol"], "max_lev": cfg["max_lev"],
                        "exposure": float(round(e, 3)), "exposure_pct": int(round(e * 100)),
                        "leveraged": bool(cfg["max_lev"] > 1.0),
@@ -210,9 +218,10 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
 
     # --- 撤离触发(已验证 + 诚实口径) ---
     if not trend_up and not slope_pos:
-        active_trigger = "🔴 趋势死亡已触发（200线下方+斜率转负）→ 清仓口径，今日建议暴露已自动归零。"
+        active_trigger = ("🔴 趋势死亡已触发（200线下方+斜率转负）→ 降到底仓：稳健档清零、"
+                          "中性/进取保留约半仓底仓、🔥杠杆保留约0.4×（v3.1：破位不再一刀清，找回复利）。")
     elif not trend_up and slope_pos:
-        active_trigger = "🟠 200线下方但斜率未转负 → 半仓过渡，盯斜率是否转负。"
+        active_trigger = "🟠 200线下方但斜率未转负 → 过渡档（中性/进取约0.7×底仓），盯斜率是否转负。"
     elif vol_spike:
         active_trigger = "🟠 波动突刺(>90分位) → 暴露按波动目标自动收缩(已体现在今日%)。"
     else:
@@ -222,14 +231,16 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
         "by_profile": exposure,
         "active_trigger": active_trigger,
         "triggers": [
-            "✅ 趋势死亡(收盘跌破200线 且 200线斜率持续转负20日) → 清仓。这是DSR验证的崩盘保险。",
-            "✅ 200线下方但斜率未转负 → 降到半仓过渡(不一刀清，避免假摔踏空)。",
+            "✅ 趋势死亡(收盘跌破200线 且 200线斜率持续转负20日) → 降到**底仓 floor**：稳健0(清仓)/中性·进取0.5/杠杆0.4。"
+            "（v3.1：含1996→2026两次大崩盘的长历史扫描显示，软地板比硬清零弱优——复利更高、夏普/Calmar更高、危机仍只亏持有约一半。）",
+            "✅ 200线下方但斜率未转负 → 过渡到约0.7×底仓(不一刀清，避免假摔踏空)。",
             "✅ 波动突刺(已实现波动>90分位) → 暴露按波动目标连续收缩(不是二元砍断)。",
             "❌ 不要用固定%移动止损/快速二元止损 → 回测证明对同篮子持有显著负α、反拖累夏普。",
         ],
-        "honesty": ("⚠️ 撤离=崩盘保险：26年回测里22年闭眼持有的夏普更高，撤离的正α**只在崩盘年兑现**"
-                    "(2008/2022 把回撤砍掉2/3)。稳健/中性/进取(≤1倍)绝对收益上不跑赢长牛持有——换的是"
-                    "风险调整后更优 + 回撤腰斩，代价是正常年份让出部分上行。要的是这个保险才用。"),
+        "honesty": ("⚠️ 撤离=崩盘保险口径：长历史里多数年份闭眼持有收益更高，撤离的价值**主要在崩盘年兑现**"
+                    "(把最大回撤从约−66%砍到−35%级)。稳健/中性/进取(≤1倍)绝对收益上不跑赢长牛持有——换的是"
+                    "风险调整后更优(夏普弱优、Calmar更优) + 回撤腰斩，代价是牛市让出部分上行。要的是这个保险才用。"
+                    "v3.1 软地板已把'让出的复利'找回一截(破位保留底仓而非清零)，崩盘保护基本不变。"),
         "leverage_warning": ("🔥 杠杆进取档(暴露>100%=上杠杆)：**只在低波动(分位≤50%)+确认趋势**时才上杠杆，"
                              "波动一起即把杠杆收回1.0、破位清仓——避免在最危险的高波动顶部区放大。"
                              "回测(科技/半导体 2010-26)是**放大beta、非更聪明择时**，没有免费午餐。"
@@ -246,7 +257,9 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
             f"🔥杠杆{exposure['leveraged']['exposure_pct']}%｜{active_trigger}")
 
     # --- 暴露历史(中性档，供画图) ---
-    es = _exposure_series(price, PROFILES["moderate"]["tvol"], PROFILES["moderate"]["max_lev"])
+    _mc = PROFILES["moderate"]
+    es = _exposure_series(price, _mc["tvol"], _mc["max_lev"],
+                          floor=_mc["floor"], slope_floor=_mc["slope_floor"])
     hist = pd.DataFrame({"price": price, "exposure": es}).dropna().tail(750)
 
     return {"regime": regime, "exposure": exposure, "build": build, "exit": exit_blk,
