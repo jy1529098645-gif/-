@@ -187,11 +187,60 @@ def _vars_block(t: dict) -> str:
     }}"""
 
 
+def _light_overrides() -> str:
+    """仅浅色主题追加：config.toml base=dark 让原生控件默认深色，浅色下需强制覆盖回浅色。
+    暗色主题不注入此块（原生深色本就正确，避免 !important 干扰 hover/focus）。"""
+    return """
+    /* —— 浅色主题：把残留深色的原生控件强制刷成浅色 —— */
+    /* 次级按钮 / 下载 / 表单提交（主按钮在主样式里另行保持靛蓝） */
+    section[data-testid="stSidebar"] .stButton button,
+    .stButton button:not([kind="primary"]),
+    .stDownloadButton button, .stFormSubmitButton button,
+    [data-testid="stFileUploaderDropzone"] button, [data-testid="stBaseButton-secondary"] {
+        background: var(--card) !important; border: 1px solid var(--border) !important; color: var(--text) !important;
+    }
+    section[data-testid="stSidebar"] .stButton button:hover,
+    .stButton button:not([kind="primary"]):hover,
+    .stDownloadButton button:hover, .stFormSubmitButton button:hover {
+        background: var(--card2) !important; border-color: var(--primary-border) !important;
+    }
+    /* 输入 / 数字 / 日期 / 文本域 / 选择框（含 baseweb 内层） */
+    [data-baseweb="base-input"], [data-baseweb="input"], [data-baseweb="textarea"],
+    .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea,
+    [data-baseweb="select"] > div:first-child {
+        background: var(--card) !important; border-color: var(--border) !important; color: var(--text) !important;
+    }
+    .stNumberInput button, [data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] {
+        background: var(--card2) !important; color: var(--text) !important; border-color: var(--border) !important;
+    }
+    /* 下拉弹层 / 选项列表 */
+    [data-baseweb="popover"] [role="listbox"], [data-baseweb="menu"], ul[role="listbox"] {
+        background: var(--card) !important; border: 1px solid var(--border) !important;
+    }
+    [data-baseweb="popover"] li, [data-baseweb="menu"] li, [role="option"] { color: var(--text) !important; }
+    [data-baseweb="popover"] li:hover, [role="option"]:hover { background: var(--card2) !important; }
+    /* 文件上传 dropzone */
+    [data-testid="stFileUploaderDropzone"] { background: var(--card2) !important; border-color: var(--border) !important; }
+    [data-testid="stFileUploaderDropzone"] * { color: var(--text) !important; }
+    /* 折叠面板 */
+    [data-testid="stExpander"] details, [data-testid="stExpander"] summary { background: var(--card) !important; }
+    /* 单选 / 复选 / 开关 未选中底色 */
+    [data-baseweb="radio"] div[aria-checked="false"] > div,
+    [data-baseweb="checkbox"] span[aria-checked="false"] { background: var(--card) !important; border-color: var(--border) !important; }
+    /* 滑块轨道 */
+    [data-baseweb="slider"] [role="slider"] { background: var(--primary) !important; }
+    /* 提示框 alert 文本 */
+    [data-testid="stAlertContainer"], [data-testid="stNotification"] { color: var(--text); }
+    """
+
+
 def css() -> str:
     t = tokens()
+    extra = _light_overrides() if active() == "light" else ""
     return f"""
     <style>
     {_vars_block(t)}
+    {extra}
 
     /* 用系统字体栈，避免阻塞式拉取远程字体 */
     html, body, [class*="css"] {{
