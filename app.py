@@ -2956,6 +2956,8 @@ def page_position_card():
         ec[i].markdown(stat_card(f"{pg.PROFILE_ZH[k]}档（波动{ev['target_vol']:.0%}{_lev}）",
                                  f"{ev['exposure_pct']}%", "建议暴露", _pcol[k]), unsafe_allow_html=True)
     st.caption(f"当前触发：{x['active_trigger']}")
+    if g["exposure"]["leveraged"].get("lev_gated_off"):
+        st.info("🔒 低波动门：当前波动分位偏高(>50%) → **🔥杠杆档今日不上杠杆**(封顶100%)。只在低波动+确认趋势时才放大。")
     if x.get("leverage_warning"):
         st.error(x["leverage_warning"])
     st.write("")

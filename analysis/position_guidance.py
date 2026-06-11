@@ -40,30 +40,47 @@ def _ewma_vol_last(ret: pd.Series, lam: float = 0.94) -> float:
     return float(s.iloc[-1]) if not s.empty else float("nan")
 
 
+# 上杠杆(暴露>1)的低波动门：仅当已实现波动分位 ≤ 此值，才允许加杠杆(否则封顶 1.0)。
+# 思路：高波动常出现在顶部/转折区，"只在低波动+确认趋势时才上杠杆"避免在最危险处放大。
+LEV_VOLPCT_MAX = 0.50
+
+
 def _target_exposure(trend_up: bool, slope_pos: bool, ewmav: float, tvol: float,
-                     max_lev: float = 1.0) -> float:
+                     max_lev: float = 1.0, vol_pct: float | None = None,
+                     lev_volpct_max: float = LEV_VOLPCT_MAX) -> float:
     """v3 暴露规则：趋势门 × 波动目标连续定仓(上限 max_lev) × 仅确认趋势死亡才清。
 
-    max_lev>1 即"科技进取·杠杆"：低波动牛市里上杠杆放大、波动起来自动降、破位清仓。"""
+    max_lev>1 即"科技进取·杠杆"：**只在低波动(分位≤lev_volpct_max)+确认趋势**时才上杠杆放大；
+    波动一起(分位高)即把杠杆收回 1.0；破位清仓。"""
     if not (ewmav == ewmav) or ewmav <= 0:
         base = 0.0
     else:
         base = min(max_lev, tvol / ewmav)
-    if trend_up:                       # 站上200线：按波动目标在场(可>1倍)
+    # 低波动门：高波动(或分位未知)时不许上杠杆，封顶 1.0
+    if max_lev > 1.0 and not (vol_pct is not None and vol_pct == vol_pct and vol_pct <= lev_volpct_max):
+        base = min(base, 1.0)
+    if trend_up:                       # 站上200线：按波动目标在场(低波动可>1倍)
         return base
     if not slope_pos:                  # 200线下方且斜率转负：确认趋势死亡 → 清
         return 0.0
     return 0.5 * base                  # 200线下方但斜率未转负：半仓过渡
 
 
-def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0) -> pd.Series:
-    """全历史暴露序列(供画图/复核/回测)。无前视：t 暴露用到 t 收盘。max_lev>1 时可上杠杆。"""
+def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0,
+                     lev_volpct_max: float = LEV_VOLPCT_MAX) -> pd.Series:
+    """全历史暴露序列(供画图/复核/回测)。无前视：t 暴露用到 t 收盘。
+    max_lev>1 时**只在低波动分位才上杠杆**(高波动封顶1.0)。"""
     from analysis.quant_edge import ewma_vol
+    from regime.observables import realized_vol_percentile
     ret = price.pct_change()
     sma200 = price.rolling(200, min_periods=100).mean()
     slope = (sma200 > sma200.shift(20))
     ewmav = ewma_vol(ret)
     base = (tvol / ewmav).clip(upper=max_lev)
+    if max_lev > 1.0:                  # 低波动门：高波动(或分位未知)处把杠杆收回 1.0
+        vp = realized_vol_percentile(price, 21, 252)
+        high_vol = ~(vp <= lev_volpct_max)   # NaN→True(未知按高波动处理，不上杠杆)
+        base = base.where(~high_vol, base.clip(upper=1.0))
     up = price > sma200
     dead = (price < sma200) & (~slope)
     expo = base.where(up, 0.5 * base)
@@ -107,13 +124,15 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
         "vol_spike": vol_spike,
     }
 
-    # --- 今日四档暴露(含🔥杠杆进取) ---
+    # --- 今日四档暴露(含🔥杠杆进取·低波动门) ---
+    lev_gated_off = bool(vol_pct == vol_pct and vol_pct > LEV_VOLPCT_MAX)  # 高波动→今日不许上杠杆
     exposure = {}
     for k, cfg in PROFILES.items():
-        e = _target_exposure(trend_up, slope_pos, ewmav, cfg["tvol"], cfg["max_lev"])
+        e = _target_exposure(trend_up, slope_pos, ewmav, cfg["tvol"], cfg["max_lev"], vol_pct=vol_pct)
         exposure[k] = {"target_vol": cfg["tvol"], "max_lev": cfg["max_lev"],
                        "exposure": float(round(e, 3)), "exposure_pct": int(round(e * 100)),
-                       "leveraged": bool(cfg["max_lev"] > 1.0)}
+                       "leveraged": bool(cfg["max_lev"] > 1.0),
+                       "lev_gated_off": bool(cfg["max_lev"] > 1.0 and lev_gated_off)}
 
     # --- 回撤桶证据(建仓核心) ---
     bucket = {"available": False}
@@ -211,10 +230,11 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
         "honesty": ("⚠️ 撤离=崩盘保险：26年回测里22年闭眼持有的夏普更高，撤离的正α**只在崩盘年兑现**"
                     "(2008/2022 把回撤砍掉2/3)。稳健/中性/进取(≤1倍)绝对收益上不跑赢长牛持有——换的是"
                     "风险调整后更优 + 回撤腰斩，代价是正常年份让出部分上行。要的是这个保险才用。"),
-        "leverage_warning": ("🔥 杠杆进取档(暴露>100%=上杠杆)：回测(科技/半导体 2010-26)年化≈+30%(略高于死拿+29%)、"
-                             "夏普打平、回撤同级——这是**放大beta、非更聪明择时**，没有免费午餐。"
+        "leverage_warning": ("🔥 杠杆进取档(暴露>100%=上杠杆)：**只在低波动(分位≤50%)+确认趋势**时才上杠杆，"
+                             "波动一起即把杠杆收回1.0、破位清仓——避免在最危险的高波动顶部区放大。"
+                             "回测(科技/半导体 2010-26)是**放大beta、非更聪明择时**，没有免费午餐。"
                              "代价：① 真出现 2000/2008 级结构性深熊会远比这惨(200线过滤滞后挨刀)；"
-                             "② −50% 级回撤要扛住不割；③ 全 in-sample、未来不复刻。仅高风险承受力、且严守200线破位清仓纪律者用。"),
+                             "② −50% 级回撤要扛住不割；③ 全 in-sample、未来不复刻。仅高风险承受力、且严守纪律者用。"),
     }
 
     # --- 总纲 ---

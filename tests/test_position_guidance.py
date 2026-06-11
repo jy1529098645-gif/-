@@ -26,13 +26,19 @@ def test_target_exposure_trend_gate():
     assert abs(pg._target_exposure(False, True, 0.50, 0.25) - 0.25) < 1e-9
 
 
-def test_leverage_cap_and_gate():
-    # max_lev=1.5：低波动牛市里可上杠杆到 1.5 倍封顶
-    assert abs(pg._target_exposure(True, True, ewmav=0.20, tvol=0.40, max_lev=1.5) - 1.5) < 1e-9
-    # 杠杆档遇趋势死亡仍归零(纪律：破位清仓)
-    assert pg._target_exposure(False, False, 0.20, 0.40, max_lev=1.5) == 0.0
-    # 中等波动：0.40/0.30=1.33 未封顶
-    assert abs(pg._target_exposure(True, True, 0.30, 0.40, max_lev=1.5) - (0.40 / 0.30)) < 1e-9
+def test_leverage_lowvol_gate():
+    # 低波动(分位 0.3 ≤ 0.5)+确认趋势 → 允许上杠杆到 1.5 封顶
+    assert abs(pg._target_exposure(True, True, 0.20, 0.40, max_lev=1.5, vol_pct=0.30) - 1.5) < 1e-9
+    # 中等波动低分位：0.40/0.30=1.33 未封顶
+    assert abs(pg._target_exposure(True, True, 0.30, 0.40, max_lev=1.5, vol_pct=0.30) - (0.40 / 0.30)) < 1e-9
+    # 高波动(分位 0.9 > 0.5) → 低波动门把杠杆收回 1.0
+    assert abs(pg._target_exposure(True, True, 0.20, 0.40, max_lev=1.5, vol_pct=0.90) - 1.0) < 1e-9
+    # 波动分位未知(None) → 保守：不许上杠杆，封顶 1.0
+    assert abs(pg._target_exposure(True, True, 0.20, 0.40, max_lev=1.5, vol_pct=None) - 1.0) < 1e-9
+    # 杠杆档遇趋势死亡仍归零(破位清仓优先于一切)
+    assert pg._target_exposure(False, False, 0.20, 0.40, max_lev=1.5, vol_pct=0.30) == 0.0
+    # max_lev=1 时不受门影响(低波动也不会>1)
+    assert pg._target_exposure(True, True, 0.10, 0.25, max_lev=1.0, vol_pct=0.10) == 1.0
 
 
 def test_profiles_monotonic():
