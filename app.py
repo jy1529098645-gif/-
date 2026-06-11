@@ -2256,13 +2256,17 @@ def page_panorama():
             st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_efc.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                        f"{(_efc.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证胜率约 67%→72%(两段样本外均胜)，"
                        f"**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
-        if _efc.get("win_now") == _efc.get("win_now") or _efc.get("is_leveraged"):
-            st.markdown(f"**{winrate_txt(_efc)}**　_（{_efc.get('win_horizon')}日远期为正占比；超额=减去同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_")
+        _wn2 = _efc.get("win_now"); _wh2 = _efc.get("win_horizon")
+        _show_exc2 = (_wn2 is not None and _wn2 == _wn2 and not _efc.get("is_leveraged"))
+        st.markdown(f"**{winrate_txt(_efc)}**"
+                    + (f"　_（{_wh2}日远期为正占比；超额=减去同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_"
+                       if (_show_exc2 and _wh2) else ""))
         def _wtag2(s):
-            if s.get("win") != s.get("win"):
+            w = s.get("win")
+            if w is None or w != w:
                 return ' · 样本少'
             _e = s.get("win_excess")
-            return f' · 胜率{s["win"]*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if _e == _e else '')
+            return f' · 胜率{w*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if (_e is not None and _e == _e) else '')
         if _efc.get("at_support_now") and _near:
             st.markdown("**现价即在支撑共振区**：" + "".join(
                 f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
@@ -3312,14 +3316,17 @@ def page_position_card():
                            f"{(_ef.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证：这种'趋势内逢恐慌回踩'进场"
                            f"**历史胜率约 67%→72%**(两段样本外均胜)，**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
             # 现价买入的历史胜率（诚实口径：原始+基准+超额+N）
-            if _ef.get("win_now") == _ef.get("win_now") or _ef.get("is_leveraged"):
-                st.markdown(f"**{winrate_txt(_ef)}**　_（超额=减同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_")
+            _wn1 = _ef.get("win_now")
+            _show_exc1 = (_wn1 is not None and _wn1 == _wn1 and not _ef.get("is_leveraged"))
+            st.markdown(f"**{winrate_txt(_ef)}**"
+                        + ("　_（超额=减同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_" if _show_exc1 else ""))
             # 可执行回踩分批区（现价下方最近支撑）+ 每个价位胜率(标超额)
             def _wtag(s):
-                if s.get("win") != s.get("win"):
+                w = s.get("win")
+                if w is None or w != w:
                     return ' · 样本少'
                 _e = s.get("win_excess")
-                return f' · 胜率{s["win"]*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if _e == _e else '')
+                return f' · 胜率{w*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if (_e is not None and _e == _e) else '')
             if _ef.get("at_support_now") and _near:
                 st.markdown("**现价即在支撑共振区**：" + "".join(
                     f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
