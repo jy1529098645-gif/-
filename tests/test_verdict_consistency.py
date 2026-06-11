@@ -100,3 +100,26 @@ def test_no_contradictions_historical_sample(aapl, spy):
             if g == "🟢" and "支撑" in ef["grade"] and ew["red"]:
                 bad.append(("D 在支撑but红灯", nm, d.date(), g))
     assert not bad, f"发现裁决矛盾 {len(bad)} 处：{bad[:8]}"
+
+
+def test_briefing_uses_unified_entry_engine():
+    """跨板块统一锁：多票简报(briefing.stock_brief)必须用 entry_confluence + exit_warning 做裁决，
+    不得回退到自有的 build_tranches/统计桶。防有人把简报改回独立口径，导致同票跨板块结论打架。
+
+    校验：brief 必含 entry/exit/risk_txt/entry_sup_txt；且 entry 与"直接调 entry_confluence"
+    口径自洽（红灯⟹🔴、fear⟹🟢且无红灯）。"""
+    from analysis import briefing as bf
+    seen = 0
+    for tk in ("NVDA", "GOOGL", "SPY"):
+        b = bf.stock_brief(tk, "2018-01-01", "2024-12-31", horizon=63, with_news=False)
+        assert b.get("entry") is not None, f"{tk} 简报缺 entry(未接入 entry_confluence)"
+        assert b.get("exit") is not None, f"{tk} 简报缺 exit(未接入 exit_warning)"
+        assert "risk_txt" in b and "entry_sup_txt" in b, f"{tk} 简报缺统一裁决字段"
+        e, x = b["entry"], b["exit"]
+        assert e.get("grade_tag") in ("🟢", "🟡", "🔴"), f"{tk} 入场评级非法 {e.get('grade_tag')}"
+        if x.get("red"):
+            assert e["grade_tag"] == "🔴", f"{tk} 离场红灯but入场≠🔴(跨板块矛盾)"
+        if e.get("fear_pullback"):
+            assert e["grade_tag"] == "🟢" and not x.get("red"), f"{tk} fear但与红灯/非🟢并存"
+        seen += 1
+    assert seen >= 1, "没跑成任何标的——测试无效"

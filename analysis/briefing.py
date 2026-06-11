@@ -217,6 +217,42 @@ def stock_brief(ticker: str, start: str, end: str | None = None, horizon: int = 
     clusters = cluster_levels(levels)
     tranches = build_tranches(float(price.iloc[-1]), trailing_high, clusters, engine_best)
 
+    # ── 统一入场/离场口径：与「个股决策」「建仓扫描」同源(entry_confluence + exit_warning) ──
+    # 多票简报不再自成一套裁决，原"建仓档"降为技术参考；主裁决以 entry_confluence(回踩支撑+胜率+
+    # regime/飞刀门控)、本票风险以 exit_warning 为准，保证同一只票跨板块结论一致。
+    entry = exit_w = None
+    risk_txt = "—"
+    entry_sup_txt = "—"
+    try:
+        from analysis import decision as _dec
+        exit_w = _dec.exit_warning(price, False, None)   # 本票自身风险(不含市场宽度)，与扫描同口径
+        vixp = None
+        try:
+            _vix = loader.load_ohlcv("^VIX", "1995-01-01", end)["close"].dropna()
+            _vp = _vix.rolling(252, min_periods=126).apply(lambda x: (x[-1] >= x).mean(), raw=True)
+            if len(_vp) and _vp.iloc[-1] == _vp.iloc[-1]:
+                vixp = float(_vp.iloc[-1])
+        except Exception:  # noqa: BLE001
+            vixp = None
+        entry = ec.entry_confluence(ohlcv, asset=ticker, best_entry={"has_zone": False},
+                                    warn_red=bool(exit_w["red"]), warn_amber=bool(exit_w["amber"]),
+                                    warn_label=exit_w["level"], vix_pctile=vixp)
+        # 本票风险标签(买家口径)：红=破位 / 黄=列自身黄灯原因 / 绿=无（与 app.c_build_scan 同口径）
+        _own_amber = [s["state"].split(" ", 1)[-1] for s in exit_w.get("signals", [])
+                      if "🟡" in s.get("state", "") and s.get("name") != "市场宽度"]
+        if exit_w["red"]:
+            risk_txt = "🔴 趋势破位"
+        elif _own_amber:
+            risk_txt = "🟡 " + "/".join(_own_amber[:2])
+        else:
+            risk_txt = "🟢 无"
+        _below = entry.get("supports_below") or []
+        _sup = _below[0] if _below else None
+        entry_sup_txt = ("现价在支撑共振区" if entry.get("at_support_now")
+                         else (f"{_sup['label']} {_sup['price']:.1f}（{_sup['dist_pct']:+.0%}）" if _sup else "—"))
+    except Exception:  # noqa: BLE001
+        pass
+
     brief = {
         "ticker": ticker,
         "horizon": int(horizon),
@@ -234,6 +270,8 @@ def stock_brief(ticker: str, start: str, end: str | None = None, horizon: int = 
         "grade": grade, "horizons": horizons_reconcile,
         "clusters": clusters,
         "tranches": tranches,
+        "entry": entry, "exit": exit_w,            # 统一裁决：入场(entry_confluence) + 离场(exit_warning)
+        "risk_txt": risk_txt, "entry_sup_txt": entry_sup_txt,
         "next_earnings": None, "days_to_earnings": None,
         "earnings_stats": None, "upcoming": None,
         "news": None, "fundamentals": None, "highlights": None,
@@ -350,25 +388,31 @@ def render_markdown(briefs: list[dict], weights: dict, horizon: int = 63) -> str
          "> 校准式输出：价位带=区间+分布，目标/止损=按技术位规则推导的风险参考，非预测点位。",
          "> 新闻/基本面仅供人读、不入量化、含前视风险。权重为机械规则、非投资建议。\n",
          f"## 一屏总览（引擎周期 h{horizon}）\n",
-         "| 标的 | 现价 | 趋势/距历史高 | 波动分位 | 引擎最优桶 | 盈亏比 | 胜率 | 下次财报 |",
+         "| 标的 | 现价 | 入场裁决 | 合理入场位 | 本票风险 | 趋势/距历史高 | 引擎桶(参考) | 下次财报 |",
          "|---|---|---|---|---|---|---|---|"]
     for b in briefs:
         be = b.get("engine_headline")
         trap = "⚠️" if b.get("momentum_trap") else ""
         bk = (f"{be['bucket']} {be['median']:+.1%}(超额{be['excess']:+.1%}){_sig_mark(b)}{trap}"
               if be else "—")
-        pr = f"{be['reward_risk']:.2f}" if (be and be["reward_risk"] == be["reward_risk"]) else "—"
-        wr = f"{be['win_rate']:.0%}" if be else "—"
-        volp = f"{b['vol_percentile']:.0%}" if b["vol_percentile"] == b["vol_percentile"] else "—"
+        ent = b.get("entry") or {}
+        verdict = f"{ent.get('grade_tag','')} {ent.get('grade','—')}".strip() or "—"
         ne = b.get("next_earnings") or "—"
-        L.append(f"| {b['ticker']} | {b['price']:.1f} | {b['trend']}/{b['drawdown']:.1%} | "
-                 f"{volp} | {bk} | {pr} | {wr} | {ne} |")
+        L.append(f"| {b['ticker']} | {b['price']:.1f} | {verdict} | {b.get('entry_sup_txt','—')} | "
+                 f"{b.get('risk_txt','—')} | {b['trend']}/{b['drawdown']:.1%} | {bk} | {ne} |")
     L.append("")
 
     # 每票详情
     for b in briefs:
         be = b.get("engine_best")
         L.append(f"## {b['ticker']} {b['price']:.1f}\n")
+        ent = b.get("entry")
+        if ent:
+            _wn = ent.get("win_now")
+            _wntxt = f"现价买入历史胜率 {_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "现价买胜率样本不足"
+            L.append(f"**入场裁决 {ent.get('grade_tag','')} {ent.get('grade','')}** · 合理入场位：{b.get('entry_sup_txt','—')}"
+                     f" · {_wntxt} · 本票风险(离场)：{b.get('risk_txt','—')}。\n"
+                     f"> _入场/离场裁决与「个股决策」「建仓扫描」同源(entry_confluence)；下方技术参考档/引擎桶为辅助视角。_\n")
         g = b.get("grade")
         if g:
             L.append(f"**证据等级 {g['grade']}**（{g['confidence']}置信，仓位封顶 {g['max_position_fraction']:.0%}）"

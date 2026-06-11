@@ -711,19 +711,27 @@ def c_stability(uni_key: str, target_vol: float, start: str, end: str):
 
 @st.cache_data(show_spinner=False)
 def c_product_bt(start: str, end: str):
-    """产品级组合回测：聚焦组合(ETF+科技+半导体)应用风险叠加 vs 持有 vs SPY。"""
-    _cache_ver = "v2-crisis-rollsharpe"  # 改此值可使缓存失效(已加 ret_overlay/ret_hold 字段)
+    """产品级组合回测：聚焦组合(ETF+科技+半导体)应用风险叠加 vs 持有 vs SPY。
+    崩盘压力测试 + 滚动夏普一并在缓存内算好（之前在页面每次 rerun 都重算，是卡顿主因之一）。"""
+    _cache_ver = "v3-cache-crisis-rollsharpe"  # 改此值可使缓存失效
     from data import loader
     from analysis import overlay as ov
-    prices = {}
-    for t in _FOCUS_UNIVERSE:
-        try:
-            prices[t] = loader.load_prices([t], start, end)[t]
-        except Exception:  # noqa: BLE001
-            pass
+    df = loader.load_prices(_FOCUS_UNIVERSE, start, end)        # 一次性批量加载(替代逐票循环)
+    prices = {t: df[t].dropna() for t in df.columns if df[t].notna().any()}
     fr = c_fragility(start, end)["frame"]["fragile"]
     spy = loader.load_prices(["SPY"], start, end)["SPY"]
-    return ov.backtest_portfolio(prices, fragile=fr, benchmark=spy)
+    pbt = ov.backtest_portfolio(prices, fragile=fr, benchmark=spy)
+    # 预算缓存内算好(避免页面每次交互 rerun 重算这两块未缓存的重计算)
+    try:
+        pbt["crisis"] = ov.crisis_stress(pbt.get("equity"))
+    except Exception:  # noqa: BLE001
+        pbt["crisis"] = []
+    try:
+        pbt["rs_overlay"] = ov.rolling_sharpe(pbt["ret_overlay"]) if "ret_overlay" in pbt else pd.Series(dtype=float)
+        pbt["rs_hold"] = ov.rolling_sharpe(pbt["ret_hold"]) if "ret_hold" in pbt else pd.Series(dtype=float)
+    except Exception:  # noqa: BLE001
+        pbt["rs_overlay"] = pbt["rs_hold"] = pd.Series(dtype=float)
+    return pbt
 
 @st.cache_data(show_spinner=False)
 def c_earnings_reaction(ticker: str, start: str, end: str):
@@ -1089,7 +1097,7 @@ def page_regime():
     pc[1].markdown(stat_card("趋势位置", "均线上方" if tp_panel["trend_state"] == "up_trend" else "均线下方",
                              f"距200日线 {tp_panel['trend_position']:+.1%}", T["good"], tip="regime"), unsafe_allow_html=True)
     pc[2].markdown(stat_card("回撤状态", "回撤中" if tp_panel["drawdown_state"] == "in_drawdown" else "近高点",
-                             f"距前高 {tp_panel['drawdown']:+.1%}", T["bad"], tip="回撤"), unsafe_allow_html=True)
+                             f"距历史高 {tp_panel['drawdown']:+.1%}", T["bad"], tip="回撤"), unsafe_allow_html=True)
     pc[3].markdown(stat_card("快照日期", str(tp_panel["date"].date()), "免费数据·不可预测未来", T["primary"]), unsafe_allow_html=True)
     st.write("")
 
@@ -1134,11 +1142,11 @@ def page_regime():
         _vmap = {"low": "低估", "mid": "中性", "high": "高估"}
         _cmap = {"widening": "走阔(紧)", "narrowing": "收窄(松)"}
         fp2 = fp[["date", "drawdown", "valuation_tercile", "credit_spread", "credit_trend", "yield_curve"]].rename(
-            columns={"date": "日期", "drawdown": "距前高", "valuation_tercile": "估值",
+            columns={"date": "日期", "drawdown": "距历史高", "valuation_tercile": "估值",
                      "credit_spread": "信用利差", "credit_trend": "信用趋势", "yield_curve": "收益曲线"})
         fp2["估值"] = fp2["估值"].map(lambda v: _vmap.get(v, v))
         fp2["信用趋势"] = fp2["信用趋势"].map(lambda v: _cmap.get(v, v))
-        st.dataframe(fp2.style.format({"距前高": "{:+.0%}"}), use_container_width=True)
+        st.dataframe(fp2.style.format({"距历史高": "{:+.0%}"}), use_container_width=True)
         st.caption("把今天环境和历史几次大底当时并排，**供你对照**，不替你下结论。")
 
 # ===========================================================================
@@ -1664,20 +1672,25 @@ def _brief_overview_row(b: dict, live: dict | None = None) -> dict:
         chg = (f"{'▲' if _c >= 0 else '▼'} {_c:+.2%}") if _c == _c else "—"
     else:
         px, chg = f"{b['price']:.1f}", "—"
+    ent = b.get("entry") or {}
+    verdict = f'{ent.get("grade_tag","")} {ent.get("grade","—")}'.strip() or "—"
+    _wn = ent.get("win_now")
+    winnow = f"{_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "—"
     return {
+        # 核心：入场裁决(entry_confluence·与个股决策/扫描同源) → 回踩支撑 → 现价买胜率 → 本票风险(离场)
         "标的": b["ticker"], "现价": px, "今日涨跌": chg,
+        "入场裁决": verdict, "回踩支撑/状态": b.get("entry_sup_txt", "—"),
+        "现价买胜率": winnow, "本票风险": b.get("risk_txt", "—"),
         "趋势/距历史高": f"{b['trend']} / {b['drawdown']:.1%}", "波动分位": volp,
-        "引擎最优桶": bk,
-        "盈亏比": f"{be['reward_risk']:.2f}" if (be and be["reward_risk"] == be["reward_risk"]) else "—",
-        "胜率": f"{be['win_rate']:.0%}" if be else "—",
-        "下次财报": b.get("next_earnings") or "—",
+        "引擎桶(参考)": bk, "下次财报": b.get("next_earnings") or "—",
     }
 
 @st.fragment
 def page_briefing():
     st.markdown('<div class="hero-title">📋 多票作战简报</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">多只一屏总览 + 每票<b>建仓档(技术位共振→目标/止损/盈亏比)</b>'
-                ' + 引擎当前状态桶 + 财报日程/drift + 免费新闻 + <b>自动权重</b>。可导出 Markdown。</div>',
+    st.markdown('<div class="hero-sub">多只一屏总览：每票<b>入场裁决 + 合理入场位 + 本票风险</b>'
+                '(与「个股决策」「建仓扫描」同源 entry_confluence) + 技术参考档 + 引擎状态桶 + 财报/新闻 + '
+                '<b>自动权重</b>。可导出 Markdown。</div>',
                 unsafe_allow_html=True)
     st.warning("⚠️ 可计算层(表/档位/RR/引擎结论)来自价格与引擎、诚实可复现；**新闻/基本面仅供人读、不入量化、含前视风险**；"
                "目标/止损是按技术位规则推导的风险参考(供算盈亏比)，**非预测点位**；权重为机械规则、非投资建议。")
@@ -1773,6 +1786,23 @@ def page_briefing():
         head += f" · {be['bucket']} 超额{be['excess']:+.1%}" if be else ""
         head += "  ⚠️动量陷阱" if b.get("momentum_trap") else ""
         with st.expander(head, expanded=(b is briefs[0])):
+            # ── 统一入场/离场裁决（置顶·与个股决策/建仓扫描同源 entry_confluence）──
+            ent = b.get("entry") or {}
+            exw = b.get("exit") or {}
+            if ent:
+                _gt = ent.get("grade_tag", "")
+                _gc = {"🟢": T["good"], "🟡": T["gold"], "🔴": T["bad"]}.get(_gt, T["muted"])
+                _risk = b.get("risk_txt", "—")
+                _rc = T["bad"] if "🔴" in _risk else (T["gold"] if "🟡" in _risk else T["good"])
+                vc = st.columns(2)
+                vc[0].markdown(stat_card("入场裁决", _gt or "—", ent.get("grade", ""), _gc), unsafe_allow_html=True)
+                vc[1].markdown(stat_card("本票风险(离场)", _risk.split(" ", 1)[0], _risk, _rc), unsafe_allow_html=True)
+                _wn = ent.get("win_now")
+                _wntxt = f"现价买入历史胜率 {_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "现价买胜率样本不足"
+                st.caption(f"🎯 合理入场位：{b.get('entry_sup_txt','—')} · {_wntxt} · "
+                           f"裁决与「个股决策」「建仓扫描」同源(entry_confluence)；下方技术参考档/引擎桶为辅助视角。")
+                if ent.get("fear_pullback"):
+                    st.markdown('<div class="verdict">✨ <b>优质回踩</b>：趋势内深回踩+市场恐慌，历史上这类点位入场胜率更高，可分批加码。</div>', unsafe_allow_html=True)
             # 一致性 / 数据质量告警（置顶）
             for c in (b.get("consistency") or []):
                 st.markdown(f'<div class="verdict">🚧 <b>一致性告警</b>：{c["message"]}</div>', unsafe_allow_html=True)
@@ -1977,13 +2007,15 @@ def page_panorama():
                                    momentum_trap=bool(b.get("momentum_trap")), grade=b.get("grade"))
         _cc = tm.remap(_card["color"])
         _e = _card.get("entry")
-        # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）—— 显示在下方大数字三联里
+        # 当前建议仓位% —— 统一用 position_guidance 个股暴露引擎(与作战卡同源·v3.1趋势门+波动目标+软地板)，
+        # 不再用组合层 overlay.risk_managed_position(那是组合配置页的口径)，保证全景图与作战卡仓位%一致。
+        from analysis import position_guidance as _pg2
+        _pk = {"保守": "conservative", "均衡": "moderate", "激进": "aggressive"}.get(gl_profile, "moderate")
+        _pc = _pg2.PROFILES[_pk]
         _posnow = None
         try:
-            from analysis import overlay as _ov2
-            _tvol = _PROFILE_VOL.get(gl_profile, 0.15)
-            _posnow = float(_ov2.risk_managed_position(price, c_fragility(zstart, end)["frame"]["fragile"],
-                                                       target_vol=_tvol).iloc[-1])
+            _posnow = float(_pg2._exposure_series(price, _pc["tvol"], _pc["max_lev"],
+                                                  floor=_pc["floor"], slope_floor=_pc["slope_floor"]).iloc[-1])
         except Exception:  # noqa: BLE001
             pass
         st.markdown(
@@ -2038,7 +2070,7 @@ def page_panorama():
             elif _posnow is not None:
                 _pos_col = T["good"] if _posnow >= 0.66 else (T["gold"] if _posnow >= 0.33 else T["amber"])
                 _mt[0].markdown(stat_card("📊 现在该持多少仓", f"{_posnow:.0%}",
-                                          f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·这只票满仓=100%(风控暴露·非占组合比例)", _pos_col), unsafe_allow_html=True)
+                                          f"{gl_profile}档·目标波动{_pc['tvol']:.0%}·v3.1引擎(与作战卡同源)·满仓=100%风控暴露", _pos_col), unsafe_allow_html=True)
             else:
                 _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", T["muted"]), unsafe_allow_html=True)
             if _enter_ok and _efc is not None:
@@ -2842,7 +2874,7 @@ def page_panorama():
 # 路由（三视图）
 # ---------------------------------------------------------------------------
 def page_fragility():
-    from analysis import fragility as fg
+    # 每个小节拆成独立 @st.fragment：调某节的下拉/滑块只重算该节，不再触发整页 5 大块全部重跑(卡顿根因)。
     st.markdown('<div class="hero-title">🛡️ 一篮子分散 + 长持（核心打法）</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-sub">长期最优解=<b>买一篮子优质资产、长期持有</b>。它只会输给两件事：'
                 '<b>崩盘时恐慌割肉</b> 与 <b>押单票却没活下来</b>。这页就是对治这两点——'
@@ -2850,7 +2882,17 @@ def page_fragility():
                 '让你别在底部跳车)。<b>它不跑赢市场，只帮你真能"拿住"。</b></div>', unsafe_allow_html=True)
     st.info("💡 **怎么用**：选一个**分散**的篮子（推荐「跨行业优质篮子」或「仅指数」）→ 调「稳健度」到你**夜里睡得着**的回撤水平 "
             "→ 看它 vs 闭眼持有：复利略让、但回撤腰斩。剩下的就是**拿着、别看盘、别因恐慌割肉**。")
+    _frag_stability()
+    st.divider()
+    _frag_market_fragility()
+    st.divider()
+    _frag_overlay()
+    st.divider()
+    _frag_product()
 
+
+@st.fragment
+def _frag_stability():
     # ===== 🛡️ 稳定配置（可调目标波动，按你的稳健度）=====
     sc1, sc2 = st.columns([2, 3])
     _uni = sc1.selectbox("组合", list(_STABLE_UNIVERSES), index=0,
@@ -2873,7 +2915,11 @@ def page_fragility():
         st.caption(f"📖 {_uni} · 目标波动{_tv:.0%}：绿=稳定配置(风险叠加)，灰=闭眼持有。"
                    f"最长水下 {o['longest_underwater_m']} 个月、{o['pos_months']:.0%} 的月份为正。"
                    "调低目标波动→更稳、回撤更浅、收益略低。**这是为稳定收益设计的核心配置**。非投资建议。")
-    st.divider()
+
+
+@st.fragment
+def _frag_market_fragility():
+    from analysis import fragility as fg
     st.markdown("##### 🩸 市场脆弱性预警（宽度恶化·降仓开关）")
     bk_name = st.selectbox("板块宽度", list(_FRAGILITY_BASKETS), index=0,
                            help="选板块看其专属宽度脆弱性——半导体/科技板块的 de-risk 信号比全市场更贴该板块")
@@ -2913,8 +2959,7 @@ def page_fragility():
     st.divider()
     st.markdown("##### 🧭 等还是追？（输入标的，按当前回撤 + 市场脆弱性给操作指南）")
     a2 = st.selectbox("标的", _SPY_FIRST, index=0, key="wc_asset")
-    from data import loader as _ld
-    px2 = _ld.load_prices([a2], "2010-01-01", end)[a2].dropna()
+    px2 = c_prices((a2,), "2010-01-01", end)[a2].dropna()   # 走缓存(原 loader.load_prices 每次 rerun 都重拉)
     hi = px2.rolling(252, min_periods=120).max()
     cur_dd = float(px2.iloc[-1] / hi.iloc[-1] - 1.0)
     g = fg.wait_or_chase(cur_dd, fragile_now=cur["fragile"], is_index=(a2 in ("SPY", "QQQ", "DIA", "IWM")))
@@ -2925,8 +2970,11 @@ def page_fragility():
     st.markdown(f'<div class="verdict">{g["detail"]}</div>', unsafe_allow_html=True)
     st.caption("📖 回测结论：高位附近'等浅回调'历史上更亏(回调70%不来)→应追/分批；唯一该'等'的是深回撤区(指数−20~30%有edge)；脆弱性触发→一切偏防守。非投资建议。")
 
+
+
+@st.fragment
+def _frag_overlay():
     # 📉 风险管理叠加（已端到端验证·工具唯一OOS可部署规则）
-    st.divider()
     st.markdown("##### 📉 风险管理叠加（已验证·可部署）：减半仓+按波动定仓 vs 闭眼持有")
     st.caption("规则=0.5×波动目标仓 + 0.5×趋势/宽度半仓floor。验证：ETF/个股、样本内外均升夏普、回撤砍~40%、"
                "对参数不敏感。这是改善夏普/砍回撤的**风险管理**，非择时alpha（牛市CAGR略低，换更稳）。")
@@ -2940,7 +2988,9 @@ def page_fragility():
     oc[1].markdown(stat_card("最大回撤", f"{s_['maxdd']:.0%}", f"持有 {h_['maxdd']:.0%}",
                              T["good"] if s_["maxdd"] >= h_["maxdd"] else T["bad"], tip="回撤"), unsafe_allow_html=True)
     oc[2].markdown(stat_card("年化", f"{s_['cagr']:+.0%}", f"持有 {h_['cagr']:+.0%}", T["primary"]), unsafe_allow_html=True)
-    oc[3].markdown(stat_card("当前建议仓位", f"{bt['current_position']:.0%}", f"平均 {bt['avg_position']:.0%}", T["info"]), unsafe_allow_html=True)
+    oc[3].markdown(stat_card("叠加策略当前仓位", f"{bt['current_position']:.0%}", f"此回测引擎·平均 {bt['avg_position']:.0%}", T["info"]), unsafe_allow_html=True)
+    st.caption("⚠️ 这是**本回测(组合层风险叠加 overlay)**的当前仓位，用于复现上面的净值；它**不是**个股建仓仓位。"
+               "想看某只票「现在该持多少仓」请去「个股决策」页(全景图/作战卡)，那里用的是个股暴露引擎(v3.1)，口径不同、数字会不一样。")
     eq = bt["equity"]
     if eq is not None and not eq.empty:
         st.line_chart(eq, color=[T["good"], T["muted"]])
@@ -2950,8 +3000,12 @@ def page_fragility():
     st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9、回撤显著更浅；"
                "大规模分板块测试：高beta/周期/ETF升夏普，能源/防御板块主要砍回撤。非投资建议。")
 
+
+
+@st.fragment
+def _frag_product():
+    from analysis import overlay as _ov
     # 📊 产品级组合回测（整个产品系统的端到端验证·机构指标）
-    st.divider()
     st.markdown("##### 📊 产品级组合回测（聚焦组合 应用风险叠加 vs 闭眼持有 vs SPY · 端到端验证）")
     st.caption(f"组合={'/'.join(_FOCUS_UNIVERSE[:8])}… 等权，逐标的应用风险管理叠加。这是『整个产品系统』的端到端回测。")
     with st.spinner("回测整个产品组合…"):
@@ -2974,8 +3028,8 @@ def page_fragility():
                     f'回撤 {ov_m["maxdd"]:.0%}/{ho_m["maxdd"]:.0%}——'
                     f'{"全面更优(风险调整后)，产品达可用专业级" if win else "风险调整后占优、收益略让(牛市现金拖累)"}。</div>',
                     unsafe_allow_html=True)
-        # 危机压力测试：风控在关键时刻是否真管用
-        cs = _ov.crisis_stress(pbt["equity"])
+        # 危机压力测试：风控在关键时刻是否真管用（已在 c_product_bt 缓存内算好·避免每次 rerun 重算）
+        cs = pbt.get("crisis") or []
         if cs:
             st.markdown("**🔥 危机压力测试**（历次崩盘窗口内的区间收益——叠加是否真的少跌）")
             csrows = [{"崩盘事件": c["crisis"], "组合+风险叠加": f"{c.get('组合+风险叠加', float('nan')):+.0%}",
@@ -2983,9 +3037,9 @@ def page_fragility():
                        "SPY": (f"{c.get('基准', float('nan')):+.0%}" if '基准' in c else "—")} for c in cs]
             st.dataframe(pd.DataFrame(csrows), use_container_width=True, hide_index=True)
             st.caption("📖 叠加在崩盘中应明显少跌(数字更接近0或更高)——这是风险管理的核心价值。")
-        # 滚动夏普：edge 是否随时间衰减
-        rs_o = _ov.rolling_sharpe(pbt["ret_overlay"]) if "ret_overlay" in pbt else pd.Series(dtype=float)
-        rs_h = _ov.rolling_sharpe(pbt["ret_hold"]) if "ret_hold" in pbt else pd.Series(dtype=float)
+        # 滚动夏普：edge 是否随时间衰减（已在 c_product_bt 缓存内算好）
+        rs_o = pbt.get("rs_overlay", pd.Series(dtype=float))
+        rs_h = pbt.get("rs_hold", pd.Series(dtype=float))
         if len(rs_o) > 10:
             rsdf = pd.DataFrame({"叠加": rs_o, "持有": rs_h}).dropna()
             st.markdown("**📈 滚动 1 年夏普**（监控 edge 是否衰减——叠加线应多数时间≥持有）")

@@ -117,7 +117,10 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
     s200 = float(sma200.iloc[-1])
     slope_pos = bool(sma200.iloc[-1] > sma200.iloc[-21]) if sma200.notna().iloc[-21] else True
     trend_up = bool(px > s200)
-    trailing_high = float(price.cummax().iloc[-1])
+    # 展示口径统一：用近1年(252日)高点，与全景图/决策卡「距1年高」(decision.py rolling252)对齐，
+    # 避免同一只票在作战卡(原全历史cummax)与全景图给出两个不同的"距前高%"。注意：这只影响展示用的
+    # trailing_high/dd 与候选区间，已验证的暴露回测(_exposure_series)用 price 本身、不受影响。
+    trailing_high = float(price.rolling(252, min_periods=120).max().iloc[-1])
     dd = float(px / trailing_high - 1.0)
     volp = ob.realized_vol_percentile(price, 21, 252)
     vol_pct = float(volp.iloc[-1]) if volp.notna().iloc[-1] else float("nan")
@@ -206,7 +209,7 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
         for b, name, w in bands:
             lo = trailing_high * (1 - b - 0.03)
             hi = trailing_high * (1 - b + 0.03)
-            zones.append({"band": f"距前高 −{int(b*100)}%", "tier": name,
+            zones.append({"band": f"距1年高 −{int(b*100)}%", "tier": name,
                           "price_low": float(round(lo, 2)), "price_high": float(round(hi, 2)),
                           "size_hint": f"{int(w*100)}% 本票计划仓位",
                           "reached": bool(px <= hi)})
@@ -250,7 +253,7 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
 
     # --- 总纲 ---
     em = PROFILE_ZH
-    head = (f"{regime['ticker']} @ {px:.2f}（距前高 {dd:+.0%}，{'200线上' if trend_up else '200线下'}"
+    head = (f"{regime['ticker']} @ {px:.2f}（距1年高 {dd:+.0%}，{'200线上' if trend_up else '200线下'}"
             f"{'·斜率正' if slope_pos else '·斜率转负'}，波动分位 {vol_pct:.0%}）｜"
             f"建仓：{stance}｜今日建议暴露 稳健{exposure['conservative']['exposure_pct']}%/"
             f"中性{exposure['moderate']['exposure_pct']}%/进取{exposure['aggressive']['exposure_pct']}%/"
