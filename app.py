@@ -553,6 +553,48 @@ def c_entry_confluence(asset: str, start: str, end: str,
     return ec.entry_confluence(ohlcv, asset=asset, warn_red=warn_red, warn_amber=warn_amber,
                                warn_label=warn_label, vix_pctile=vix_pctile)
 
+@st.cache_data(show_spinner=False, ttl=1800)
+def c_build_scan(tickers: tuple, end: str):
+    """全市场建仓扫描：对一批票批量算 入场评级(entry_confluence) + 离场预警 + 关键状态。
+    入场用 best_entry={'has_zone':False} 跳过 bootstrap(扫描不需统计锚定价·已降级为噪声)。"""
+    from data import loader
+    from analysis import decision as dec
+    from regime import entry_cockpit as ec
+    try:
+        _frg = c_fragility("2008-01-01", end).get("cur", {})
+        fragile = bool(_frg.get("fragile", False)); bpc = _frg.get("pctile")
+    except Exception:  # noqa: BLE001
+        fragile = False; bpc = None
+    vixp = c_vix_pctile(end)
+    rows = []
+    for tk in tickers:
+        try:
+            o = loader.load_ohlcv(tk, "2018-01-01", end).dropna()
+            if len(o) < 260:
+                continue
+            px = o["close"]
+            ew = dec.exit_warning(px, fragile, bpc)
+            ef = ec.entry_confluence(o, asset=tk, best_entry={"has_zone": False},
+                                     warn_red=ew["red"], warn_amber=ew["amber"],
+                                     warn_label=ew["level"], vix_pctile=vixp)
+            cur = float(px.iloc[-1]); hi = float(px.tail(252).max())
+            ma200_s = px.rolling(200, min_periods=100).mean()
+            ma200 = float(ma200_s.iloc[-1]) if ma200_s.notna().iloc[-1] else float("nan")
+            below = ef.get("supports_below") or []
+            sup = below[0] if below else None
+            sup_txt = ("现价在支撑共振区" if ef.get("at_support_now")
+                       else (f"{sup['label']} {sup['price']:.1f}（{sup['dist_pct']:+.0%}）" if sup else "—"))
+            rows.append({
+                "票": tk, "_tag": ef["grade_tag"], "评级": f'{ef["grade_tag"]} {ef["grade"]}',
+                "回调": cur / hi - 1.0, "RSI": ef.get("rsi", float("nan")),
+                "距200线": (cur / ma200 - 1.0) if ma200 == ma200 and ma200 else float("nan"),
+                "离场": ew["level"], "现价": cur, "回踩支撑位/状态": sup_txt,
+                "_fear": bool(ef.get("fear_pullback")), "_atsup": bool(ef.get("at_support_now")),
+            })
+        except Exception:  # noqa: BLE001
+            pass
+    return rows
+
 # 宽度信号用的大盘篮子（跨行业 ~40 只大盘，代表"全市场"宽度）
 _BREADTH_BASKET = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "BAC", "V", "UNH",
                    "JNJ", "LLY", "XOM", "CVX", "WMT", "HD", "PG", "KO", "CAT", "BA",
@@ -812,7 +854,7 @@ _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
 #   🎯 个股决策 = 一只票该不该买/在哪买/何时撤（全景图 + 作战卡=入场位/离场警示 + 快照/事件/财报）
 #   🛡️ 组合配置 = 一篮子分散+长持（核心打法）   📋 多票简报 = 多票横向对比
 #   🔬 研究台 = 选股/因子/regime/回测等研究验证   ℹ️ 关于 = 定位 & 术语
-_JOBS = ["🎯 个股决策", "🛡️ 组合配置", "📋 多票简报", "🔬 研究台", "ℹ️ 关于"]
+_JOBS = ["🎯 个股决策", "🔭 建仓扫描", "🛡️ 组合配置", "📋 多票简报", "🔬 研究台", "ℹ️ 关于"]
 _STOCK_SUB_NAMES = ["📊 全景图（图+裁决）", "🎖️ 作战卡（入场位 / 离场警示）", "📈 当前快照",
                     "🗞️ 事件时间线", "📅 财报 PEAD"]
 _RESEARCH_SUB_NAMES = ["🏆 最推荐买入（选股榜）", "🏭 行业动向（半导体/科技）", "🎯 进出场规则（回测器）",
@@ -3219,6 +3261,82 @@ def page_stock_ranking():
                        file_name=f"选股榜_{gsel}_{res['asof']}.md", mime="text/markdown")
 
 
+# ===========================================================================
+# 页面：全市场建仓扫描（用入场引擎扫一个板块，看谁现在到了可建仓支撑）
+# ===========================================================================
+_SCAN_UNIVERSES = {
+    "🔌 半导体": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "MRVL",
+               "AMAT", "LRCX", "KLAC", "SMH", "SOXX"],
+    "🖥️ 科技股": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "ORCL", "CRM", "ADBE", "NOW",
+               "INTU", "AMD", "QCOM", "AVGO", "CSCO", "PLTR", "SNOW", "UBER", "PANW", "QQQ", "XLK"],
+    "🌟 七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
+    "📊 大盘/ETF": ["SPY", "QQQ", "DIA", "IWM", "XLK", "SMH", "SOXX", "XLF", "XLV", "XLE", "XLY"],
+    "🌐 科技+半导体(全)": None,   # 下方合并去重
+}
+_SCAN_ALL = list(dict.fromkeys(_SCAN_UNIVERSES["🔌 半导体"] + _SCAN_UNIVERSES["🖥️ 科技股"]
+                               + _SCAN_UNIVERSES["📊 大盘/ETF"]))
+
+
+def page_build_scan():
+    st.markdown('<div class="hero-title">🔭 全市场建仓扫描</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">用<b>入场引擎</b>批量扫一个板块，一眼看哪些票<b>现在到了可建仓支撑</b>、'
+                '哪些<b>等回踩</b>、哪些是<b>飞刀别碰</b>。校准非预测——"可建仓"指在支撑/趋势健康，不是最低点。</div>',
+                unsafe_allow_html=True)
+    uni = st.selectbox("📂 扫描板块", list(_SCAN_UNIVERSES), index=0)
+    tickers = _SCAN_ALL if _SCAN_UNIVERSES[uni] is None else _SCAN_UNIVERSES[uni]
+    flt = st.radio("筛选", ["全部", "🟢 只看可建仓(在支撑/优质回踩)", "🟡 只看等回踩", "🔴 只看观望(飞刀)"],
+                   horizontal=True, label_visibility="collapsed")
+    with st.spinner(f"扫描 {len(tickers)} 只…"):
+        rows = c_build_scan(tuple(tickers), end)
+    if not rows:
+        st.warning("扫描无结果（数据不足）。"); return
+    # 市场背景
+    try:
+        _frg = c_fragility("2008-01-01", end).get("cur", {})
+        _vp = c_vix_pctile(end)
+        st.caption(f"🌡️ 市场背景：宽度 {_frg.get('breadth', float('nan')):.0%} 在200线上 · "
+                   f"{'🔴脆弱' if _frg.get('fragile') else '🟢健康'} · VIX分位 {(_vp or 0):.0%}"
+                   f"{'（恐慌偏高→优质回踩窗口易现）' if (_vp or 0) > 0.7 else ''} · 截至 {_frg.get('date','')}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    df = pd.DataFrame(rows)
+    green = df[df["_tag"].isin(["🟢", "✨"])].sort_values("回调")
+    amber = df[df["_tag"] == "🟡"].sort_values("回调")
+    red = df[df["_tag"] == "🔴"].sort_values("回调")
+    cols = ["票", "评级", "回调", "RSI", "距200线", "离场", "回踩支撑位/状态"]
+    cfg = {"回调": st.column_config.NumberColumn(format="%+.0f%%"),
+           "距200线": st.column_config.NumberColumn(format="%+.0f%%"),
+           "RSI": st.column_config.NumberColumn(format="%.0f")}
+    # %列后端是小数，转百分显示
+    def _pct(d):
+        d = d.copy(); d["回调"] = d["回调"] * 100; d["距200线"] = d["距200线"] * 100; return d
+
+    def _show(title, d, note):
+        if d.empty:
+            return
+        st.markdown(f"##### {title}（{len(d)} 只）")
+        st.dataframe(_pct(d)[cols], use_container_width=True, hide_index=True, column_config=cfg)
+        if note:
+            st.caption(note)
+
+    if flt == "全部" or "可建仓" in flt:
+        _show("✅ 现在就到「可建仓支撑」（🟢 可分批 / ✨ 优质回踩）", green,
+              "✨优质回踩=趋势健康+RSI回踩+VIX高分位（回测胜率更高）；🟢=现价在支撑共振区。**分批进、别梭哈**（平均买在比局部底高 5~7% 处）。")
+    if flt == "全部" or "等回踩" in flt:
+        _show("🟡 趋势健康、但还没回踩到支撑（等回踩或小仓）", amber,
+              "趋势没破，但现价不在支撑上——回踩到「支撑位」列的价再分批，或小仓参与。")
+    if flt == "全部" or "观望" in flt:
+        _show("🔴 破位飞刀·观望（跌得多 ≠ 能买）", red,
+              "跌破200线且均线下行=飞刀，工具判观望。别因'看着便宜'接刀——历史上接刀胜率最差、浮亏最深。")
+
+    st.divider()
+    st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯。"
+               "数据按上一收盘计。下单按你券商实时价 + 支撑位挂分批单。")
+    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "RSI", "距200线", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
+    st.download_button("⬇️ 导出扫描结果(Markdown)", _md, file_name=f"建仓扫描_{uni}_{end}.md", mime="text/markdown")
+
+
 # 任务 → 页面映射（在所有 page_* 定义之后构建，引用函数对象）
 _STOCK_SUB = dict(zip(_STOCK_SUB_NAMES,
                       [page_panorama, page_position_card, page_snapshot, page_events, page_earnings]))
@@ -3227,6 +3345,8 @@ _RESEARCH_SUB = dict(zip(_RESEARCH_SUB_NAMES,
 try:
     if job == "🎯 个股决策":
         _STOCK_SUB.get(sub, page_panorama)()
+    elif job == "🔭 建仓扫描":
+        page_build_scan()
     elif job == "🛡️ 组合配置":
         page_fragility()
     elif job == "📋 多票简报":
