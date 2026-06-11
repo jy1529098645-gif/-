@@ -333,10 +333,11 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                                  line=dict(color=color, width=width, dash=dash),
                                  hoverinfo="skip", showlegend=False), row=1, col=1)
         if label:
-            fig.add_annotation(x=(x1 if side == "right" else x0), y=level, text=label,
+            # 标签锚在 x 轴「域边缘」(xref=x domain)，而非数据点 x —— 横向缩放/平移时钉在图右(1)/左(0)，不再随数据漂走
+            fig.add_annotation(xref="x domain", x=(1 if side == "right" else 0), yref="y", y=level, text=label,
                                xanchor=("right" if side == "right" else "left"), yanchor="bottom",
                                showarrow=False, font=dict(color=color, size=10),
-                               bgcolor=C["anno_bg"], row=1, col=1)
+                               bgcolor=C["anno_bg"])
 
     def _band(y0, y1, fillcolor, label=None, lab_color=C["text"]):
         _lvls.extend([float(y0), float(y1)])
@@ -344,8 +345,8 @@ def panorama_price_chart(ohlcv: pd.DataFrame, zones=None, vp: dict | None = None
                                  fill="toself", fillcolor=fillcolor, line=dict(width=0),
                                  mode="lines", hoverinfo="skip", showlegend=False), row=1, col=1)
         if label:
-            fig.add_annotation(x=x0, y=y1, text=label, xanchor="left", yanchor="bottom",
-                               showarrow=False, font=dict(color=lab_color, size=11), row=1, col=1)
+            fig.add_annotation(xref="x domain", x=0, yref="y", y=y1, text=label, xanchor="left", yanchor="bottom",
+                               showarrow=False, font=dict(color=lab_color, size=11))
 
     # —— 📦 换手位筹码横柱（叠在价格轴；用副 x 轴 x3 控制柱长靠左）——
     if show_vp and vp is not None:
@@ -480,11 +481,11 @@ def candle_with_levels(ohlcv: pd.DataFrame, vp: dict, title="近一年 K线 + �
     fig.add_trace(go.Scatter(x=[_x0, _x1], y=[poc, poc], mode="lines",
                              line=dict(color=C["accent2"], width=1.5, dash="dash"),
                              hoverinfo="skip", showlegend=False), row=1, col=1)
-    fig.add_annotation(x=_x1, y=poc, text=f"POC {poc:.1f}", xanchor="right", yanchor="bottom",
-                       showarrow=False, font=dict(color=C["accent2"], size=10),
-                       bgcolor=C["anno_bg"], row=1, col=1)
-    fig.add_annotation(x=_x0, y=va_hi, text="价值区(70%)", xanchor="left", yanchor="bottom",
-                       showarrow=False, font=dict(color=C["accent"], size=11), row=1, col=1)
+    # 标签锚在 x 轴域边缘(xref=x domain)，缩放/平移时钉在图右(POC)/左(价值区)，不随数据漂走
+    fig.add_annotation(xref="x domain", x=1, yref="y", y=poc, text=f"POC {poc:.1f}", xanchor="right", yanchor="bottom",
+                       showarrow=False, font=dict(color=C["accent2"], size=10), bgcolor=C["anno_bg"])
+    fig.add_annotation(xref="x domain", x=0, yref="y", y=va_hi, text="价值区(70%)", xanchor="left", yanchor="bottom",
+                       showarrow=False, font=dict(color=C["accent"], size=11))
     _apply_tv(fig, 540, title)
     # x3 = 筹码柱专用轴：range 放大到 4.5×max → 柱只占左侧约 22% 宽，近端K线不被遮挡
     fig.update_layout(xaxis_rangeslider_visible=False, barmode="overlay",
