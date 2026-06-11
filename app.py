@@ -364,6 +364,11 @@ def c_pead(ticker: str, start: str, end: str):
     from analysis import quant_edge as qe
     return qe.pead_now(ticker, start, end)
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def c_exposure_spectrum(ticker: str, start: str, end: str):
+    from analysis import position_guidance as pg
+    return pg.exposure_backtest_spectrum(ticker, start=start, end=end)
+
 @st.cache_data(show_spinner=False)
 def c_port_weights(tickers: tuple, start: str, end: str, method: str):
     from analysis import quant_edge as qe
@@ -2939,6 +2944,41 @@ def page_position_card():
         chart_df = pd.DataFrame({"价格(归一)": norm, "建议暴露(0-1)": hist["exposure"]})
         st.line_chart(chart_df, color=[T["muted"], T["good"]])
         st.caption("绿线=v3 建议暴露(0-1)，灰线=价格归一。崩盘段绿线应明显下沉(自动减仓)，平时贴近满仓。")
+    st.write("")
+
+    # —— 🪜 保护↔复利谱（本票历史回测，v3.1 软地板）——
+    st.markdown("##### 🪜 保护 ↔ 复利谱（**本票历史回测** · 四档暴露 vs 闭眼持有）")
+    try:
+        spec = c_exposure_spectrum(asset, start, end)
+        _meta = spec.get("_meta", {})
+        order = [("conservative", "稳健·最强保险"), ("moderate", "中性(默认)"),
+                 ("aggressive", "进取"), ("leveraged", "🔥杠杆"), ("hold", "闭眼持有")]
+        rows = []
+        for k, zh in order:
+            m = spec.get(k) or {}
+            if not m:
+                continue
+            rows.append({"档位": zh, "年化": m["cagr"], "终值×": m["mult"], "夏普": m["sharpe"],
+                         "最大回撤": m["mdd"], "Calmar": m["calmar"]})
+        sdf = pd.DataFrame(rows).set_index("档位")
+        st.dataframe(
+            sdf.style.format({"年化": "{:+.0%}", "终值×": "{:.1f}x", "夏普": "{:.2f}",
+                              "最大回撤": "{:+.0%}", "Calmar": "{:.2f}"}),
+            use_container_width=True)
+        # 一句话点评：相对持有，谱上各档的取舍
+        _h = spec.get("hold", {})
+        if _h:
+            _mod = spec.get("moderate", {})
+            st.caption(
+                f"样本：{_meta.get('ticker','')} {_meta.get('start','')}→{_meta.get('end','')}"
+                f"（约{_meta.get('years','?')}年）。**越往下复利越高、回撤越深**——你在谱上选位置即选"
+                f"『保护 vs 复利』。默认中性档：年化 {_mod.get('cagr',float('nan')):+.0%}、回撤 "
+                f"{_mod.get('mdd',float('nan')):+.0%}（持有 {_h.get('cagr',float('nan')):+.0%}/"
+                f"{_h.get('mdd',float('nan')):+.0%}）——复利让一截、回撤砍一半。")
+        st.caption("⚠️ 校准非预测：这是**这只票的历史**经验(含已知幸存者光环)，不代表未来；撤离=崩盘保险，"
+                   "绝对收益上没有任何档跑赢长牛持有。已过 walk-forward 前向滚动 + Deflated Sharpe 多重检验。")
+    except Exception as _e:  # noqa: BLE001
+        st.caption(f"谱回测暂不可用：{type(_e).__name__}")
     st.write("")
 
     cL, cR = st.columns(2)

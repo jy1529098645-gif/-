@@ -268,6 +268,47 @@ def position_guidance(ticker: str, start: str | None = None, end: str | None = N
                            "分布带N/CI。撤离为崩盘保险口径，绝对收益上不跑赢长牛持有。研究校准用途。")}
 
 
+def exposure_backtest_spectrum(ticker: str, start: str | None = None, end: str | None = None,
+                               fee: float = 0.0010) -> dict:
+    """对**当前票**回测四档暴露 vs 闭眼持有，返回"保护↔复利谱"指标(给作战卡可视)。
+
+    口径同生产引擎：无前视(昨暴露×今收益)−|Δ暴露|×单边成本。返回 dict：
+      {profile: {cagr, sharpe, mdd, calmar, mult, in_mkt}} + {"hold": ...}。
+    校准用途：是**这只票的历史**经验，不预测未来；撤离=崩盘保险，绝对收益上不跑赢长牛。
+    """
+    from data import loader
+    start = start or ("1995-01-01" if ticker.upper() == "SPY" else "2008-01-01")
+    price = loader.load_ohlcv(ticker.upper(), start, end).dropna()["close"].dropna()
+    ret = price.pct_change()
+    ann = 252
+
+    def _m(r, expo=None):
+        r = r.dropna()
+        if len(r) < 60:
+            return {}
+        n = len(r); cum = float((1 + r).prod())
+        eq = (1 + r).cumprod(); mdd = float((eq / eq.cummax() - 1.0).min())
+        cagr = cum ** (ann / n) - 1.0
+        sh = float(r.mean() / r.std() * np.sqrt(ann)) if r.std() > 0 else float("nan")
+        out = {"cagr": cagr, "sharpe": sh, "mdd": mdd,
+               "calmar": (cagr / abs(mdd)) if mdd < 0 else float("nan"), "mult": cum, "n": n}
+        if expo is not None:
+            out["in_mkt"] = float((expo.reindex(r.index).fillna(0.0) > 0).mean())
+        return out
+
+    res = {}
+    for k, cfg in PROFILES.items():
+        expo = _exposure_series(price, cfg["tvol"], cfg["max_lev"],
+                                floor=cfg["floor"], slope_floor=cfg["slope_floor"])
+        pos = expo.shift(1)
+        sr = pos * ret - pos.diff().abs().fillna(0.0) * fee
+        res[k] = _m(sr, expo)
+    res["hold"] = _m(ret)
+    res["_meta"] = {"ticker": ticker.upper(), "start": str(price.index[0].date()),
+                    "end": str(price.index[-1].date()), "years": round(len(price) / ann, 1)}
+    return res
+
+
 def format_guidance(g: dict) -> str:
     """渲染为 Markdown(供 CLI / 报告)。"""
     r, b, x = g["regime"], g["build"], g["exit"]
