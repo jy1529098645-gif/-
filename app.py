@@ -403,6 +403,21 @@ def is_market_open() -> bool:
     except Exception:  # noqa: BLE001
         return False
 
+
+def _vix_level(v: float):
+    """VIX 数值 → (恐慌等级文案, 主题色 token, 一句解读)。阈值取市场惯用分档。"""
+    if not (v == v):
+        return ("数据缺失", "muted", "实时取价失败，回退最近收盘")
+    if v < 15:
+        return ("平静", "good", "波动极低，市场情绪乐观/自满")
+    if v < 20:
+        return ("正常", "info", "波动温和，常态区间")
+    if v < 27:
+        return ("警觉", "gold", "不安升温，注意风险")
+    if v < 35:
+        return ("担忧", "amber", "明显避险，波动放大")
+    return ("恐慌", "bad", "极度避险，常见于急跌/危机")
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def c_event_radar(ticker: str, today_iso: str, next_earnings: str | None, horizon: int = 45):
     """事件雷达（全网自动抓 IPO/经济日历 + 规则日历 + 手填）。缓存 1 小时，避免重复联网/限流。"""
@@ -770,6 +785,39 @@ with st.sidebar:
     st.markdown("### 📊 量化研究工具")
     st.caption("选股 → 自动全景分析 · 校准而非预测")
     tm.toggle(st)   # 🌙/☀️ 明暗主题切换
+
+    # —— 😱 恐慌指数 VIX（侧栏置顶·盘中高频自刷新）——
+    # 每次整页重跑都重建 fragment，让 run_every 按当前开/收盘动态切换（盘中15秒、休市不自刷）。
+    _vix_open = is_market_open()
+    @st.fragment(run_every=("15s" if _vix_open else None))
+    def _vix_panel():
+        import datetime as _dvix
+        _T = tm.tokens()
+        # 15 秒桶：盘中每 15 秒强制取一次新报价（绕过 c_live_quote 的 30s 缓存键）
+        q = c_live_quote("^VIX", int(_dvix.datetime.now().timestamp() // 15))
+        v = q.get("price", float("nan"))
+        chg = q.get("change_pct", float("nan"))
+        lab, tok, why = _vix_level(v)
+        col = _T.get(tok, _T["muted"])
+        vtxt = f"{v:.2f}" if v == v else "—"
+        if chg == chg:
+            ccol = _T["bad"] if chg > 0 else _T["good"]   # VIX↑=恐慌升(红)，VIX↓=趋稳(绿)，与个股相反
+            chtxt = f'<span style="font-size:0.8rem;color:{ccol}">{"▲" if chg>0 else "▼"} {chg:+.2%}</span>'
+        else:
+            chtxt = ""
+        status = ("🟢 盘中 · ≈15min延迟 · 每15秒自动刷新" if _vix_open
+                  else ("⚪ 休市 · 最近收盘值" if q.get("ok") else "⚪ 取价失败 · 回退收盘"))
+        st.markdown(
+            f'<div style="border-radius:10px;padding:9px 12px;margin:4px 0 8px;'
+            f'background:{col}1f;border:1px solid {col}55;border-left:4px solid {col}">'
+            f'<div style="font-size:0.72rem;color:var(--muted);letter-spacing:.4px">😱 恐慌指数 VIX · <b style="color:{col}">{lab}</b></div>'
+            f'<div style="display:flex;align-items:baseline;gap:8px;margin-top:1px">'
+            f'<span style="font-size:1.55rem;font-weight:800;color:{col};line-height:1.1">{vtxt}</span>{chtxt}</div>'
+            f'<div style="font-size:0.66rem;color:var(--muted);margin-top:2px">{why}</div>'
+            f'<div style="font-size:0.62rem;color:var(--muted);margin-top:1px">{status}</div>'
+            f'</div>', unsafe_allow_html=True)
+    _vix_panel()
+
     st.markdown("**📍 查询**")
     grp = st.selectbox("📂 板块", list(_TICKER_GROUPS), index=0)
     asset = st.selectbox("🎯 选择标的", _TICKER_GROUPS[grp], index=0)
