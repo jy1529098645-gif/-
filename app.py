@@ -793,9 +793,15 @@ _ETF_SET = {"SPY", "QQQ", "DIA", "IWM", "XLK", "SMH", "SOXX", "XLC", "XLY", "XLF
             "AGG", "HYG", "IEF", "MTUM", "USMV", "IWD"}   # 无单公司财报的 ETF/基金（用于"下次财报"口径）
 _ALL_TICKERS = list(dict.fromkeys(t for g in _TICKER_GROUPS.values() for t in g))
 _SPY_FIRST = ["SPY"] + [t for t in _ALL_TICKERS if t != "SPY"]
-_VIEWS = ["📊 个股分析", "📋 多票对比", "🧪 高级研究"]
-_ADV_NAMES = ["🎖️ 建仓/撤离作战卡", "🏆 最推荐买入(选股榜)", "🏭 行业动向(半导体/科技)", "🛡️ 稳定配置 & 风险", "🎯 个股进出场规则(回测器)", "🔬 因子评估", "🌊 大盘 regime(SPY/宏观)",
-              "📈 当前快照", "🗞️ 事件时间线", "📅 财报 PEAD", "💰 建仓策略对比", "ℹ️ 关于/术语"]
+# 任务导向导航（按"用户要做什么"组织，把核心工作流提到台面，每次只算一个页面）：
+#   🎯 个股决策 = 一只票该不该买/在哪买/何时撤（全景图 + 作战卡=入场位/离场警示 + 快照/事件/财报）
+#   🛡️ 组合配置 = 一篮子分散+长持（核心打法）   📋 多票简报 = 多票横向对比
+#   🔬 研究台 = 选股/因子/regime/回测等研究验证   ℹ️ 关于 = 定位 & 术语
+_JOBS = ["🎯 个股决策", "🛡️ 组合配置", "📋 多票简报", "🔬 研究台", "ℹ️ 关于"]
+_STOCK_SUB_NAMES = ["📊 全景图（图+裁决）", "🎖️ 作战卡（入场位 / 离场警示）", "📈 当前快照",
+                    "🗞️ 事件时间线", "📅 财报 PEAD"]
+_RESEARCH_SUB_NAMES = ["🏆 最推荐买入（选股榜）", "🏭 行业动向（半导体/科技）", "🎯 进出场规则（回测器）",
+                       "🔬 因子评估", "🌊 大盘 regime（SPY/宏观）", "💰 建仓策略对比"]
 _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 252, "24 个月 (504日)": 504}
 
 with st.sidebar:
@@ -853,8 +859,14 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.divider()
-    view = st.radio("视图", _VIEWS, index=0, label_visibility="collapsed")
-    adv = st.selectbox("研究工具", _ADV_NAMES) if view == "🧪 高级研究" else None
+    st.markdown("**🧭 你想做什么？**")
+    job = st.radio("任务", _JOBS, index=0, label_visibility="collapsed")
+    sub = None
+    if job == "🎯 个股决策":
+        sub = st.selectbox("看什么", _STOCK_SUB_NAMES, index=0,
+                           help="全景图=图+裁决总览；作战卡=合理入场位+分级离场警示+复利谱")
+    elif job == "🔬 研究台":
+        sub = st.selectbox("研究工具", _RESEARCH_SUB_NAMES, index=0)
     st.divider()
     st.markdown("**🔧 数据 & 工具**")
     import datetime as _dt
@@ -3129,22 +3141,22 @@ def page_stock_ranking():
                        file_name=f"选股榜_{gsel}_{res['asof']}.md", mime="text/markdown")
 
 
-_ADV_PAGES = {
-    "🎖️ 建仓/撤离作战卡": page_position_card,
-    "🏆 最推荐买入(选股榜)": page_stock_ranking,
-    "🏭 行业动向(半导体/科技)": page_industry,
-    "🛡️ 稳定配置 & 风险": page_fragility,
-    "🎯 个股进出场规则(回测器)": page_rule, "🔬 因子评估": page_factor, "🌊 大盘 regime(SPY/宏观)": page_regime,
-    "📈 当前快照": page_snapshot, "🗞️ 事件时间线": page_events, "📅 财报 PEAD": page_earnings,
-    "💰 建仓策略对比": page_strategies, "ℹ️ 关于/术语": page_overview,
-}
+# 任务 → 页面映射（在所有 page_* 定义之后构建，引用函数对象）
+_STOCK_SUB = dict(zip(_STOCK_SUB_NAMES,
+                      [page_panorama, page_position_card, page_snapshot, page_events, page_earnings]))
+_RESEARCH_SUB = dict(zip(_RESEARCH_SUB_NAMES,
+                         [page_stock_ranking, page_industry, page_rule, page_factor, page_regime, page_strategies]))
 try:
-    if view == "📊 个股分析":
-        page_panorama()
-    elif view == "📋 多票对比":
+    if job == "🎯 个股决策":
+        _STOCK_SUB.get(sub, page_panorama)()
+    elif job == "🛡️ 组合配置":
+        page_fragility()
+    elif job == "📋 多票简报":
         page_briefing()
+    elif job == "🔬 研究台":
+        _RESEARCH_SUB.get(sub, page_stock_ranking)()
     else:
-        _ADV_PAGES.get(adv, page_overview)()
+        page_overview()
 except Exception as e:  # noqa: BLE001
     st.error(f"出错了：{type(e).__name__}: {e}")
     st.exception(e)
