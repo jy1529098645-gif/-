@@ -1854,7 +1854,7 @@ def page_briefing():
                 st.caption(f"🎯 合理入场位：{b.get('entry_sup_txt','—')} · {winrate_txt(ent)} · "
                            f"裁决与「个股决策」「建仓扫描」同源(entry_confluence)；下方技术参考档/引擎桶为辅助视角。")
                 if ent.get("fear_pullback"):
-                    st.markdown('<div class="verdict">✨ <b>优质回踩</b>：趋势内深回踩+市场恐慌，历史上这类点位入场胜率更高，可分批加码。</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="verdict">✨ <b>优质回踩</b>：趋势内深回踩+市场恐慌——回测验证(约67%→72%·两段样本外均胜)这类点位入场更优，<b>小步分批</b>(非梭哈加码)。</div>', unsafe_allow_html=True)
             # 一致性 / 数据质量告警（置顶）
             for c in (b.get("consistency") or []):
                 st.markdown(f'<div class="verdict">🚧 <b>一致性告警</b>：{c["message"]}</div>', unsafe_allow_html=True)
@@ -2340,7 +2340,7 @@ def page_panorama():
             'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
             '🟢 <b>当前总裁决：可分批建仓</b>（温和正期望 · 择时低置信）。'
             '回测（<b>PIT 无前视</b>）显示这类「正期望回撤档」分批进<b>历史上跑赢「随便买」</b>'
-            '（浅跌 0–10% 档尤佳、胜率约 70–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
+            '（浅跌 0–10% 档尤佳、胜率约 72–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
             '<b>这就是常态可买信号</b>——按「<b>分批 + 控仓 + 认尾部</b>」执行，'
             '别空等几乎从不出现的「稳健档」（严口径下个股历史上基本不触发）。'
             '下方 K 线价位带是技术共振支撑，用于<b>分档挂单</b>。</div>', unsafe_allow_html=True)
@@ -2484,7 +2484,7 @@ def page_panorama():
                 # 撤离明细（四信号）—— 内联（避免 expander 套 expander）
                 for s in _ew.get("signals", []):
                     _ph.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
-                _ph.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
+                _ph.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，**ETF**上回测砍回撤约40%·-33%vs-58%·口径见overlay.py；个股主要压回撤·见下行）；"
                             "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
                             "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
                 _ph.caption("🧭 **撤离口径(大规模回测后)**：离场**换不来超额、只为压回撤**(科技/半导体最大回撤~64%→~50%)，别指望靠离场多赚；"

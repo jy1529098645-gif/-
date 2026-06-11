@@ -153,7 +153,7 @@ def entry_zones(
             median_dd = float("nan"); anchor_median = float("nan"); regime_year_frac = float("nan")
         price_high = cur_high * (1 - lo_d)
         price_low = cur_high * (1 - hi_d) if hi_d < 1.0 else 0.0
-        label = (f"距前高 {lo_d:.0%}–{hi_d:.0%}" if hi_d < 1.0 else f"距前高 >{lo_d:.0%}")
+        label = (f"距1年高 {lo_d:.0%}–{hi_d:.0%}" if hi_d < 1.0 else f"距1年高 >{lo_d:.0%}")   # high=rolling252·与全局"距1年高"口径一致
         is_current = bool(-hi_d < cur_dd <= -lo_d)
         row = {
             "zone": label,

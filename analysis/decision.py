@@ -187,11 +187,11 @@ def decision_card(asset: str, px: pd.Series, best_entry: dict, fragile_now: bool
             why.append("市场宽度恶化(3x概率·略领先指数)")
         trig = " + ".join(why)
         if is_etf:
-            exit_rules.append(f"🔴 {trig} → **减半仓 + 按波动降仓**（验证：ETF夏普7/7改善、回撤-39%vs-55%、"
-                              "2015+OOS 1.00vs0.91；站回200线上方且宽度healthy再加回。见脆弱性页净值曲线）")
+            exit_rules.append(f"🔴 {trig} → **减半仓 + 按波动降仓**（验证：ETF夏普0.77vs0.70、回撤-33%vs-58%、"
+                              "2015+OOS 1.00vs0.91；站回200线上方且宽度healthy再加回。口径见 overlay.py）")
         else:
             exit_rules.append(f"🟠 {trig} → **减半仓 + 按波动降仓**（验证：个股也升夏普0.84vs0.83、"
-                              "回撤-35%vs-56%、7/9占优；高动量龙头若只追收益可不减）")
+                              "2015+OOS 0.99vs0.92；高动量龙头若只追收益可不减）")
     else:
         if is_etf:
             exit_rules.append("🟢 无离场信号(未破200线·宽度healthy)→ 持满仓（ETF半仓叠加规则：此状态满仓）")
@@ -256,9 +256,9 @@ def holding_advice(card: dict, brief: dict | None = None,
         stance, color = "🔴 减仓 / 防守", "#FF5C7A"
         headline = f"{why} → 按已验证规则**减到半仓 + 按波动降仓**(非清仓)，等修复再加回。"
         if is_etf:
-            actions.append("减半仓+按波动降仓——ETF上该规则夏普7/7改善、回撤-39%vs-55%、2015+OOS稳健。")
+            actions.append("减半仓+按波动降仓——ETF上该规则夏普0.77vs0.70、回撤-33%vs-58%、2015+OOS 1.00vs0.91。")
         else:
-            actions.append("减半仓+按波动降仓——个股也升夏普(0.84vs0.83)、回撤-35%vs-56%、7/9占优；"
+            actions.append("减半仓+按波动降仓——个股也升夏普(0.84vs0.83)、2015+OOS 0.99vs0.92；"
                            "若是高动量龙头、你只追长期收益，可少减、用移动止损替代清仓。")
         actions.append("**站回200日线上方且市场宽度转 healthy** → 再把仓位加回去。")
     elif trap and dd <= -0.05:
