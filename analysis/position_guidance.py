@@ -90,6 +90,11 @@ def _exposure_series(price: pd.Series, tvol: float, max_lev: float = 1.0,
         base = base.where(~high_vol, base.clip(upper=1.0))
     up = price > sma200
     dead = (price < sma200) & (~slope)
+    # 三段趋势门(满仓base / 线下未死 slope_floor×base / 确认死亡 floor×base)。
+    # 已知取舍(刻意不改·改动会使已验证 v3.1 DSR 失效)：① 价格在200线反复穿越时暴露会跳变、无滞回(hysteresis)——
+    #   但所有回测都按 pos.diff().abs()×fee 单边扣了换手成本，抖动成本已计入夏普/CAGR，非隐藏。
+    # ② 早期 min_periods 未满段暴露为 NaN→下方 fillna(0)=暖机期空仓——这会把回测早期拉成虚假空仓、**拖低**
+    #   净值(方向保守、不会夸大策略)；所有展示口径一致(持有/各档同期同样从暖机算)，故对照公平。
     expo = base.where(up, slope_floor * base)
     expo = expo.where(~dead, floor * base)
     return expo.clip(0.0, max_lev).fillna(0.0)

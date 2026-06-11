@@ -408,8 +408,14 @@ def render_markdown(briefs: list[dict], weights: dict, horizon: int = 63) -> str
         L.append(f"## {b['ticker']} {b['price']:.1f}\n")
         ent = b.get("entry")
         if ent:
-            _wn = ent.get("win_now")
-            _wntxt = f"现价买入历史胜率 {_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "现价买胜率样本不足"
+            _wn = ent.get("win_now"); _we = ent.get("win_now_excess")
+            if ent.get("is_leveraged"):
+                _wntxt = "杠杆ETF不报胜率(日复利衰减·长持口径无意义)"
+            elif _wn is not None and _wn == _wn:
+                _base = ent.get("win_now_base")
+                _wntxt = f"现价买入历史胜率 {_wn*100:.0f}%" + (f"(基准{_base*100:.0f}%·超额{_we*100:+.0f}%)" if _base == _base else "")
+            else:
+                _wntxt = "现价买胜率样本不足(N<30)"
             L.append(f"**入场裁决 {ent.get('grade_tag','')} {ent.get('grade','')}** · 合理入场位：{b.get('entry_sup_txt','—')}"
                      f" · {_wntxt} · 本票风险(离场)：{b.get('risk_txt','—')}。\n"
                      f"> _入场/离场裁决与「个股决策」「建仓扫描」同源(entry_confluence)；下方技术参考档/引擎桶为辅助视角。_\n")

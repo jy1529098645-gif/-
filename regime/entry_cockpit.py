@@ -279,6 +279,10 @@ def best_entry_zone(
     best = use.loc[use["ci_low"].idxmax()]   # 始终按保守下界择优
 
     # —— 反关 1：多重检验折扣（从 len(elig) 个合格档里选最优）——
+    # ⚠️口径(刻意保守·勿改成更松)：sr 用 per-观测夏普(mean/std)，但 n_obs **刻意**传**独立窗口数 n_ind**
+    # (=n_days//horizon)而非 n_days。远期收益按日重叠、彼此强自相关，用 n_days 会把有效样本灌水、假性显著；
+    # 用 n_ind 让 PSR 的 sqrt(n_obs-1) 按真正独立的赌注数缩水 → DSR 偏严(单票深档 n_ind 常 1~3 → 几乎过不了
+    # 0.95 关 → confident=False)。这正是我们要的：单票统计锚定档**默认不可信**，必须独立样本足才放行。
     sharpes = elig["sharpe"].dropna().to_numpy()
     n_trials = max(1, len(sharpes))
     sr_std = float(np.std(sharpes, ddof=1)) if len(sharpes) > 1 else 0.0
@@ -610,7 +614,8 @@ def upcoming_events(price: pd.Series, edates: pd.DataFrame, n_opex: int = 3) -> 
 # ===========================================================================
 def _ladder_schedule(close: pd.Series, budget: float, bands: tuple[float, ...]) -> pd.Series:
     """阶梯计划：day0 投 1 档，之后每次距窗口内前高首次跌破一档阈值再补 1 档；
-    窗口末把剩余档一次性投完(保证总投入=budget，与 lump/DCA 同口径)。"""
+    窗口末把剩余档一次性投完(保证总投入=budget，与 lump/DCA 同口径)。
+    防前视：回踩阈值在 t 日收盘**判定**、但**次日(t+1)成交**——实盘收盘后才知破阈值，不能当日同价补。"""
     s = pd.Series(np.nan, index=close.index)
     n_tr = len(bands) + 1
     tr = budget / n_tr
@@ -626,7 +631,8 @@ def _ladder_schedule(close: pd.Series, budget: float, bands: tuple[float, ...]) 
         for i, b in enumerate(bands):
             if not fired[i] and dd <= -b and remaining > 0:
                 fired[i] = True
-                s.iloc[t] = (s.iloc[t] if pd.notna(s.iloc[t]) else 0.0) + tr
+                ti = min(t + 1, len(px) - 1)   # t 判定 → t+1 成交(防同日前视)；末日则当日
+                s.iloc[ti] = (s.iloc[ti] if pd.notna(s.iloc[ti]) else 0.0) + tr
                 remaining -= 1
     if remaining > 0:
         pos = len(px) - 1
@@ -835,10 +841,16 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     _up_hist = (px > ma200_s)
     _hz = int(min(horizon, 126))   # 用 126 日(半年)作"入场胜率"口径，决策更相关
     _fwd_hist = px.shift(-_hz) / px - 1.0
-    _cur_high = float(px.tail(252).max()) if len(px) >= 120 else float(px.max())
+    _cur_high = float(_hi252.iloc[-1]) if _hi252.notna().iloc[-1] else (float(px.max()) if len(px) else float("nan"))
+    # 基准胜率(同 horizon·无条件·全历史)：把"现价买胜率"换算成**超额**——
+    # 揭穿"长趋势牛股胜率天然 60~75%"的 beta/选择偏差假象，超额≈0 才说明入场点本身没优势。
+    _base_win = float((_fwd_hist.dropna() > 0).mean()) if _fwd_hist.notna().any() else float("nan")
+    # 杠杆ETF(3x)：每日复利衰减+路径依赖——"在某回撤深度长持半年的胜率"对它毫无意义 → 不报胜率(见 note 警示)。
+    from analysis.decision import classify as _classify
+    is_lev = bool(_classify(asset) == "leveraged_etf")
 
     def _level_winrate(level):
-        if not (level and level > 0 and _cur_high):
+        if is_lev or not (level and level == level and level > 0 and _cur_high == _cur_high and _cur_high):
             return (float("nan"), 0, float("nan"))
         depth = level / _cur_high - 1.0                      # 该支撑相对当前52周高的回撤深度(≤0)
         m = (_dd_hist >= depth - tol) & (_dd_hist <= depth + tol) & _up_hist & _fwd_hist.notna()
@@ -847,8 +859,12 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
             return (float("nan"), int(len(f)), float("nan"))
         return (float((f > 0).mean()), int(len(f)), float(f.median()))
 
+    def _excess(w):
+        return (w - _base_win) if (w == w and _base_win == _base_win) else float("nan")
+
     for s in supports:
         s["win"], s["win_n"], s["win_med"] = _level_winrate(s["price"])
+        s["win_excess"] = _excess(s["win"])
 
     # 现价**下方**最近的技术支撑 = 可执行的"回踩分批区"（按距现价由近到远）
     supports_below = sorted([s for s in supports if s["dist_pct"] < -0.005],
@@ -856,8 +872,9 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     # 现价正落在支撑共振区？(≥2 技术位 ±tol 聚集) → 现在就能分批
     near_now = [s for s in supports if abs(s["price"] / cur - 1.0) <= tol]
     at_support_now = bool(len(near_now) >= 2)
-    # 现价本身的历史胜率（"现在就买"的胜率）
+    # 现价本身的历史胜率（"现在就买"的胜率）+ 相对无条件基准的超额
     win_now, win_now_n, _ = _level_winrate(cur)
+    win_now_excess = _excess(win_now)
 
     # —— 优质回踩（趋势 + 恐慌折价）：回测验证(scripts/vix_rsi_signals.py)的更准入场 ——
     # 趋势健康 × RSI回踩<40 × VIX分位>70% → 历史胜率/收益均高于裸"趋势健康"(两段样本外均胜)。
@@ -934,6 +951,10 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     if warn_amber and not (falling_knife or warn_red):
         note += (f"　⚠️ 当前有离场黄灯（{warn_label or '波动/高位/临近线'}）——回测显示远期收益并不更差、"
                  "只是进场后浮亏略深，故**建议小仓/分批降暴露**，不必完全暂停。")
+    # 杠杆ETF 口径警示：与 decision_card 的"不宜久持/别摊平"对齐，杜绝同票跨页给相反建议
+    if is_lev:
+        note = ("⚠️ **3x杠杆ETF**：每日复利衰减+路径依赖——**不宜久持、别越跌越补摊平**；"
+                "下方支撑仅供**短线波段**参考，已不报历史胜率(长持半年口径对杠杆ETF无意义)。　") + note
 
     return {
         "asset": asset, "current_price": cur, "ma200": ma200, "dist_ma200": dist_ma200,
@@ -945,6 +966,7 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
         "confluence": confluence, "confirms": confirms, "supports": supports,
         "supports_below": supports_below, "at_support_now": at_support_now, "supports_near_now": near_now,
         "win_now": win_now, "win_now_n": win_now_n, "win_horizon": _hz,
+        "win_now_base": _base_win, "win_now_excess": win_now_excess, "is_leveraged": is_lev,
         "grade": grade, "grade_tag": gtag, "note": note,
         "tier": best_entry.get("tier", ""), "stat_excess": best_entry.get("excess_median", float("nan")),
     }

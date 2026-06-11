@@ -124,6 +124,22 @@ def _col_cfg(columns):
             cfg[c] = st.column_config.Column(c, help=h)
     return cfg
 
+def winrate_txt(ef: dict) -> str:
+    """诚实口径的"现价买胜率"文案：原始胜率 + 无条件基准 + **超额** + N。
+    超额≈0 说明高胜率只是趋势beta(选择偏差)、入场点本身没独立优势。杠杆ETF不报。"""
+    if ef.get("is_leveraged"):
+        return "杠杆ETF不报胜率(日复利衰减·长持口径无意义)"
+    w = ef.get("win_now")
+    if not (w is not None and w == w):
+        return "现价买胜率样本不足(N<30·不报)"
+    base = ef.get("win_now_base"); exc = ef.get("win_now_excess"); n = ef.get("win_now_n")
+    s = f"现价买胜率 {w*100:.0f}%"
+    if base == base:
+        s += f"（基准{base*100:.0f}%·超额{exc*100:+.0f}%"
+        s += f"·N={n}）" if n else "）"
+    return s
+
+
 def stat_card(label, value, sub="", color=T["text"], tip=None):
     """tip：术语 key，则标签变成可悬浮解释的术语。"""
     lab = gl.term(tip, label) if tip else label
@@ -658,13 +674,14 @@ def c_build_scan(tickers: tuple, end: str):
             sup = below[0] if below else None
             sup_txt = ("现价在支撑共振区" if ef.get("at_support_now")
                        else (f"{sup['label']} {sup['price']:.1f}（{sup['dist_pct']:+.0%}）" if sup else "—"))
-            _wn = ef.get("win_now")
+            _wn = ef.get("win_now"); _wexc = ef.get("win_now_excess")
             _ab = c_stock_ab(tk, end)
             rows.append({
                 "票": tk, "_tag": ef["grade_tag"], "评级": f'{ef["grade_tag"]} {ef["grade"]}',
                 "回调": cur / hi - 1.0, "RSI": ef.get("rsi", float("nan")),
                 "距200线": (cur / ma200 - 1.0) if ma200 == ma200 and ma200 else float("nan"),
                 "现价买胜率": (_wn * 100 if _wn == _wn else float("nan")),
+                "胜率超额": (_wexc * 100 if _wexc == _wexc else float("nan")),
                 "策略年化": (_ab.get("cagr", float("nan")) * 100 if _ab.get("cagr") == _ab.get("cagr") else float("nan")),
                 "αvsSPY": (_ab.get("alpha", float("nan")) * 100 if _ab.get("alpha") == _ab.get("alpha") else float("nan")),
                 "β": _ab.get("beta", float("nan")), "夏普": _ab.get("sharpe", float("nan")),
@@ -1704,10 +1721,15 @@ def _brief_overview_row(b: dict, live: dict | None = None) -> dict:
         px, chg = f"{b['price']:.1f}", "—"
     ent = b.get("entry") or {}
     verdict = f'{ent.get("grade_tag","")} {ent.get("grade","—")}'.strip() or "—"
-    _wn = ent.get("win_now")
-    winnow = f"{_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "—"
+    _wn = ent.get("win_now"); _we = ent.get("win_now_excess")
+    if ent.get("is_leveraged"):
+        winnow = "杠杆·不报"
+    elif _wn is not None and _wn == _wn:
+        winnow = f"{_wn*100:.0f}%" + (f"（超额{_we*100:+.0f}%）" if _we == _we else "")
+    else:
+        winnow = "—"
     return {
-        # 核心：入场裁决(entry_confluence·与个股决策/扫描同源) → 回踩支撑 → 现价买胜率 → 本票风险(离场)
+        # 核心：入场裁决(entry_confluence·与个股决策/扫描同源) → 回踩支撑 → 现价买胜率(含超额) → 本票风险(离场)
         "标的": b["ticker"], "现价": px, "今日涨跌": chg,
         "入场裁决": verdict, "回踩支撑/状态": b.get("entry_sup_txt", "—"),
         "现价买胜率": winnow, "本票风险": b.get("risk_txt", "—"),
@@ -1827,9 +1849,7 @@ def page_briefing():
                 vc = st.columns(2)
                 vc[0].markdown(stat_card("入场裁决", _gt or "—", ent.get("grade", ""), _gc), unsafe_allow_html=True)
                 vc[1].markdown(stat_card("本票风险(离场)", _risk.split(" ", 1)[0], _risk, _rc), unsafe_allow_html=True)
-                _wn = ent.get("win_now")
-                _wntxt = f"现价买入历史胜率 {_wn*100:.0f}%" if (_wn is not None and _wn == _wn) else "现价买胜率样本不足"
-                st.caption(f"🎯 合理入场位：{b.get('entry_sup_txt','—')} · {_wntxt} · "
+                st.caption(f"🎯 合理入场位：{b.get('entry_sup_txt','—')} · {winrate_txt(ent)} · "
                            f"裁决与「个股决策」「建仓扫描」同源(entry_confluence)；下方技术参考档/引擎桶为辅助视角。")
                 if ent.get("fear_pullback"):
                     st.markdown('<div class="verdict">✨ <b>优质回踩</b>：趋势内深回踩+市场恐慌，历史上这类点位入场胜率更高，可分批加码。</div>', unsafe_allow_html=True)
@@ -2234,10 +2254,13 @@ def page_panorama():
             st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_efc.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                        f"{(_efc.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证胜率约 67%→72%(两段样本外均胜)，"
                        f"**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
-        if _efc.get("win_now") == _efc.get("win_now"):
-            st.markdown(f"**现价买入历史胜率 ≈ {_efc['win_now']*100:.0f}%**（N={_efc.get('win_now_n')}·{_efc.get('win_horizon')}日远期为正占比）")
+        if _efc.get("win_now") == _efc.get("win_now") or _efc.get("is_leveraged"):
+            st.markdown(f"**{winrate_txt(_efc)}**　_（{_efc.get('win_horizon')}日远期为正占比；超额=减去同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_")
         def _wtag2(s):
-            return (f' · 胜率{s["win"]*100:.0f}%' if s.get("win") == s.get("win") else ' · 样本少')
+            if s.get("win") != s.get("win"):
+                return ' · 样本少'
+            _e = s.get("win_excess")
+            return f' · 胜率{s["win"]*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if _e == _e else '')
         if _efc.get("at_support_now") and _near:
             st.markdown("**现价即在支撑共振区**：" + "".join(
                 f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
@@ -2721,7 +2744,7 @@ def page_panorama():
             f"- **费用/滑点**：回测含单边 手续费 {0.0005:.2%} + 滑点 {0.0005:.2%}(共 {0.001:.1%}/边)；杠杆 ETF 复利衰减不可长持。\n"
             "- **已知偏差/边界**：单票深档有**幸存者偏差**(只统计到活下来的)；**未做**退市/成分变更回填；"
             "基本面/新闻是 yfinance **当前快照**(含前视/重述，**仅供人读、不入量化**)；估值非 point-in-time。\n"
-            "- **唯一 OOS 验证过的可交易规则**：跌破200线/宽度恶化→减半仓(ETF夏普7/7改善、回撤砍约40%、2015+样本外稳健)；"
+            "- **唯一 OOS 验证过的可交易规则**：跌破200线/宽度恶化→减半仓(ETF夏普0.77 vs 持有0.70、2015+OOS 1.00 vs 0.91、回撤约-33% vs -58%·口径见 overlay.py)；"
             "其余(最佳入场区/因子/桶)是**校准**，非择时 alpha。\n"
             "- **「稳健 vs 低置信」大规模回测(科技17只/半导体13只·2008–2026)**："
             "严口径『稳健入场区』(DSR≥0.95)在科技/半导体乃至 SPY/防御股**历史上一次都没触发**(单票择时 DSR 上限≈0.78–0.92，过不了多重检验线)——"
@@ -2942,7 +2965,7 @@ def _frag_stability():
         mc[4].markdown(stat_card("滚动1年正收益", f"{o['pos_roll1y']:.0%}", "历史滚动(回看)1年收益为正的占比", T["good"]), unsafe_allow_html=True)
         st.line_chart(stab["equity"], color=[T["good"], T["muted"]])
         st.caption(f"📖 {_uni} · 目标波动{_tv:.0%}：绿=稳定配置(风险叠加)，灰=闭眼持有。"
-                   f"最长水下 {o['longest_underwater_m']} 个月、{o['pos_months']:.0%} 的月份为正。"
+                   f"最长>5%回撤期 {o['longest_underwater_m']} 个月（口径：回撤>5%才算水下）、{o['pos_months']:.0%} 的月份为正。"
                    "调低目标波动→更稳、回撤更浅、收益略低。**这是为稳定收益设计的核心配置**。非投资建议。")
 
 
@@ -3026,7 +3049,7 @@ def _frag_overlay():
     from analysis import overlay as _ov
     st.markdown(f'<div class="verdict">{_ov.verdict(bt)}</div>', unsafe_allow_html=True)
     st.caption(f"🧭 板块适用性：{_ov.sector_effectiveness(a3)}")
-    st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在ETF上夏普7/7改善、个股7/9、回撤显著更浅；"
+    st.caption("📖 绿=风险管理叠加净值，灰=闭眼持有。叠加在 ETF 上夏普 0.77 vs 持有 0.70、个股 0.84 vs 0.83、2015+OOS 均升(1.00 vs 0.91)、回撤显著更浅(约-33% vs -58%·口径见 overlay.py)；"
                "大规模分板块测试：高beta/周期/ETF升夏普，能源/防御板块主要砍回撤。非投资建议。")
 
 
@@ -3065,7 +3088,9 @@ def _frag_product():
                        "组合闭眼持有": f"{c.get('组合闭眼持有', float('nan')):+.0%}",
                        "SPY": (f"{c.get('基准', float('nan')):+.0%}" if '基准' in c else "—")} for c in cs]
             st.dataframe(pd.DataFrame(csrows), use_container_width=True, hide_index=True)
-            st.caption("📖 叠加在崩盘中应明显少跌(数字更接近0或更高)——这是风险管理的核心价值。")
+            st.caption("📖 叠加在崩盘中应明显少跌(数字更接近0或更高)——这是风险管理的核心价值。"
+                       "⚠️ 注意：这些崩盘窗口是**回看挑出的已知危机**(in-sample 演示·非盲测OOS)，规则本就为这类设计——它证明"
+                       "'触发后确实少跌'，但**不证明**能提前预测崩盘。")
         # 滚动夏普：edge 是否随时间衰减（已在 c_product_bt 缓存内算好）
         rs_o = pbt.get("rs_overlay", pd.Series(dtype=float))
         rs_h = pbt.get("rs_hold", pd.Series(dtype=float))
@@ -3284,12 +3309,15 @@ def page_position_card():
                 st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_ef.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                            f"{(_ef.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证：这种'趋势内逢恐慌回踩'进场"
                            f"**历史胜率约 67%→72%**(两段样本外均胜)，**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
-            # 现价买入的历史胜率
-            if _ef.get("win_now") == _ef.get("win_now"):
-                st.markdown(f"**现价买入历史胜率 ≈ {_ef['win_now']*100:.0f}%**（N={_ef.get('win_now_n')}·{_ef.get('win_horizon')}日远期为正占比）")
-            # 可执行回踩分批区（现价下方最近支撑）+ 每个价位历史胜率
+            # 现价买入的历史胜率（诚实口径：原始+基准+超额+N）
+            if _ef.get("win_now") == _ef.get("win_now") or _ef.get("is_leveraged"):
+                st.markdown(f"**{winrate_txt(_ef)}**　_（超额=减同期无条件基准，≈0 说明高胜率只是趋势beta、入场点本身无独立优势）_")
+            # 可执行回踩分批区（现价下方最近支撑）+ 每个价位胜率(标超额)
             def _wtag(s):
-                return (f' · 胜率{s["win"]*100:.0f}%' if s.get("win") == s.get("win") else ' · 样本少')
+                if s.get("win") != s.get("win"):
+                    return ' · 样本少'
+                _e = s.get("win_excess")
+                return f' · 胜率{s["win"]*100:.0f}%' + (f'(超额{_e*100:+.0f}%)' if _e == _e else '')
             if _ef.get("at_support_now") and _near:
                 st.markdown("**现价即在支撑共振区**：" + "".join(
                     f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
@@ -3455,9 +3483,10 @@ def page_build_scan():
     green = df[df["_tag"].isin(["🟢", "✨"])].sort_values("回调")
     amber = df[df["_tag"] == "🟡"].sort_values("回调")
     red = df[df["_tag"] == "🔴"].sort_values("回调")
-    cols = ["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "RSI", "本票风险", "回踩支撑位/状态"]
+    cols = ["票", "评级", "回调", "现价买胜率", "胜率超额", "策略年化", "αvsSPY", "β", "夏普", "RSI", "本票风险", "回踩支撑位/状态"]
     cfg = {"回调": st.column_config.NumberColumn(format="%+.0f%%"),
-           "现价买胜率": st.column_config.NumberColumn("现价买胜率", format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(幸存者偏差)·非保证"),
+           "现价买胜率": st.column_config.NumberColumn("现价买胜率", format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(趋势beta/幸存者偏差)·非保证"),
+           "胜率超额": st.column_config.NumberColumn("胜率超额", format="%+.0f%%", help="现价买胜率 − 同期无条件基准胜率。≈0=高胜率只是趋势beta、入场点本身无独立优势；>0 才是真正的入场edge。这才是该看的数。"),
            "策略年化": st.column_config.NumberColumn("策略年化", format="%+.0f%%", help="按工具策略(v3.1中性暴露)2012→今的年化(CAGR)·非持有年化"),
            "αvsSPY": st.column_config.NumberColumn("α vsSPY", format="%+.0f%%", help="工具策略对SPY的年化超额α(OLS点估)·多因这些是高β成长股+降beta保留"),
            "β": st.column_config.NumberColumn("β", format="%.2f", help="工具策略对SPY的敏感度(减仓后通常<1)"),
@@ -3491,14 +3520,16 @@ def page_build_scan():
         st.markdown("##### 🔍 个股详情（点开看基本面 / 新闻 / 深度分析）")
         for r in green.to_dict("records"):
             tk = r["票"]
+            _exc = r.get("胜率超额", float("nan"))
+            _exctxt = f'(超额{_exc:+.0f}%)' if _exc == _exc else ''
             _lab = (f'{r["_tag"]} {tk}　回调{r["回调"]*100:+.0f}%　年化{r.get("策略年化", float("nan")):+.0f}%　'
-                    f'α{r.get("αvsSPY", float("nan")):+.0f}%　胜率{r.get("现价买胜率", float("nan")):.0f}%')
+                    f'α{r.get("αvsSPY", float("nan")):+.0f}%　胜率{r.get("现价买胜率", float("nan")):.0f}%{_exctxt}')
             with st.expander(_lab):
                 st.markdown(f"**工具策略(v3.1中性暴露)**：年化 {r.get('策略年化', float('nan')):+.0f}% · 夏普 {r.get('夏普', float('nan')):.2f} · "
                             f"最大回撤 {r.get('策略回撤', float('nan')):+.0f}% · α vsSPY {r.get('αvsSPY', float('nan')):+.0f}% · β {r.get('β', float('nan')):.2f}")
                 st.markdown(f"**入场**：{r['评级']} · 现价 {r['现价']:.1f} · RSI {r.get('RSI', float('nan')):.0f} · "
-                            f"距200线 {r.get('距200线', float('nan'))*100:+.0f}% · 现价买胜率 {r.get('现价买胜率', float('nan')):.0f}% · "
-                            f"回踩支撑 {r['回踩支撑位/状态']} · 本票风险 {r['本票风险']}")
+                            f"距200线 {r.get('距200线', float('nan'))*100:+.0f}% · 现价买胜率 {r.get('现价买胜率', float('nan')):.0f}%"
+                            f"{_exctxt} · 回踩支撑 {r['回踩支撑位/状态']} · 本票风险 {r['本票风险']}")
                 # 基本面
                 try:
                     _info = c_fund_info(tk)
@@ -3539,7 +3570,7 @@ def page_build_scan():
     st.divider()
     st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯；"
                "策略年化/α/β=按工具暴露规则回测(点估)，α多来自票本身质量+降beta保留非择时。数据按上一收盘计。")
-    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "本票风险", "回踩支撑位/状态"]].to_markdown(index=False)
+    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "现价买胜率", "胜率超额", "策略年化", "αvsSPY", "β", "夏普", "本票风险", "回踩支撑位/状态"]].to_markdown(index=False)
     st.download_button("⬇️ 导出扫描结果(Markdown)", _md, file_name=f"建仓扫描_{uni}_{end}.md", mime="text/markdown")
 
 
