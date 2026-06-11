@@ -1875,15 +1875,20 @@ def page_panorama():
             f'<div style="font-size:1.6rem;font-weight:800;color:var(--heading);line-height:1.35;margin-top:6px">{_card["state"]}　▸　{_card["action"]}</div>'
             f'</div>', unsafe_allow_html=True)
         # 三个最该看的数字：建议仓位 / 入场参考价 / 持有周期 —— 放大、最醒目
-        # 门控：引擎判定"现在别建新仓"(enter_ok=False)时，三联卡全部转"暂不建仓"口径，
-        # 不再显示与裁决打架的建仓仓位/入场参考价；风控暴露降级为"若已持仓"的副信息。
-        _enter_ok = _card.get("enter_ok", True)
+        # —— 离场预警先算一次（两身份共用），并据此门控新建仓：避免"可分批建仓"与"撤离黄灯"自相矛盾 ——
+        try:
+            _eft0 = c_fragility(zstart, end).get("cur", {})
+            _ewt = _dec.exit_warning(price, _eft0.get("fragile", False), _eft0.get("pctile"))
+        except Exception:  # noqa: BLE001
+            _ewt = {"red": False, "amber": False, "level": "", "color": "#8A93A6", "action": "", "dist_ma200": float("nan")}
+        _warn_active = bool(_ewt.get("red") or _ewt.get("amber"))
+        # 门控：引擎判定"别建新仓"(enter_ok=False) **或** 有离场预警(红/黄灯) → 三联卡转"暂不建仓"，
+        # 与下方持仓者的撤离预警保持一致（同一 regime，不能一边喊撤离一边喊建仓）。
+        _enter_ok = bool(_card.get("enter_ok", True)) and not _warn_active
         _mt = st.columns(3)
         if _is_holder:
             # 📦 持仓者口径：撤离状态 / 距撤离线 / 现在该怎么办（与身份 toggle 联动）
             try:
-                _eft = c_fragility(zstart, end).get("cur", {})
-                _ewt = _dec.exit_warning(price, _eft.get("fragile", False), _eft.get("pctile"))
                 _holdt = _dec.holding_advice(_card, b, _bezc)
                 _mt[0].markdown(stat_card("🚨 撤离状态", _ewt["level"], _ewt["action"][:26], tm.remap(_ewt["color"]), tip="脆弱"), unsafe_allow_html=True)
                 _d2 = _ewt.get("dist_ma200", float("nan"))
@@ -3011,35 +3016,48 @@ def page_position_card():
 
     cL, cR = st.columns(2)
     with cL:
-        # —— 🎯 合理入场位（统计正边际 × 技术支撑共振 × 飞刀防护）——
+        # —— 🎯 合理入场位（先答能不能碰=regime/飞刀/预警 → 再给可执行回踩支撑；统计锚定价已降级）——
         try:
-            _ef = c_entry_confluence(asset, start, end)
+            # 传入离场预警，使入场判断与撤离一致（避免"可建仓"与"撤离黄灯"自相矛盾）
+            _ew_for_entry = None
+            try:
+                from analysis import decision as _dec2
+                _eft2 = c_fragility(start, end).get("cur", {})
+                _ew_for_entry = _dec2.exit_warning(c_prices((asset,), start, end)[asset],
+                                                   _eft2.get("fragile", False), _eft2.get("pctile"))
+            except Exception:  # noqa: BLE001
+                pass
+            _wa = bool(_ew_for_entry and (_ew_for_entry.get("red") or _ew_for_entry.get("amber")))
+            _wl = (_ew_for_entry or {}).get("level", "")
+            _ef = c_entry_confluence(asset, start, end, _wa, _wl)
             _cur = _ef["current_price"]
-            _ecol = (T["bad"] if _ef["falling_knife"] else
-                     T["good"] if _ef["grade"].startswith("强") else
-                     T["gold"] if _ef["grade"].startswith("中") else T["muted"])
-            _anchor_txt = (f"{_ef['anchor']:.1f}" if _ef.get("anchor") else "—")
-            _bd = _ef.get("band") or [None, None]
-            _band_txt = (f"{_bd[0]:.1f}–{_bd[1]:.1f}" if _bd[0] and _bd[1] else
-                         (f"≤{_bd[1]:.1f}" if _bd[1] else "—"))
+            _ecol = (T["bad"] if _ef["grade_tag"] == "🔴" else
+                     T["good"] if _ef["grade_tag"] == "🟢" else
+                     T["gold"] if _ef["grade_tag"] == "🟡" else T["muted"])
+            _below = _ef.get("supports_below") or []
+            _near = _ef.get("supports_near_now") or []
+            # 主行：评级（能不能碰）
             st.markdown(
                 f'<div style="border-radius:12px;padding:11px 15px;margin:0 0 8px;'
                 f'background:{_ecol}1f;border:1px solid {_ecol}55;border-left:5px solid {_ecol}">'
-                f'<div style="font-size:0.74rem;color:var(--muted);letter-spacing:.4px">🎯 合理入场位 · {_ef["grade_tag"]} <b style="color:{_ecol}">{_ef["grade"]}</b></div>'
-                f'<div style="font-size:0.92rem;color:var(--text);margin-top:3px">'
-                f'统计锚定价 <b>{_anchor_txt}</b>（区间 {_band_txt}）· 现价 {_cur:.1f} · '
-                f'技术共振 <b style="color:{_ecol}">{_ef["confluence"]}</b> 个</div>'
+                f'<div style="font-size:0.74rem;color:var(--muted);letter-spacing:.4px">🎯 合理入场位 · 现价 {_cur:.1f}</div>'
+                f'<div style="font-size:1.05rem;font-weight:800;color:{_ecol};margin-top:2px">{_ef["grade_tag"]} {_ef["grade"]}</div>'
                 f'</div>', unsafe_allow_html=True)
-            if _ef.get("confirms"):
-                _chips = "".join(
+            # 可执行回踩分批区（现价下方最近支撑）—— 这是真正能用的"在哪买"
+            if _ef.get("at_support_now") and _near:
+                st.markdown("**现价即在支撑共振区**：" + "".join(
+                    f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
+                    f'background:var(--good-weak);border:1px solid var(--good-border);font-size:0.72rem;color:var(--text)">'
+                    f'{s["label"]} {s["price"]:.1f}</span>' for s in _near[:5]), unsafe_allow_html=True)
+            if _below:
+                st.markdown("**📉 回踩分批区（现价下方最近支撑，若到达分批）**：" + "".join(
                     f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 8px;border-radius:6px;'
                     f'background:var(--card2);border:1px solid var(--border);font-size:0.72rem;color:var(--text)">'
-                    f'{c["label"]} {c["price"]:.1f}</span>' for c in _ef["confirms"])
-                st.markdown("锚定价附近共振：" + _chips, unsafe_allow_html=True)
-            if _ef.get("supports_near_now"):
-                st.caption("现价附近技术支撑：" + " · ".join(
-                    f"{s['label']} {s['price']:.1f}({s['dist_pct']:+.1%})" for s in _ef["supports_near_now"][:5]))
+                    f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%})</span>' for s in _below[:4]),
+                    unsafe_allow_html=True)
             st.caption(_ef["note"])
+            if _ef.get("stat_note"):
+                st.caption(_ef["stat_note"])
         except Exception as _e:  # noqa: BLE001
             st.caption(f"合理入场位暂不可用：{type(_e).__name__}")
 

@@ -803,7 +803,8 @@ def _tech_supports(ohlcv: pd.DataFrame, lookback: int = 252) -> list[dict]:
 
 
 def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict | None = None,
-                     horizon: int = 252, tol: float = 0.025, lookback: int = 252) -> dict:
+                     horizon: int = 252, tol: float = 0.025, lookback: int = 252,
+                     warn_active: bool = False, warn_label: str = "") -> dict:
     """**合理入场位**：把'统计正边际档'(best_entry_zone) 与'技术支撑共振'融合。
 
     逻辑：① 取统计最佳入场区的锚定价/区间(回撤桶里 CI 下界最优、已过反过拟合关)；
@@ -821,60 +822,77 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     slope_dn = bool(ma200_s.notna().iloc[-1] and ma200_s.notna().iloc[-21]
                     and ma200_s.iloc[-1] < ma200_s.iloc[-21])
     falling_knife = bool(ma200 == ma200 and cur < ma200 and slope_dn)
+    # 临近撤离线：价just在200线上方(撤离阈值附近)——趋势薄弱，与 exit_warning 的黄灯口径一致
+    dist_ma200 = (cur / ma200 - 1.0) if (ma200 == ma200 and ma200) else float("nan")
+    near_ma200 = bool(dist_ma200 == dist_ma200 and 0 <= dist_ma200 < 0.04)
 
-    if best_entry is None:
-        best_entry = best_entry_zone(px, asset=asset, horizon=horizon)
     supports = _tech_supports(ohlcv, lookback=lookback)
-
-    stat_ok = bool(best_entry.get("has_zone"))
-    anchor = best_entry.get("anchor_price", float("nan")) if stat_ok else float("nan")
-    band = best_entry.get("price_band", [None, None]) if stat_ok else [None, None]
-
-    # 锚定价附近的技术共振
-    confirms = []
-    if anchor == anchor and anchor:
-        for s in supports:
-            if abs(s["price"] / anchor - 1.0) <= tol:
-                confirms.append(s)
-    confluence = len(confirms)
-
-    # 现价是否正处在'有共振的支撑'(≥2 技术位聚集，且统计正边际)——回答"现在能不能分批"
+    # 现价**下方**最近的技术支撑 = 可执行的"回踩分批区"（按距现价由近到远）
+    supports_below = sorted([s for s in supports if s["dist_pct"] < -0.005],
+                            key=lambda s: -s["dist_pct"])
+    # 现价正落在支撑共振区？(≥2 技术位 ±tol 聚集) → 现在就能分批
     near_now = [s for s in supports if abs(s["price"] / cur - 1.0) <= tol]
     at_support_now = bool(len(near_now) >= 2)
 
+    # 统计'最佳档'降级为参考：单票常 N独立=1、且趋势股最佳档在高点(锚定价>现价)，是噪声非买点。
+    if best_entry is None:
+        best_entry = best_entry_zone(px, asset=asset, horizon=horizon)
+    stat_ok = bool(best_entry.get("has_zone"))
     stat_conf = bool(best_entry.get("confident"))
-    if falling_knife:
-        grade, gtag = "弱·观望（飞刀）", "🔴"
-    elif stat_conf and confluence >= 2:
-        grade, gtag = "强（统计+技术双确认）", "🟢"
-    elif (stat_conf and confluence >= 1) or (not stat_conf and confluence >= 2):
-        grade, gtag = "中（单边确认）", "🟡"
-    elif stat_ok or confluence >= 1:
-        grade, gtag = "偏弱（仅一类弱证据）", "🟡"
+    anchor = best_entry.get("anchor_price", float("nan")) if stat_ok else float("nan")
+    band = best_entry.get("price_band", [None, None]) if stat_ok else [None, None]
+    n_ind = best_entry.get("n_independent", None)
+    zlabel = best_entry.get("zone_label", "")
+    anchor_below = bool(anchor == anchor and anchor and anchor <= cur * 1.005)
+    # 只有"真置信 + 锚定价在现价附近/下方 + 样本足"时，统计档才值得当参考；否则明确标噪声
+    anchor_actionable = bool(stat_conf and anchor_below and (n_ind is None or n_ind >= 5))
+    if not stat_ok:
+        stat_note = "单票回撤桶无正超额档——不硬给统计买点。"
+    elif anchor_actionable:
+        stat_note = f"（统计参考：稳健档「{zlabel}」≈{anchor:.1f}，可作分批位之一）"
     else:
-        grade, gtag = "无（既无统计正边际也无技术共振）", "⚪"
+        _why = ("锚定价在现价上方(趋势股'最佳档'常在高点)" if (anchor == anchor and not anchor_below)
+                else f"N独立={n_ind}样本太少" if (n_ind is not None and n_ind < 5) else "置信不足")
+        stat_note = f"⚠️ 单票统计'最佳档「{zlabel}」'{_why}、属噪声，**别当买点**（仅列以示诚实）。"
 
+    # 锚定价附近技术共振（保留给"统计可执行"时用；不再作为主评级依据）
+    confirms = [s for s in supports if anchor == anchor and anchor and abs(s["price"] / anchor - 1.0) <= tol]
+    confluence = len(confirms)
+
+    # —— 主评级：先答"现在能不能碰"(regime/飞刀/预警) → 再答"在哪买"(回踩支撑)。统计档已降级。——
     if falling_knife:
+        grade, gtag = "观望（破位接飞刀）", "🔴"
         note = ("⚠️ 飞刀防护：价在200线下方且均线下行——历史上'接飞刀'胜率差。别在此抢反弹，"
-                "等**站回200线/构筑双底**确认企稳，或只极轻仓试探+严止损。")
-    elif confluence >= 2:
-        _names = "、".join(c["label"] for c in confirms)
-        note = (f"该入场区附近有 **{confluence} 个技术支撑共振**（{_names}）。"
-                "**验证口径**：历史上多支撑处进场，远期收益**并不更高**(共振非收益alpha)，但**进场后浮亏更浅、"
-                "尾部更稳=更拿得住**——配合回撤桶正边际分批，是'更舒服的入场点'，非'涨更多'的保证。")
-    elif confluence == 1:
-        note = (f"入场区附近有 1 个技术支撑（{confirms[0]['label']}）——单一支撑，入场质量改善有限，轻仓试探。")
-    elif stat_ok:
-        note = "有历史回撤桶正边际，但锚定价附近无技术支撑共振——可等回踩到技术位(均线/POC/前低)再分批，进场更不易被套。"
+                "等**站回200线 / 构筑双底**确认企稳，或只极轻仓试探+严止损。")
+    elif warn_active:
+        grade, gtag = "预警中·别急建新仓", "🟡"
+        note = (f"⚠️ 当前有**离场预警**（{warn_label or '见下方撤离信号'}）。入场和离场是**同一个 regime**——"
+                "预警期别建新仓（避免'一边喊撤离一边喊建仓'自相矛盾），等预警解除/站稳再分批。")
+    elif near_ma200:
+        grade, gtag = "临近撤离线·只小仓试探", "🟡"
+        note = (f"现价just在200线上方（距撤离线 {dist_ma200:+.1%}），趋势薄弱——只小仓试探，"
+                "**跌破200线即按撤离口径**，别重仓押反弹。")
+    elif at_support_now:
+        _names = "、".join(s["label"] for s in near_now)
+        grade, gtag = "现价即在支撑共振区·可分批", "🟢"
+        note = (f"现价正落在 **{len(near_now)} 个技术支撑**（{_names}）——可在此分批。"
+                "提醒：技术共振**不提高远期收益**，只让进场后浮亏更浅、更拿得住；入场对长期收益影响本就小。")
+    elif supports_below:
+        _b = "、".join(f"{s['label']} {s['price']:.1f}({s['dist_pct']:+.1%})" for s in supports_below[:3])
+        grade, gtag = "趋势健康·等回踩支撑分批", "🟡"
+        note = (f"趋势健康，但现价不在支撑上。**可执行回踩分批区（现价下方最近支撑）**：{_b}。"
+                "回踩到这些位置再分批、进场更不易被套；想追则小仓。别为'完美买点'空等——入场对长期收益影响小。")
     else:
-        note = "当前既无统计正边际档、也无技术支撑共振——不硬给买点，观望或等更深/企稳。"
+        grade, gtag = "趋势健康但离支撑远·小仓或等回踩", "⚪"
+        note = ("趋势健康，但现价下方近处无明显技术支撑——小仓参与或耐心等回踩，别空等'完美买点'。")
 
     return {
-        "asset": asset, "current_price": cur, "ma200": ma200,
-        "falling_knife": falling_knife, "stat_confident": stat_conf, "stat_has_zone": stat_ok,
-        "anchor": float(anchor) if anchor == anchor else None, "band": band,
+        "asset": asset, "current_price": cur, "ma200": ma200, "dist_ma200": dist_ma200,
+        "falling_knife": falling_knife, "near_ma200": near_ma200, "warn_active": bool(warn_active),
+        "stat_confident": stat_conf, "stat_has_zone": stat_ok, "anchor_actionable": anchor_actionable,
+        "anchor": float(anchor) if anchor == anchor else None, "band": band, "stat_note": stat_note,
         "confluence": confluence, "confirms": confirms, "supports": supports,
-        "at_support_now": at_support_now, "supports_near_now": near_now,
+        "supports_below": supports_below, "at_support_now": at_support_now, "supports_near_now": near_now,
         "grade": grade, "grade_tag": gtag, "note": note,
         "tier": best_entry.get("tier", ""), "stat_excess": best_entry.get("excess_median", float("nan")),
     }
