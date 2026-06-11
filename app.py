@@ -577,6 +577,10 @@ _PROFILE_VOL = {"保守": 0.10, "均衡": 0.15, "激进": 0.20}
 
 _STABLE_UNIVERSES = {
     "仅指数(SPY/QQQ/DIA)": ["SPY", "QQQ", "DIA"],
+    # 跨行业优质大盘篮子：科技/医药/金融/消费/能源/工业分散——直接对治"押单票易归零"的失败点。
+    # 全是长历史优质龙头，单票崩了也不至于伤筋动骨(这正是'分散'的意义)。
+    "跨行业优质篮子(分散)": ["AAPL", "MSFT", "GOOGL", "JNJ", "UNH", "JPM", "V",
+                            "PG", "KO", "HD", "COST", "XOM"],
     "聚焦科技/半导体": _FOCUS_UNIVERSE,
     "七姐妹": ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
 }
@@ -1869,12 +1873,12 @@ def page_panorama():
                 _eft = c_fragility(zstart, end).get("cur", {})
                 _ewt = _dec.exit_warning(price, _eft.get("fragile", False), _eft.get("pctile"))
                 _holdt = _dec.holding_advice(_card, b, _bezc)
-                _mt[0].markdown(stat_card("🚨 撤离状态", _ewt["level"], _ewt["action"][:26], _ewt["color"], tip="脆弱"), unsafe_allow_html=True)
+                _mt[0].markdown(stat_card("🚨 撤离状态", _ewt["level"], _ewt["action"][:26], tm.remap(_ewt["color"]), tip="脆弱"), unsafe_allow_html=True)
                 _d2 = _ewt.get("dist_ma200", float("nan"))
                 _dcol = T["bad"] if (_d2 == _d2 and _d2 < 0.04) else T["good"]
                 _dsub = ("已跌破200线→减半仓" if (_d2 == _d2 and _d2 < 0) else "跌破即趋势破位→减半仓")
                 _mt[1].markdown(stat_card("距撤离线(200日线)", f"{_d2:+.0%}" if _d2 == _d2 else "—", _dsub, _dcol, tip="regime"), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("📦 现在该怎么办", _holdt["stance"], "守/加/减/离·详见下方", _holdt["color"]), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("📦 现在该怎么办", _holdt["stance"], "守/加/减/离·详见下方", tm.remap(_holdt["color"]), tip=None), unsafe_allow_html=True)
             except Exception:  # noqa: BLE001
                 _mt[0].markdown(stat_card("📦 已持仓", "见下方", "🚨撤离预警 / 守加减离", T["primary"]), unsafe_allow_html=True)
         else:
@@ -2668,9 +2672,13 @@ def page_panorama():
 # ---------------------------------------------------------------------------
 def page_fragility():
     from analysis import fragility as fg
-    st.markdown('<div class="hero-title">🛡️ 稳定配置 & 市场风险</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">为<b>稳定收益</b>而设：选你的组合 + 稳健度（目标波动），看回测的稳定性画像'
-                '（波动/回撤/最差年/滚动1年正收益）。下方是市场脆弱性预警与等/追指南。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-title">🛡️ 一篮子分散 + 长持（核心打法）</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">长期最优解=<b>买一篮子优质资产、长期持有</b>。它只会输给两件事：'
+                '<b>崩盘时恐慌割肉</b> 与 <b>押单票却没活下来</b>。这页就是对治这两点——'
+                '①<b>分散</b>(跨行业篮子，单票归零也伤不到筋骨)；②<b>轻保护</b>(目标波动把回撤压到能扛住、'
+                '让你别在底部跳车)。<b>它不跑赢市场，只帮你真能"拿住"。</b></div>', unsafe_allow_html=True)
+    st.info("💡 **怎么用**：选一个**分散**的篮子（推荐「跨行业优质篮子」或「仅指数」）→ 调「稳健度」到你**夜里睡得着**的回撤水平 "
+            "→ 看它 vs 闭眼持有：复利略让、但回撤腰斩。剩下的就是**拿着、别看盘、别因恐慌割肉**。")
 
     # ===== 🛡️ 稳定配置（可调目标波动，按你的稳健度）=====
     sc1, sc2 = st.columns([2, 3])
