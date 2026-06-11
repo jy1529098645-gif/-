@@ -604,10 +604,21 @@ def c_build_scan(tickers: tuple, end: str):
             if len(o) < 260:
                 continue
             px = o["close"]
-            ew = dec.exit_warning(px, fragile, bpc)
+            # 离场/风险只算**本票自身**信号(趋势/波动/过热)——市场宽度是全市场信号，
+            # 单独在顶部"市场背景"显示一次，不逐票重复(否则宽度偏弱时每只票都亮黄灯、与'可建仓'看着矛盾)。
+            ew = dec.exit_warning(px, False, None)
             ef = ec.entry_confluence(o, asset=tk, best_entry={"has_zone": False},
                                      warn_red=ew["red"], warn_amber=ew["amber"],
                                      warn_label=ew["level"], vix_pctile=vixp)
+            # 本票风险标签(给买家口径，非"撤离")：红=破位 / 黄=列出自身黄灯原因 / 绿=无
+            _own_amber = [s["state"].split(" ", 1)[-1] for s in ew.get("signals", [])
+                          if "🟡" in s.get("state", "") and s.get("name") != "市场宽度"]
+            if ew["red"]:
+                risk_txt = "🔴 趋势破位"
+            elif _own_amber:
+                risk_txt = "🟡 " + "/".join(_own_amber[:2])
+            else:
+                risk_txt = "🟢 无"
             cur = float(px.iloc[-1]); hi = float(px.tail(252).max())
             ma200_s = px.rolling(200, min_periods=100).mean()
             ma200 = float(ma200_s.iloc[-1]) if ma200_s.notna().iloc[-1] else float("nan")
@@ -626,7 +637,7 @@ def c_build_scan(tickers: tuple, end: str):
                 "αvsSPY": (_ab.get("alpha", float("nan")) * 100 if _ab.get("alpha") == _ab.get("alpha") else float("nan")),
                 "β": _ab.get("beta", float("nan")), "夏普": _ab.get("sharpe", float("nan")),
                 "策略回撤": (_ab.get("maxdd", float("nan")) * 100 if _ab.get("maxdd") == _ab.get("maxdd") else float("nan")),
-                "离场": ew["level"], "现价": cur, "回踩支撑位/状态": sup_txt,
+                "本票风险": risk_txt, "现价": cur, "回踩支撑位/状态": sup_txt,
                 "_fear": bool(ef.get("fear_pullback")), "_atsup": bool(ef.get("at_support_now")),
             })
         except Exception:  # noqa: BLE001
@@ -3343,13 +3354,20 @@ def page_build_scan():
         rows = c_build_scan(tuple(tickers), end)
     if not rows:
         st.warning("扫描无结果（数据不足）。"); return
-    # 市场背景
+    # 市场背景（市场级信号在此显示一次；下面逐票"本票风险"列只看个股自身，不再重复市场宽度）
     try:
         _frg = c_fragility("2008-01-01", end).get("cur", {})
         _vp = c_vix_pctile(end)
-        st.caption(f"🌡️ 市场背景：宽度 {_frg.get('breadth', float('nan')):.0%} 在200线上 · "
-                   f"{'🔴脆弱' if _frg.get('fragile') else '🟢健康'} · VIX分位 {(_vp or 0):.0%}"
+        _bp = _frg.get("pctile")
+        _breadth_weak = bool(_bp is not None and _bp == _bp and _bp < 0.25 and not _frg.get("fragile"))
+        _mlight = ("🔴脆弱" if _frg.get("fragile") else ("🟡宽度偏弱" if _breadth_weak else "🟢健康"))
+        st.caption(f"🌡️ 市场背景：宽度 {_frg.get('breadth', float('nan')):.0%} 在200线上"
+                   f"（分位 {_bp:.0%}{'·偏弱' if _breadth_weak else ''}） · {_mlight} · VIX分位 {(_vp or 0):.0%}"
                    f"{'（恐慌偏高→优质回踩窗口易现）' if (_vp or 0) > 0.7 else ''} · 截至 {_frg.get('date','')}")
+        if _frg.get("fragile"):
+            st.warning("🔴 **市场宽度恶化（脆弱）**——这是**整体**降仓信号：新仓暂缓 / 已持仓减半仓。下面个股绿灯仅指其自身技术面，**别逆市场重仓**。")
+        elif _breadth_weak:
+            st.info("🟡 **市场宽度偏弱**（分位<25%·整体信号，已从逐票列移除避免每只都亮黄）——下面个股绿灯=自身可建仓，但**整体宜小仓/分批**，别因单只绿灯就重仓。")
     except Exception:  # noqa: BLE001
         pass
 
@@ -3357,7 +3375,7 @@ def page_build_scan():
     green = df[df["_tag"].isin(["🟢", "✨"])].sort_values("回调")
     amber = df[df["_tag"] == "🟡"].sort_values("回调")
     red = df[df["_tag"] == "🔴"].sort_values("回调")
-    cols = ["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "RSI", "离场", "回踩支撑位/状态"]
+    cols = ["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "RSI", "本票风险", "回踩支撑位/状态"]
     cfg = {"回调": st.column_config.NumberColumn(format="%+.0f%%"),
            "现价买胜率": st.column_config.NumberColumn("现价买胜率", format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(幸存者偏差)·非保证"),
            "策略年化": st.column_config.NumberColumn("策略年化", format="%+.0f%%", help="按工具策略(v3.1中性暴露)2012→今的年化(CAGR)·非持有年化"),
@@ -3400,7 +3418,7 @@ def page_build_scan():
                             f"最大回撤 {r.get('策略回撤', float('nan')):+.0f}% · α vsSPY {r.get('αvsSPY', float('nan')):+.0f}% · β {r.get('β', float('nan')):.2f}")
                 st.markdown(f"**入场**：{r['评级']} · 现价 {r['现价']:.1f} · RSI {r.get('RSI', float('nan')):.0f} · "
                             f"距200线 {r.get('距200线', float('nan'))*100:+.0f}% · 现价买胜率 {r.get('现价买胜率', float('nan')):.0f}% · "
-                            f"回踩支撑 {r['回踩支撑位/状态']} · 离场 {r['离场']}")
+                            f"回踩支撑 {r['回踩支撑位/状态']} · 本票风险 {r['本票风险']}")
                 # 基本面
                 try:
                     _info = c_fund_info(tk)
@@ -3441,7 +3459,7 @@ def page_build_scan():
     st.divider()
     st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯；"
                "策略年化/α/β=按工具暴露规则回测(点估)，α多来自票本身质量+降beta保留非择时。数据按上一收盘计。")
-    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
+    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "本票风险", "回踩支撑位/状态"]].to_markdown(index=False)
     st.download_button("⬇️ 导出扫描结果(Markdown)", _md, file_name=f"建仓扫描_{uni}_{end}.md", mime="text/markdown")
 
 
