@@ -1798,9 +1798,9 @@ def page_panorama():
                "只校准不预测，给的是历史分布+区间+概率，**非目标价/买卖指令**。卡片标题/列名可**鼠标悬浮**看名词含义。")
     with st.expander("ℹ️ 30 秒上手 / 这页怎么看", expanded=False):
         st.markdown(
-            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 历史常驻价 + 持有周期。\n"
+            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 合理入场位 + 持有周期。\n"
             "2. **📋 操作预案 / 📌 已建仓怎么办** = 具体怎么建仓、涨了/跌了/到时间/触发风控；已持仓则守/加/减/离。\n"
-            "3. **🎯 该在哪建仓** = 最佳入场区(历史常驻价) + K线(蓝线=回撤档·橙线=换手位) + 建仓档。\n"
+            "3. **🎯 合理入场位** = 现价下方**可执行回踩支撑**(MA/POC/前低/Fib) + 飞刀防护 + K线价位带（统计锚定价已降级为噪声参考）。\n"
             "4. **🧭 当前状态** = 证据等级 + 多周期 + 今日价格/趋势/波动 + 未来事件雷达。\n"
             "5. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
             "> 侧栏 **🧭 风险偏好** 决定稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。"
@@ -2172,54 +2172,53 @@ def page_panorama():
                    f"决策卡 / 操作预案 / 证据等级（页面其余处）用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
                    "要让全页统一，请改侧栏分析周期。")
 
-    # —— 🎯 最佳入场区 + 历史常驻价（跨持有期择优：自动挑置信度最高的周期，避免长周期低置信埋没好结果）——
-    # 整块容错：任何失败（含云端旧构建/数据缺失）只降级为提示，绝不崩整页。
-    from regime import entry_cockpit as ec
-    try:
-        bez = c_best_entry_scan(a, zstart, end)
-        if bez.get("has_zone"):
-            _band = bez["price_band"]
-            _anc = "触发价" if _band[0] is None else "历史常驻价"
-            _bs = f"≤ {_band[1]:.1f}" if _band[0] is None else f"{_band[0]:.1f}–{_band[1]:.1f}"
-            _hm = int(round(bez.get("horizon", horizon) / 21))
-            # 命名随"闸门状态"升降，杜绝把候选区间当买点：
-            if not _eok2:
-                _tc = T["muted"]; _t0 = f"📍 相对较优档·{_anc}（暂非买点）"; _t1 = "📍 历史相对较优档（暂非买点）"
-            elif _conf2:
-                _tc = T["good"]; _t0 = f"✅ 入场区·{_anc}（可执行）"; _t1 = "✅ 稳健入场区（已过闸门）"
-            else:
-                _tc = "var(--good)"; _t0 = f"🟢 可分批建仓·{_anc}（低置信·正期望）"; _t1 = "🟢 可分批建仓区（低置信）"
-            _bc = st.columns(4)
-            _d = bez.get("anchor_distance", float("nan"))
-            _bc[0].markdown(stat_card(_t0, f"{bez['anchor_price']:.1f}",
-                                      f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
-            _bc[1].markdown(stat_card(_t1, _bs, f"{bez['zone_label']}·持有~{_hm}月", T["gold"] if _eok2 else T["muted"]), unsafe_allow_html=True)
-            _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
-                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", T["primary"], tip="远期收益"), unsafe_allow_html=True)
-            _ci = bez["ci"]
-            _dsr = bez.get("dsr", float("nan"))
-            _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
-            _bc[3].markdown(stat_card("置信", bez["tier"],
-                                      f"有效窗口≈{bez.get('n_independent','?')}·CI[{_ci[0]:+.0%},{_ci[1]:+.0%}]{_dsr_s}",
-                                      _tc, tip="CI"), unsafe_allow_html=True)
-        st.markdown(f'<div class="verdict">{ec.format_best_entry(bez)}</div>', unsafe_allow_html=True)
-        # 各持有期对比（看不同周期的置信与历史常驻价，哪个周期最该信）
-        _scan = bez.get("horizon_scan") or []
-        if _scan:
-            _rows = [{"持有期": f"{int(s['horizon']/21)}个月({s['horizon']}日)" if s.get("horizon") else "—",
-                      "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
-                      "历史常驻价": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
-                      "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
-                      "有效N": s.get("n_independent", "—"),
-                      "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
-                      "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
-                     for s in _scan]
-            with st.expander("🔭 各持有期对比（自动已选其中置信最高者为上方推荐）"):
+    # —— 🎯 合理入场位（regime/飞刀/预警门控 + 可执行回踩支撑；统计锚定价已降级·与三联卡/作战卡同口径）——
+    from regime import entry_cockpit as ec   # 供本页下方 ec.format_zone_verdict 等使用
+    st.markdown("#### 🎯 合理入场位（**可执行回踩支撑** · 非预测买点）")
+    if _efc is not None:
+        _gcol = (T["bad"] if _efc["grade_tag"] == "🔴" else T["good"] if _efc["grade_tag"] == "🟢"
+                 else T["gold"] if _efc["grade_tag"] == "🟡" else T["muted"])
+        _near = _efc.get("supports_near_now") or []
+        _below = _efc.get("supports_below") or []
+        st.markdown(
+            f'<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            f'background:{_gcol}1f;border:1px solid {_gcol}55;border-left:6px solid {_gcol}">'
+            f'<div style="font-size:0.78rem;color:var(--muted)">🎯 合理入场位 · 现价 {_efc["current_price"]:.1f}</div>'
+            f'<div style="font-size:1.15rem;font-weight:800;color:{_gcol};margin-top:2px">{_efc["grade_tag"]} {_efc["grade"]}</div>'
+            f'</div>', unsafe_allow_html=True)
+        if _efc.get("at_support_now") and _near:
+            st.markdown("**现价即在支撑共振区**：" + "".join(
+                f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
+                f'background:var(--good-weak);border:1px solid var(--good-border);font-size:0.74rem;color:var(--text)">'
+                f'{s["label"]} {s["price"]:.1f}</span>' for s in _near[:5]), unsafe_allow_html=True)
+        if _below:
+            st.markdown("**📉 回踩分批区（现价下方最近支撑，回踩到此分批）**：" + "".join(
+                f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
+                f'background:var(--card2);border:1px solid var(--border);font-size:0.74rem;color:var(--text)">'
+                f'{s["label"]} <b>{s["price"]:.1f}</b>({s["dist_pct"]:+.0%})</span>' for s in _below[:5]),
+                unsafe_allow_html=True)
+        st.caption(_efc["note"])
+        if _efc.get("stat_note"):
+            st.caption(_efc["stat_note"])
+    # 统计回撤档(降级·折叠)：单票样本少、多为噪声(N独立常=1、趋势股最佳档在高点)，仅作透明参考，别当买点。
+    with st.expander("📊 统计回撤档参考（单票样本少·多为噪声，**别当买点**）"):
+        try:
+            bez = c_best_entry_scan(a, zstart, end)
+            _scan = bez.get("horizon_scan") or []
+            if _scan:
+                _rows = [{"持有期": f"{int(s['horizon']/21)}个月" if s.get("horizon") else "—",
+                          "结论档": s.get("zone_label") or ("防守" if not s.get("has_zone") else "—"),
+                          "锚定价(噪声)": (f"{s['anchor']:.1f}" if s.get("anchor") == s.get("anchor") and s.get("anchor") is not None else "—"),
+                          "超基准": (f"{s['excess']:+.1%}" if s.get("excess") == s.get("excess") and s.get("excess") is not None else "—"),
+                          "有效N": s.get("n_independent", "—"),
+                          "DSR": (f"{s['dsr']:.2f}" if s.get("dsr") == s.get("dsr") and s.get("dsr") is not None else "—"),
+                          "置信": "✅稳健" if s.get("confident") else (s.get("tier") or "—")}
+                         for s in _scan]
                 st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
-                st.caption("📖 同一只票在不同持有期的入场区/置信不同。工具自动挑 DSR/置信最高的那个周期作为顶部推荐；"
-                           "全为低置信=该票当前没有统计稳健的最佳入场点，按区间分批+认低置信。")
-    except Exception as _e:  # noqa: BLE001
-        st.caption(f"🎯 最佳入场区暂不可用（{type(_e).__name__}）——其余分析不受影响。若刚更新代码，请在 Streamlit 后台 Reboot 清缓存。")
+            st.caption("⚠️ 单票回撤桶 N独立常=1、且趋势股'最佳档'常落在高点(锚定价>现价)——这些'锚定价'多为噪声，"
+                       "**别当买点**；实际入场看上方『合理入场位』的技术支撑回踩区。此表仅作统计透明。")
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"统计回撤档暂不可用（{type(_e).__name__}）——不影响上方合理入场位。")
 
     # 整合：市场环境(脆弱性) + 等/追操作（一行看清"现在该追/等/防守"）
     try:
