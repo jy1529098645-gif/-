@@ -1852,15 +1852,15 @@ def page_panorama():
     zstart = "1995-01-01" if a == "SPY" else "2008-01-01"
 
     st.markdown(f'<div class="hero-title">📊 {a} · 现在怎么做</div>', unsafe_allow_html=True)
-    st.caption("⚡ **顶部 = 现在该做什么**（行动 · 建议仓位 · 入场价 · 操作预案）；往下才是当前盘面、建仓价位与深入分析。"
+    st.caption("⚡ 自上而下顺序：**现价 → 该不该买(裁决+距前高) → 合理入场位 → K线图表 → 操作预案/其他**。"
                "只校准不预测，给的是历史分布+区间+概率，**非目标价/买卖指令**。卡片标题/列名可**鼠标悬浮**看名词含义。")
     with st.expander("ℹ️ 30 秒上手 / 这页怎么看", expanded=False):
         st.markdown(
-            "1. **🎯 行动面板**（最上）= 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 合理入场位 + 持有周期。\n"
-            "2. **📋 操作预案 / 📌 已建仓怎么办** = 具体怎么建仓、涨了/跌了/到时间/触发风控；已持仓则守/加/减/离。\n"
-            "3. **🎯 合理入场位** = 现价下方**可执行回踩支撑**(MA/POC/前低/Fib) + 飞刀防护 + K线价位带（统计锚定价已降级为噪声参考）。\n"
-            "4. **🧭 当前状态** = 证据等级 + 多周期 + 今日价格/趋势/波动 + 未来事件雷达。\n"
-            "5. **📂 深入分析(Tab)** = 想细看才点：基本面&情景 / 价位&方案 / 风险&事件 / 工具。\n"
+            "1. **💲 现价**（最上）+ **🎯 现在怎么做** = 一眼结论：现在该 **追/等/建仓/防守** + **建议仓位%** + 距前高/趋势/波动。\n"
+            "2. **🎯 合理入场位** = 现价下方**可执行回踩支撑**(MA/POC/前低/Fib)+每个价位历史胜率 + 飞刀防护（统计锚定价已降级为噪声参考）。\n"
+            "3. **📊 K线图表** = 候选执行区间 + 价位带/换手位/RSI 叠加。\n"
+            "4. **📋 操作预案 / 📌 已建仓怎么办** = 具体怎么建仓、涨了/跌了/触发风控；已持仓则守/加/减/离。\n"
+            "5. **🧭 当前状态 + 🛰️事件雷达 + 📂深入分析(Tab)** = 证据等级 / 盘面 / 想细看才点。\n"
             "> 侧栏 **🧭 风险偏好** 决定稳健度(影响建议仓位)；要**稳定收益**去『🛡️ 稳定配置 & 风险』调目标波动。"
             "重计算项默认收起、点『▶』才算。一切是历史校准+概率，非买卖指令。")
     st.write("")
@@ -1911,7 +1911,7 @@ def page_panorama():
         st.markdown(
             '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 10px;'
             'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
-            '🆕 <b>新建仓视角</b>：重点看 <b>🎯 现在怎么做（裁决/仓位/入场价/踏空） → 📋 操作预案 → 🎯 该在哪建仓</b>。'
+            '🆕 <b>新建仓视角</b>：重点看 <b>🎯 现在怎么做（裁决/仓位/踏空） → 🎯 合理入场位（回踩支撑+胜率） → 📊 K线图表 → 📋 操作预案</b>。'
             '下方"🚨 撤离预警 / 📌 已建仓"是给<b>已持仓者</b>的，可先略过。<br>'
             '⚠️ 注意：深跌且跌破200线的票，"新建仓(逆势价值·慢建严止损)"与"持仓者(减仓防守)"口径**本就不同**，按你的身份看对应区块。</div>',
             unsafe_allow_html=True)
@@ -2108,128 +2108,6 @@ def page_panorama():
                            f"已发生了什么、未来催化剂、市场已 price in 什么、中长期定位。用 quant-deep-brief 口径"
                            f"（校准而非预测、给情景分布不拍单点）。", key=f"cl_top_{a}", hint=False)
 
-    # ========== 📋 操作预案（🆕新建仓） & 📌已建仓（📦持仓者）—— 随身份 toggle 展开/折叠联动 ==========
-    from analysis.playbook import build_playbook
-    _eok = bool(_card.get("enter_ok", True)) if _card else True   # 与决策卡同口径：别建仓时预案转防守
-    pbk = build_playbook(b, enter_ok=_eok)
-
-    def _pcard(col, title, accent, items):
-        body = "".join(
-            f'<div style="font-size:.85rem;line-height:1.55;color:var(--text);margin:5px 0;'
-            f'padding-left:12px;border-left:2px solid {accent}55">{x}</div>'
-            for x in (items or ["—"]))
-        col.markdown(
-            f'<div class="glass" style="min-height:172px;padding:14px 16px">'
-            f'<div style="font-weight:700;color:{accent};font-size:.95rem;margin-bottom:6px">{title}</div>'
-            f'{body}</div>', unsafe_allow_html=True)
-
-    # 📋 操作预案（新建仓用）：新建仓身份默认展开，持仓者自动折叠（点开仍可看）
-    _pe = st.expander("📋 操作预案（🆕 新建仓怎么操作）", expanded=not _is_holder)
-    r1 = _pe.columns(3)
-    _pcard(r1[0], "🎯 建仓", T["gold"], pbk.get("entry"))
-    _pcard(r1[1], "📈 涨了怎么操作", T["good"], pbk.get("if_up"))
-    _pcard(r1[2], "📉 跌了怎么操作", T["bad"], pbk.get("if_down"))
-    r2 = _pe.columns(2)
-    _pcard(r2[0], "⏱️ 时间 / 事件", T["info"], pbk.get("time_event"))
-    _pcard(r2[1], "🛡️ 风控", T["primary"], pbk.get("risk"))
-    _pe.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
-
-    # 📌 已建仓 + 🚨撤离预警（持仓者用）：持仓身份默认展开，新建仓自动折叠（点开仍可看）
-    if _card is not None:
-        try:
-            _hold = _dec.holding_advice(_card, b, _bezc)
-            _hcol = tm.remap(_hold["color"])
-            _ph = st.expander("📌 已经持有？守/加/减/离 + 🚨 撤离预警", expanded=_is_holder)
-            try:
-                _ef = c_fragility(zstart, end).get("cur", {})
-                _ew = _dec.exit_warning(price, _ef.get("fragile", False), _ef.get("pctile"))
-                _ewc = tm.remap(_ew["color"])
-                _chips = "".join(
-                    f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:2px 9px;border-radius:7px;'
-                    f'background:var(--card);border:1px solid var(--border);font-size:0.78rem;color:var(--text)">{s["state"]}</span>'
-                    for s in _ew.get("signals", []))
-                _ph.markdown(
-                    f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 10px;'
-                    f'background:{_ewc}1f;border:1px solid {_ewc}55;border-left:6px solid {_ewc}">'
-                    f'<div style="font-size:1.12rem;font-weight:800;color:var(--heading)">🚨 撤离预警 · {_ew["level"]}</div>'
-                    f'<div style="margin:6px 0 4px">{_chips}</div>'
-                    f'<div style="color:var(--text);font-size:0.86rem">▸ {_ew["action"]}</div>'
-                    f'</div>', unsafe_allow_html=True)
-                # 撤离明细（四信号）—— 内联（避免 expander 套 expander）
-                for s in _ew.get("signals", []):
-                    _ph.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
-                _ph.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
-                            "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
-                            "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
-                _ph.caption("🧭 **撤离口径(大规模回测后)**：离场**换不来超额、只为压回撤**(科技/半导体最大回撤~64%→~50%)，别指望靠离场多赚；"
-                            "**减半仓 > 清仓**(清仓少赚太多、夏普更低)；只认**破200线+宽度/波动恶化**这条已验证触发。"
-                            "**别用**跌破MA50(过敏·反复被甩、年化腰斩)、固定−20%移动止损(卖低踩不回)、过热止盈(对回撤几乎0保护)当离场alpha——"
-                            "后两者只当**锁浮盈的纪律**。")
-            except Exception:  # noqa: BLE001
-                pass
-            _ph.markdown(
-                f'<div style="border-radius:14px;padding:14px 18px;margin:6px 0 8px;'
-                f'background:{_hcol}1f;border:1px solid {_hcol}55;border-left:6px solid {_hcol}">'
-                f'<div style="font-size:1.18rem;font-weight:800;color:var(--heading)">{_hold["stance"]}</div>'
-                f'<div style="color:var(--text);font-size:0.9rem;margin-top:5px">{_hold["headline"]}</div>'
-                f'</div>', unsafe_allow_html=True)
-            _ha = _ph.columns(2)
-            _pcard(_ha[0], "🔧 现在的动作", T["good"], _hold["actions"])
-            _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", T["amber"], _hold["triggers"])
-            _ph.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
-        except Exception as _e:  # noqa: BLE001
-            st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
-
-    st.divider()
-    # ---- 候选执行区间：TradingView K线 + 价位带横线 + 候选执行档 ----
-    st.markdown("#### 🎯 在什么价位/状态执行（**候选区间** · 过裁决才升级为建仓区）")
-    # 总裁决横幅与上方三联卡**同口径**(entry_confluence)：只有飞刀/红灯=🔴 才"暂不建仓"；
-    # 动量陷阱/无稳健档(统计层)降级为"可小仓·但此跌无统计alpha"，不再硬挡(杜绝同页两处裁决打架)。
-    _eok2 = _enter_ok
-    _conf2 = bool((_bezc or {}).get("confident")) if _bezc else False
-    _knife_red = bool(_efc and _efc.get("grade_tag") == "🔴")
-    _principle = ('下面的历史常驻价/价位带/档位是 <b>候选执行区间</b>（技术共振支撑 / 历史相对较优档）——'
-                  '<b>价格"到了"不等于"无脑买"</b>：先看上方<b>能不能建仓</b>，再按这些**技术支撑回踩分批**。')
-    if not _eok2:
-        st.markdown(
-            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:var(--bad-weak);border:1px solid var(--bad-border);border-left:6px solid var(--bad);color:var(--text);font-size:0.86rem">'
-            f'🔴 <b>当前总裁决：暂不建新仓</b>（{(_efc or {}).get("grade","破位/离场红灯")}）。{_principle} '
-            '故下面只当"历史相对较优档/支撑在哪"看，<b>不是买入信号</b>；等站回200线 / 企稳 / 预警解除再议。</div>',
-            unsafe_allow_html=True)
-    elif _no_stat_edge:
-        st.markdown(
-            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:var(--amber-weak);border:1px solid var(--amber-border);border-left:6px solid var(--amber);color:var(--text);font-size:0.86rem">'
-            '🟡 <b>当前总裁决：可小仓建仓（但此跌无统计 alpha）</b>。技术面趋势健康、可在下方**支撑回踩分批**；'
-            '但该回撤档**历史上没有抄底超额**（动量陷阱/单票样本不足）——'
-            f'{_principle} <b>别指望"逢跌买"的超额、别越跌越重仓</b>，看好基本面才小仓参与。</div>',
-            unsafe_allow_html=True)
-    elif _conf2:
-        st.markdown(
-            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
-            f'✅ <b>当前总裁决：可建仓 · 且有"稳健入场区"</b>（过了 DSR≥0.95 / CI下界>基准 等闸门）。{_principle} '
-            '这是<b>极少数</b>闸门全过的情况（回测显示个股/科技半导体历史上几乎不出现），'
-            '下面价位可<b>按档分批执行</b>（仍按置信度控仓）。</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(
-            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
-            '🟢 <b>当前总裁决：可分批建仓</b>（温和正期望 · 择时低置信）。'
-            '回测（<b>PIT 无前视</b>）显示这类「正期望回撤档」分批进<b>历史上跑赢「随便买」</b>'
-            '（浅跌 0–10% 档尤佳、胜率约 70–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
-            '<b>这就是常态可买信号</b>——按「<b>分批 + 控仓 + 认尾部</b>」执行，'
-            '别空等几乎从不出现的「稳健档」（严口径下个股历史上基本不触发）。'
-            '下方 K 线价位带是技术共振支撑，用于<b>分档挂单</b>。</div>', unsafe_allow_html=True)
-    # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
-    horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
-    z = c_zones(a, zstart, end, horizon)
-    if horizon != gl_horizon:
-        st.caption(f"ℹ️ 此持有期（~{int(round(horizon/21))}个月）**仅重算下方价位带 / 状态扫描 / 各价位带明细**；"
-                   f"决策卡 / 操作预案 / 证据等级（页面其余处）用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
-                   "要让全页统一，请改侧栏分析周期。")
-
     # —— 🎯 合理入场位（regime/飞刀/预警门控 + 可执行回踩支撑；统计锚定价已降级·与三联卡/作战卡同口径）——
     from regime import entry_cockpit as ec   # 供本页下方 ec.format_zone_verdict 等使用
     st.markdown("#### 🎯 合理入场位（**可执行回踩支撑** · 非预测买点）")
@@ -2287,6 +2165,55 @@ def page_panorama():
                        "**别当买点**；实际入场看上方『合理入场位』的技术支撑回踩区。此表仅作统计透明。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"统计回撤档暂不可用（{type(_e).__name__}）——不影响上方合理入场位。")
+
+    # ---- 候选执行区间：TradingView K线 + 价位带横线 + 候选执行档 ----
+    st.markdown("#### 🎯 在什么价位/状态执行（**候选区间** · 过裁决才升级为建仓区）")
+    # 总裁决横幅与上方三联卡**同口径**(entry_confluence)：只有飞刀/红灯=🔴 才"暂不建仓"；
+    # 动量陷阱/无稳健档(统计层)降级为"可小仓·但此跌无统计alpha"，不再硬挡(杜绝同页两处裁决打架)。
+    _eok2 = _enter_ok
+    _conf2 = bool((_bezc or {}).get("confident")) if _bezc else False
+    _knife_red = bool(_efc and _efc.get("grade_tag") == "🔴")
+    _principle = ('下面的历史常驻价/价位带/档位是 <b>候选执行区间</b>（技术共振支撑 / 历史相对较优档）——'
+                  '<b>价格"到了"不等于"无脑买"</b>：先看上方<b>能不能建仓</b>，再按这些**技术支撑回踩分批**。')
+    if not _eok2:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:var(--bad-weak);border:1px solid var(--bad-border);border-left:6px solid var(--bad);color:var(--text);font-size:0.86rem">'
+            f'🔴 <b>当前总裁决：暂不建新仓</b>（{(_efc or {}).get("grade","破位/离场红灯")}）。{_principle} '
+            '故下面只当"历史相对较优档/支撑在哪"看，<b>不是买入信号</b>；等站回200线 / 企稳 / 预警解除再议。</div>',
+            unsafe_allow_html=True)
+    elif _no_stat_edge:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:var(--amber-weak);border:1px solid var(--amber-border);border-left:6px solid var(--amber);color:var(--text);font-size:0.86rem">'
+            '🟡 <b>当前总裁决：可小仓建仓（但此跌无统计 alpha）</b>。技术面趋势健康、可在下方**支撑回踩分批**；'
+            '但该回撤档**历史上没有抄底超额**（动量陷阱/单票样本不足）——'
+            f'{_principle} <b>别指望"逢跌买"的超额、别越跌越重仓</b>，看好基本面才小仓参与。</div>',
+            unsafe_allow_html=True)
+    elif _conf2:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
+            f'✅ <b>当前总裁决：可建仓 · 且有"稳健入场区"</b>（过了 DSR≥0.95 / CI下界>基准 等闸门）。{_principle} '
+            '这是<b>极少数</b>闸门全过的情况（回测显示个股/科技半导体历史上几乎不出现），'
+            '下面价位可<b>按档分批执行</b>（仍按置信度控仓）。</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
+            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
+            '🟢 <b>当前总裁决：可分批建仓</b>（温和正期望 · 择时低置信）。'
+            '回测（<b>PIT 无前视</b>）显示这类「正期望回撤档」分批进<b>历史上跑赢「随便买」</b>'
+            '（浅跌 0–10% 档尤佳、胜率约 70–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
+            '<b>这就是常态可买信号</b>——按「<b>分批 + 控仓 + 认尾部</b>」执行，'
+            '别空等几乎从不出现的「稳健档」（严口径下个股历史上基本不触发）。'
+            '下方 K 线价位带是技术共振支撑，用于<b>分档挂单</b>。</div>', unsafe_allow_html=True)
+    # per-chart 持有期：本段及下方价位带/状态扫描/评分时序统一按此持有期校准（默认=侧边栏分析周期）
+    horizon = _chart_horizon(f"pan_{a}", horizon, label="建仓校准持有期")
+    z = c_zones(a, zstart, end, horizon)
+    if horizon != gl_horizon:
+        st.caption(f"ℹ️ 此持有期（~{int(round(horizon/21))}个月）**仅重算下方价位带 / 状态扫描 / 各价位带明细**；"
+                   f"决策卡 / 操作预案 / 证据等级（页面其余处）用侧栏「分析周期」（~{int(round(gl_horizon/21))}个月）。"
+                   "要让全页统一，请改侧栏分析周期。")
 
     # 整合：市场环境(脆弱性) + 等/追操作（一行看清"现在该追/等/防守"）
     try:
@@ -2370,6 +2297,81 @@ def page_panorama():
     st.write("")
 
     st.divider()
+    # ========== 📋 操作预案（🆕新建仓） & 📌已建仓（📦持仓者）—— 随身份 toggle 展开/折叠联动 ==========
+    from analysis.playbook import build_playbook
+    _eok = bool(_card.get("enter_ok", True)) if _card else True   # 与决策卡同口径：别建仓时预案转防守
+    pbk = build_playbook(b, enter_ok=_eok)
+
+    def _pcard(col, title, accent, items):
+        body = "".join(
+            f'<div style="font-size:.85rem;line-height:1.55;color:var(--text);margin:5px 0;'
+            f'padding-left:12px;border-left:2px solid {accent}55">{x}</div>'
+            for x in (items or ["—"]))
+        col.markdown(
+            f'<div class="glass" style="min-height:172px;padding:14px 16px">'
+            f'<div style="font-weight:700;color:{accent};font-size:.95rem;margin-bottom:6px">{title}</div>'
+            f'{body}</div>', unsafe_allow_html=True)
+
+    # 📋 操作预案（新建仓用）：新建仓身份默认展开，持仓者自动折叠（点开仍可看）
+    _pe = st.expander("📋 操作预案（🆕 新建仓怎么操作）", expanded=not _is_holder)
+    r1 = _pe.columns(3)
+    _pcard(r1[0], "🎯 建仓", T["gold"], pbk.get("entry"))
+    _pcard(r1[1], "📈 涨了怎么操作", T["good"], pbk.get("if_up"))
+    _pcard(r1[2], "📉 跌了怎么操作", T["bad"], pbk.get("if_down"))
+    r2 = _pe.columns(2)
+    _pcard(r2[0], "⏱️ 时间 / 事件", T["info"], pbk.get("time_event"))
+    _pcard(r2[1], "🛡️ 风控", T["primary"], pbk.get("risk"))
+    _pe.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
+
+    # 📌 已建仓 + 🚨撤离预警（持仓者用）：持仓身份默认展开，新建仓自动折叠（点开仍可看）
+    if _card is not None:
+        try:
+            _hold = _dec.holding_advice(_card, b, _bezc)
+            _hcol = tm.remap(_hold["color"])
+            _ph = st.expander("📌 已经持有？守/加/减/离 + 🚨 撤离预警", expanded=_is_holder)
+            try:
+                _ef = c_fragility(zstart, end).get("cur", {})
+                _ew = _dec.exit_warning(price, _ef.get("fragile", False), _ef.get("pctile"))
+                _ewc = tm.remap(_ew["color"])
+                _chips = "".join(
+                    f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:2px 9px;border-radius:7px;'
+                    f'background:var(--card);border:1px solid var(--border);font-size:0.78rem;color:var(--text)">{s["state"]}</span>'
+                    for s in _ew.get("signals", []))
+                _ph.markdown(
+                    f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 10px;'
+                    f'background:{_ewc}1f;border:1px solid {_ewc}55;border-left:6px solid {_ewc}">'
+                    f'<div style="font-size:1.12rem;font-weight:800;color:var(--heading)">🚨 撤离预警 · {_ew["level"]}</div>'
+                    f'<div style="margin:6px 0 4px">{_chips}</div>'
+                    f'<div style="color:var(--text);font-size:0.86rem">▸ {_ew["action"]}</div>'
+                    f'</div>', unsafe_allow_html=True)
+                # 撤离明细（四信号）—— 内联（避免 expander 套 expander）
+                for s in _ew.get("signals", []):
+                    _ph.markdown(f"- **{s['name']}**：{s['state']} —— {s['detail']}")
+                _ph.caption("📖 红=触发**已验证的减半仓规则**（跌破200线/宽度恶化，回测砍回撤约40%·样本外稳健）；"
+                            "黄=**提前预警**（接近撤离线/高位拉伸/波动飙升/宽度转弱 → 收紧止损·分批止盈·降仓）；绿=无撤离信号。"
+                            "宽度信号略领先指数但误报约60%，是**降仓开关非崩盘预言**。全部历史校准、非预测。")
+                _ph.caption("🧭 **撤离口径(大规模回测后)**：离场**换不来超额、只为压回撤**(科技/半导体最大回撤~64%→~50%)，别指望靠离场多赚；"
+                            "**减半仓 > 清仓**(清仓少赚太多、夏普更低)；只认**破200线+宽度/波动恶化**这条已验证触发。"
+                            "**别用**跌破MA50(过敏·反复被甩、年化腰斩)、固定−20%移动止损(卖低踩不回)、过热止盈(对回撤几乎0保护)当离场alpha——"
+                            "后两者只当**锁浮盈的纪律**。")
+            except Exception:  # noqa: BLE001
+                pass
+            _ph.markdown(
+                f'<div style="border-radius:14px;padding:14px 18px;margin:6px 0 8px;'
+                f'background:{_hcol}1f;border:1px solid {_hcol}55;border-left:6px solid {_hcol}">'
+                f'<div style="font-size:1.18rem;font-weight:800;color:var(--heading)">{_hold["stance"]}</div>'
+                f'<div style="color:var(--text);font-size:0.9rem;margin-top:5px">{_hold["headline"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+            _ha = _ph.columns(2)
+            _pcard(_ha[0], "🔧 现在的动作", T["good"], _hold["actions"])
+            _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", T["amber"], _hold["triggers"])
+            _ph.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
+        except Exception as _e:  # noqa: BLE001
+            st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
+
+    st.divider()
+
+
     # ========== 🧭 当前状态（证据等级 + 事件雷达 + 今日盘面）==========
     st.markdown("#### 🧭 当前状态")
     # ---- 证据等级 + 多周期对账 + 一致性/数据质量告警 ----
