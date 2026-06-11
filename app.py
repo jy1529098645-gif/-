@@ -28,11 +28,16 @@ except Exception:  # noqa: BLE001
 import config
 from frontend import charts as ch
 from frontend import glossary as gl
+from frontend import theme as tm
 
 st.set_page_config(page_title="量化研究工具", page_icon="📊", layout="wide",
                    initial_sidebar_state="auto")  # auto：桌面展开 / 移动端自动收起，避免侧边栏全屏遮挡正文
 
 CFG = config.load_config()
+
+# 当前主题配色（shadcn slate 双主题）。整脚本每次交互都全量重跑，故 T 始终反映最新主题。
+# app.py 内联 HTML / 原生控件统一用真实 hex（而非 CSS var），明暗下都正确。
+T = tm.tokens()
 
 # ---------------------------------------------------------------------------
 # 右上角实时纽约时间（JS 跳秒，注入父文档；不依赖 Streamlit rerun）
@@ -40,13 +45,16 @@ CFG = config.load_config()
 def _ny_clock():
     import streamlit.components.v1 as _components
     # 纯 iframe 内渲染：零跨域依赖，云端/本地都必显示（不再注入父文档，避免被沙箱挡掉）。
-    _components.html(
-        """
-        <style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}</style>
-        <div id="nyc" style="display:inline-block;float:right;
-             font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;
-             color:#BFD8FF;background:rgba(15,20,34,0.85);border:1px solid rgba(124,92,252,0.5);
-             border-radius:9px;padding:4px 11px;letter-spacing:0.3px">🗽 纽约 …</div>
+    # 头部样式按主题填色（f-string，仅含成对花括号）；下方 JS 含大量单花括号，保持普通字符串后拼接。
+    _head = (
+        '<style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}</style>'
+        '<div id="nyc" style="display:inline-block;float:right;'
+        'font-family:-apple-system,Segoe UI,Roboto,monospace;font-size:0.82rem;'
+        f'color:{T["clock_text"]};background:{T["clock_bg"]};border:1px solid {T["border"]};'
+        'border-radius:9px;padding:4px 11px;letter-spacing:0.3px">🗽 纽约 …</div>'
+    )
+    _open_col, _shut_col = T["good"], T["muted"]
+    _js = """
         <script>
         (function(){
           const el=document.getElementById('nyc');
@@ -62,110 +70,22 @@ def _ny_clock():
               const g=k=>parts.find(p=>p.type===k)?.value;
               const wd=g('weekday'); const hh=parseInt(g('hour')); const mm=parseInt(g('minute'));
               const isWk=!['Sat','Sun'].includes(wd); const mins=hh*60+mm; const open=isWk&&mins>=570&&mins<960;
-              el.innerHTML='🗽 纽约 '+t+'  '+(open?'<span style="color:#2BE6A8">●开盘</span>'
-                                               :'<span style="color:#8A93A6">●休市</span>');
+              el.innerHTML='🗽 纽约 '+t+'  '+(open?'<span style="color:__OPEN__">●开盘</span>'
+                                               :'<span style="color:__SHUT__">●休市</span>');
             }catch(e){ el.textContent='🗽 '+new Date().toUTCString(); }
           }
           tick(); setInterval(tick,1000);
         })();
         </script>
-        """,
-        height=32,
-    )
+    """.replace("__OPEN__", _open_col).replace("__SHUT__", _shut_col)
+    _components.html(_head + _js, height=32)
 
 _ny_clock()
 
 # ---------------------------------------------------------------------------
-# 炫酷暗色样式
+# 主题样式（shadcn/ui slate · 明暗双主题，集中在 frontend/theme.py）
 # ---------------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    /* 用系统字体栈，避免每次渲染阻塞式拉取远程 Google Fonts（卡顿主因之一） */
-    html, body, [class*="css"] { font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif; }
-    .stApp {
-        background:
-          radial-gradient(1200px 600px at 10% -10%, rgba(124,92,252,0.18), transparent 60%),
-          radial-gradient(1000px 500px at 110% 10%, rgba(0,212,255,0.12), transparent 55%),
-          #0B0E14;
-    }
-    .hero-title {
-        font-size: 2.5rem; font-weight: 800; letter-spacing:-1px; margin-bottom:0;
-        background: linear-gradient(92deg, #7C5CFC 0%, #00D4FF 60%, #2BE6A8 100%);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    }
-    .hero-sub { color:#8A93A6; font-size:0.98rem; margin-top:2px; }
-    /* 去掉 backdrop-filter:blur —— 多张玻璃卡叠加 blur 是滚动/悬浮重绘卡顿的元凶；
-       改用稍实的半透明底色保持质感，GPU 开销趋近于零 */
-    .glass {
-        background: rgba(26,31,46,0.55); border:1px solid rgba(255,255,255,0.08);
-        border-radius:16px; padding:18px 20px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    }
-    .stat-label { color:#8A93A6; font-size:0.8rem; text-transform:uppercase; letter-spacing:.5px; }
-    .stat-value { font-size:1.7rem; font-weight:800; line-height:1.2; }
-    .pill {
-        display:inline-block; padding:3px 11px; border-radius:999px; font-size:.74rem;
-        font-weight:600; margin-right:6px;
-    }
-    .pill-good { background:rgba(43,230,168,0.15); color:#2BE6A8; border:1px solid rgba(43,230,168,0.35);}
-    .pill-warn { background:rgba(255,92,122,0.15); color:#FF5C7A; border:1px solid rgba(255,92,122,0.35);}
-    .pill-info { background:rgba(0,212,255,0.13); color:#00D4FF; border:1px solid rgba(0,212,255,0.3);}
-    .verdict {
-        border-left:4px solid #7C5CFC; padding:12px 16px; border-radius:8px;
-        background:rgba(124,92,252,0.08); font-size:0.97rem; line-height:1.6;
-    }
-    section[data-testid="stSidebar"] { background:#0c1119; border-right:1px solid rgba(255,255,255,0.06);}
-    #MainMenu, footer {visibility:hidden;}
-    .stTabs [data-baseweb="tab-list"] { gap:4px; }
-
-    /* ===================== 移动端适配 ===================== */
-    /* 平板 / 大屏手机：≤768px —— 收紧留白、多列换行堆叠、标题与卡片缩放 */
-    @media (max-width: 768px) {
-        /* 主内容区留白收紧（wide 布局默认两侧留白在手机上过大）+ 顶部留位给 header/时钟 */
-        [data-testid="stMainBlockContainer"], .block-container {
-            padding-left: 0.7rem !important; padding-right: 0.7rem !important;
-            padding-top: 3.2rem !important;
-        }
-        /* 关键：横向列组在窄屏换行堆叠，而不是被挤成细长条 */
-        [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.55rem !important; }
-        [data-testid="stColumn"] {
-            min-width: calc(50% - 0.55rem) !important;
-            flex: 1 1 calc(50% - 0.55rem) !important;
-        }
-        /* 标题 / 文案 / 统计卡 缩放 */
-        .hero-title { font-size: 1.55rem !important; letter-spacing:-0.4px !important; }
-        .hero-sub   { font-size: 0.84rem !important; }
-        .stat-value { font-size: 1.25rem !important; }
-        .stat-label { font-size: 0.68rem !important; }
-        .glass      { padding: 12px 13px !important; border-radius: 13px !important; }
-        .verdict    { font-size: 0.88rem !important; padding: 10px 12px !important; }
-        /* Tab 列表横向滚动，避免标签过多换行错乱 */
-        .stTabs [data-baseweb="tab-list"] { overflow-x: auto !important; flex-wrap: nowrap !important; }
-        .stTabs [data-baseweb="tab"] { white-space: nowrap !important; }
-        /* 数据表 / 表格 横向可滚动 */
-        [data-testid="stDataFrame"], [data-testid="stTable"] { overflow-x: auto !important; }
-        [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
-        /* 右上角纽约时钟：缩小、避免遮挡 header，允许换行不溢出 */
-        #ny-clock {
-            font-size: 0.64rem !important; padding: 3px 7px !important;
-            top: 6px !important; right: 8px !important; max-width: 66vw !important;
-            line-height: 1.25 !important; white-space: normal !important;
-        }
-    }
-    /* 小屏手机：≤480px —— 列全部单列堆叠、标题进一步缩小 */
-    @media (max-width: 480px) {
-        [data-testid="stColumn"] { min-width: 100% !important; flex: 1 1 100% !important; }
-        .hero-title { font-size: 1.32rem !important; }
-        .hero-sub   { font-size: 0.8rem !important; }
-        [data-testid="stMainBlockContainer"], .block-container {
-            padding-left: 0.5rem !important; padding-right: 0.5rem !important;
-        }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+tm.inject(st)
 st.markdown(gl.inject_css(), unsafe_allow_html=True)
 
 def run_gate(key: str, params: dict, label: str = "🚀 运行回测", hint: str = "配置好参数后点击运行，期间不会自动重算"):
@@ -204,7 +124,7 @@ def _col_cfg(columns):
             cfg[c] = st.column_config.Column(c, help=h)
     return cfg
 
-def stat_card(label, value, sub="", color="#E6E9EF", tip=None):
+def stat_card(label, value, sub="", color=T["text"], tip=None):
     """tip：术语 key，则标签变成可悬浮解释的术语。"""
     lab = gl.term(tip, label) if tip else label
     return (
@@ -263,7 +183,7 @@ def render_tv_candles(ohlcv, trades=None, price_lines=None, key="tv", height=540
         st.caption(caption)
 
 def render_tv_line(series, markers=None, price_lines=None, key="tvl", height=460,
-                   color="#7C5CFC", log=True):
+                   color=T["primary"], log=True):
     """TradingView 折线 + 时间范围切换（事件时间线等）。"""
     from frontend import tvchart as _tv
     period, _ = _chart_period_controls(key, with_timeframe=False)
@@ -849,6 +769,7 @@ _HZ = {"3 个月 (63日)": 63, "6 个月 (126日)": 126, "12 个月 (252日)": 2
 with st.sidebar:
     st.markdown("### 📊 量化研究工具")
     st.caption("选股 → 自动全景分析 · 校准而非预测")
+    tm.toggle(st)   # 🌙/☀️ 明暗主题切换
     st.markdown("**📍 查询**")
     grp = st.selectbox("📂 板块", list(_TICKER_GROUPS), index=0)
     asset = st.selectbox("🎯 选择标的", _TICKER_GROUPS[grp], index=0)
@@ -915,9 +836,9 @@ def page_overview():
     st.write("")
 
     c1, c2, c3 = st.columns(3)
-    c1.markdown(stat_card("铁律一", "校准而非预测", "永远输出 分布 + 置信区间 + 样本数 N", "#7C5CFC"), unsafe_allow_html=True)
-    c2.markdown(stat_card("铁律二", "永远对比基准", "条件结果必与无脑买入持有并排", "#00D4FF"), unsafe_allow_html=True)
-    c3.markdown(stat_card("铁律三", "反过拟合优先", "block bootstrap · walk-forward · deflated Sharpe · N_eff", "#2BE6A8"), unsafe_allow_html=True)
+    c1.markdown(stat_card("铁律一", "校准而非预测", "永远输出 分布 + 置信区间 + 样本数 N", T["primary"]), unsafe_allow_html=True)
+    c2.markdown(stat_card("铁律二", "永远对比基准", "条件结果必与无脑买入持有并排", T["info"]), unsafe_allow_html=True)
+    c3.markdown(stat_card("铁律三", "反过拟合优先", "block bootstrap · walk-forward · deflated Sharpe · N_eff", T["good"]), unsafe_allow_html=True)
     st.write("")
 
     try:
@@ -971,12 +892,12 @@ def page_regime():
     vp = tp_panel["vol_percentile"]
     pc[0].markdown(stat_card("波动率状态", {"low_vol": "低波动", "mid_vol": "中波动", "high_vol": "高波动"}.get(tp_panel["vol_state"], "—"),
                              f"年化{tp_panel['realized_vol']:.0%} · 分位{vp:.0%}" if vp == vp else "—",
-                             "#00D4FF", tip="regime"), unsafe_allow_html=True)
+                             T["info"], tip="regime"), unsafe_allow_html=True)
     pc[1].markdown(stat_card("趋势位置", "均线上方" if tp_panel["trend_state"] == "up_trend" else "均线下方",
-                             f"距200日线 {tp_panel['trend_position']:+.1%}", "#2BE6A8", tip="regime"), unsafe_allow_html=True)
+                             f"距200日线 {tp_panel['trend_position']:+.1%}", T["good"], tip="regime"), unsafe_allow_html=True)
     pc[2].markdown(stat_card("回撤状态", "回撤中" if tp_panel["drawdown_state"] == "in_drawdown" else "近高点",
-                             f"距前高 {tp_panel['drawdown']:+.1%}", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-    pc[3].markdown(stat_card("快照日期", str(tp_panel["date"].date()), "免费数据·不可预测未来", "#7C5CFC"), unsafe_allow_html=True)
+                             f"距前高 {tp_panel['drawdown']:+.1%}", T["bad"], tip="回撤"), unsafe_allow_html=True)
+    pc[3].markdown(stat_card("快照日期", str(tp_panel["date"].date()), "免费数据·不可预测未来", T["primary"]), unsafe_allow_html=True)
     st.write("")
 
     with st.spinner("计算条件远期收益…"):
@@ -1052,19 +973,19 @@ def page_factor():
     ic = res["ic"]
     cols = st.columns(4)
     for col, (per, row) in zip(cols, ic.iterrows()):
-        color = "#2BE6A8" if abs(row["IC_mean"]) >= 0.03 else "#8A93A6"
+        color = T["good"] if abs(row["IC_mean"]) >= 0.03 else T["muted"]
         col.markdown(stat_card(f"预测力 {per}", f"{row['IC_mean']:+.3f}",
                                f"风险调整后 {row['IR']:+.2f} · 样本{int(row['n_days'])}天", color, tip="IC"), unsafe_allow_html=True)
     # 白话强度判断
     best = ic["IC_mean"].abs().max()
     if best >= 0.05:
-        lvl, col_ = "较强（少见，留意是否前视偏差）", "#FFD166"
+        lvl, col_ = "较强（少见，留意是否前视偏差）", T["gold"]
     elif best >= 0.03:
-        lvl, col_ = "可用（因子本就很弱，靠广度取胜）", "#2BE6A8"
+        lvl, col_ = "可用（因子本就很弱，靠广度取胜）", T["good"]
     elif best >= 0.015:
-        lvl, col_ = "偏弱（单独用价值有限）", "#8A93A6"
+        lvl, col_ = "偏弱（单独用价值有限）", T["muted"]
     else:
-        lvl, col_ = "≈0（几乎没有预测力）", "#FF5C7A"
+        lvl, col_ = "≈0（几乎没有预测力）", T["bad"]
     st.markdown(f'<div class="verdict">这个因子对未来收益的<b>预测力：{lvl}</b>（最强周期 IC={best:.3f}）。</div>', unsafe_allow_html=True)
     st.write("")
     st.plotly_chart(ch.factor_ic_bars(ic), use_container_width=True, config=ch.CHART_CONFIG)
@@ -1084,11 +1005,11 @@ def page_factor():
     if not _dd.empty:
         ddf = pd.DataFrame({"持有期(日)": _dd.index, "平均IC": _dd.values})
         dcol[0].markdown("**IC 随持有期衰减**")
-        dcol[0].bar_chart(ddf.set_index("持有期(日)"), color="#7C5CFC")
+        dcol[0].bar_chart(ddf.set_index("持有期(日)"), color=T["primary"])
     _roll = dec["roll"]
     if _roll is not None and not _roll.empty and _roll["roll_ic"].notna().any():
         dcol[1].markdown("**滚动 IC(126日窗·h21)**")
-        dcol[1].line_chart(_roll[["roll_ic"]].dropna(), color="#00D4FF")
+        dcol[1].line_chart(_roll[["roll_ic"]].dropna(), color=T["info"])
     st.caption("📖 IC 衰减曲线：因子在哪个持有期最强、多久失效（峰值=最佳持有期）。滚动 IC 跌到 0 附近=因子近年走弱。**横截面需多标的，建议用 mag7 池**。")
 
     # Phase 6（免费）：多因子组合
@@ -1103,7 +1024,7 @@ def page_factor():
             bic, bbt = c_blend(brun["sel"], brun["u"], start, end)
         bc = st.columns(4)
         for col, (per, row) in zip(bc, bic["ic"].iterrows()):
-            color = "#2BE6A8" if abs(row["IC_mean"]) >= 0.03 else "#8A93A6"
+            color = T["good"] if abs(row["IC_mean"]) >= 0.03 else T["muted"]
             col.markdown(stat_card(f"组合 IC {per}", f"{row['IC_mean']:+.3f}", f"IR {row['IR']:+.2f}", color, tip="IC"), unsafe_allow_html=True)
         sig = bbt["sharpe_ci_low"] > 0 or bbt["sharpe_ci_high"] < 0
         st.markdown(f'<div class="verdict">多空组合年化夏普 {bbt["sharpe"]:+.2f}（95% CI [{bbt["sharpe_ci_low"]:+.2f}, {bbt["sharpe_ci_high"]:+.2f}]，{"显著" if sig else "不显著（CI 跨 0）"}）·年化收益 {bbt["ann_return"]:+.1%}。{bbt["note"]}</div>', unsafe_allow_html=True)
@@ -1239,11 +1160,11 @@ def page_rule():
     st.markdown(f'<div class="verdict">{res["_verdict"]}</div>', unsafe_allow_html=True)
     st.write("")
     cols = st.columns(5)
-    cols[0].markdown(stat_card("交易笔数 / N_eff", f"{p['n_trades']}", f"N_eff≈{p['n_eff']:.0f} · ρ̄={p['rho_bar']:.2f}", "#7C5CFC", tip="N_eff"), unsafe_allow_html=True)
-    cols[1].markdown(stat_card("胜率", f"{p['win_rate']:.0%}", "", "#00D4FF", tip="胜率"), unsafe_allow_html=True)
-    cols[2].markdown(stat_card("收益中位", f"{p['median_return']:+.1%}", f"5分位 {p['p5_return']:+.1%}", "#2BE6A8", tip="远期收益"), unsafe_allow_html=True)
-    cols[3].markdown(stat_card("MAE 中位", f"{p['median_mae']:+.1%}", f"最长连亏 {p['longest_losing_streak']}", "#FF5C7A", tip="MAE"), unsafe_allow_html=True)
-    excol = "#2BE6A8" if p["excess_significant"] else "#8A93A6"
+    cols[0].markdown(stat_card("交易笔数 / N_eff", f"{p['n_trades']}", f"N_eff≈{p['n_eff']:.0f} · ρ̄={p['rho_bar']:.2f}", T["primary"], tip="N_eff"), unsafe_allow_html=True)
+    cols[1].markdown(stat_card("胜率", f"{p['win_rate']:.0%}", "", T["info"], tip="胜率"), unsafe_allow_html=True)
+    cols[2].markdown(stat_card("收益中位", f"{p['median_return']:+.1%}", f"5分位 {p['p5_return']:+.1%}", T["good"], tip="远期收益"), unsafe_allow_html=True)
+    cols[3].markdown(stat_card("MAE 中位", f"{p['median_mae']:+.1%}", f"最长连亏 {p['longest_losing_streak']}", T["bad"], tip="MAE"), unsafe_allow_html=True)
+    excol = T["good"] if p["excess_significant"] else T["muted"]
     cols[4].markdown(stat_card("超额(vs随机基准)", f"{p['excess_median']:+.1%}", f"CI[{p['excess_ci_low']:+.0%},{p['excess_ci_high']:+.0%}] {'显著' if p['excess_significant'] else '不显著'}", excol, tip="超额"), unsafe_allow_html=True)
     if len(specs) > 1:
         st.caption(f"⚠️ 多重检验：{len(specs)} 信号组合，批量调参时看下方「反过拟合体检」。")
@@ -1270,14 +1191,14 @@ def page_rule():
             gk[0].markdown(stat_card(("✅ " if b1["pass"] else "❌ ") + "跑赢随机基准",
                                      f"{b1['excess_median']:+.1%}",
                                      f"CI[{b1['ci'][0]:+.0%},{b1['ci'][1]:+.0%}]{'显著' if b1['significant'] else '不显著'}·N_eff≈{b1['n_eff']:.0f}",
-                                     "#2BE6A8" if b1["pass"] else "#FF5C7A", tip="超额"), unsafe_allow_html=True)
+                                     T["good"] if b1["pass"] else T["bad"], tip="超额"), unsafe_allow_html=True)
             b2 = cb["oos_sharpe"]
             gk[1].markdown(stat_card(("✅ " if b2["pass"] else "❌ ") + f"OOS夏普≥{b2['threshold']}",
                                      f"{b2['value']:.2f}" if b2["value"] == b2["value"] else "NA",
-                                     f"OOS {b2['n_oos_days']} 日", "#2BE6A8" if b2["pass"] else "#FF5C7A", tip="Sharpe"), unsafe_allow_html=True)
+                                     f"OOS {b2['n_oos_days']} 日", T["good"] if b2["pass"] else T["bad"], tip="Sharpe"), unsafe_allow_html=True)
             b3 = cb["drawdown"]
             gk[2].markdown(stat_card(("✅ " if b3["pass"] else "❌ ") + f"最大回撤≤{abs(b3['tolerance']):.0%}",
-                                     f"{b3['max_drawdown']:.0%}", "池化日度净值", "#2BE6A8" if b3["pass"] else "#FF5C7A", tip="水下图"), unsafe_allow_html=True)
+                                     f"{b3['max_drawdown']:.0%}", "池化日度净值", T["good"] if b3["pass"] else T["bad"], tip="水下图"), unsafe_allow_html=True)
             st.caption("三条全过才 PASS。PASS≠买入信号，只代表过了反过拟合及格线；选『降偏差宽池』常会把七姐妹上的假优势打回原形。")
     st.write("")
 
@@ -1336,10 +1257,10 @@ def page_rule():
                 with st.spinner("walk-forward + deflated Sharpe…"):
                     deflated, wf = c_overfit_check(specs, op, trailing, tp, int(time_stop), start, end)
                 dc = st.columns(3)
-                dc[0].markdown(stat_card("最优候选", deflated["best_name"], f"per-trade Sharpe {deflated['best_sharpe']:.2f}", "#7C5CFC", tip="Sharpe"), unsafe_allow_html=True)
-                dc[1].markdown(stat_card("Deflated Sharpe 概率", f"{deflated['deflated_sharpe_prob']:.2f}", f"{deflated['n_trials']} 候选 · {'稳健' if deflated['robust'] else '存疑'}", "#2BE6A8" if deflated["robust"] else "#FF5C7A", tip="deflated Sharpe"), unsafe_allow_html=True)
+                dc[0].markdown(stat_card("最优候选", deflated["best_name"], f"per-trade Sharpe {deflated['best_sharpe']:.2f}", T["primary"], tip="Sharpe"), unsafe_allow_html=True)
+                dc[1].markdown(stat_card("Deflated Sharpe 概率", f"{deflated['deflated_sharpe_prob']:.2f}", f"{deflated['n_trials']} 候选 · {'稳健' if deflated['robust'] else '存疑'}", T["good"] if deflated["robust"] else T["bad"], tip="deflated Sharpe"), unsafe_allow_html=True)
                 s = wf["summary"]
-                dc[2].markdown(stat_card("IS vs OOS Sharpe", f"{s['mean_is_sharpe']:.2f} / {s['mean_oos_sharpe']:.2f}", f"过拟合缺口 {s['overfit_gap']:+.2f}", "#00D4FF", tip="walk-forward"), unsafe_allow_html=True)
+                dc[2].markdown(stat_card("IS vs OOS Sharpe", f"{s['mean_is_sharpe']:.2f} / {s['mean_oos_sharpe']:.2f}", f"过拟合缺口 {s['overfit_gap']:+.2f}", T["info"], tip="walk-forward"), unsafe_allow_html=True)
                 st.markdown(f'<div class="verdict">{deflated["note"]}<br>{wf["note"]}</div>', unsafe_allow_html=True)
                 wfv = wf["table"].dropna(subset=["oos_sharpe"])
                 if not wfv.empty:
@@ -1371,18 +1292,18 @@ def page_snapshot():
     with st.spinner("计算 Volume Profile…"):
         ohlcv, vp = c_volume_profile(tk, "2015-01-01", end, int(lookback))
     pc = st.columns(3)
-    pc[0].markdown(stat_card("POC（成交最密价位）", f"{vp['poc']:.1f}", "强支撑/压力参考", "#00D4FF", tip="POC"), unsafe_allow_html=True)
-    pc[1].markdown(stat_card("价值区(70%)", f"{vp['value_area'][0]:.0f} – {vp['value_area'][1]:.0f}", "成交集中区间", "#7C5CFC", tip="Volume Profile"), unsafe_allow_html=True)
+    pc[0].markdown(stat_card("POC（成交最密价位）", f"{vp['poc']:.1f}", "强支撑/压力参考", T["info"], tip="POC"), unsafe_allow_html=True)
+    pc[1].markdown(stat_card("价值区(70%)", f"{vp['value_area'][0]:.0f} – {vp['value_area'][1]:.0f}", "成交集中区间", T["primary"], tip="Volume Profile"), unsafe_allow_html=True)
     # 现价接入盘中近实时（休市/取价失败回退日线收盘）
     _q = c_live_quote(tk, int(__import__("datetime").datetime.now().timestamp() // 30))
     if _q.get("ok") and _q["price"] == _q["price"]:
         _ch = _q.get("change_pct")
         _arr = ("▲" if (_ch == _ch and _ch >= 0) else "▼") if _ch == _ch else ""
         _sub = (f"{_arr} {_ch:+.2%} · {'🟢盘中' if is_market_open() else '⚪休市'}" if _ch == _ch else "近实时")
-        _col = "#2BE6A8" if (_ch == _ch and _ch >= 0) else "#FF5C7A"
+        _col = T["good"] if (_ch == _ch and _ch >= 0) else T["bad"]
         pc[2].markdown(stat_card("现价(≈15min延迟)", f"{_q['price']:.2f}", _sub, _col), unsafe_allow_html=True)
     else:
-        pc[2].markdown(stat_card("现价", f"{ohlcv['close'].iloc[-1]:.1f}", str(ohlcv.index[-1].date()), "#2BE6A8"), unsafe_allow_html=True)
+        pc[2].markdown(stat_card("现价", f"{ohlcv['close'].iloc[-1]:.1f}", str(ohlcv.index[-1].date()), T["good"]), unsafe_allow_html=True)
     st.write("")
     a, b = st.columns([3, 1])
     with a:
@@ -1401,10 +1322,10 @@ def page_snapshot():
                 snap = c_options(tk)
             oc = st.columns(4)
             ivc, ivp = snap["atm_iv_call"], snap["atm_iv_put"]
-            oc[0].markdown(stat_card("ATM IV(Call)", f"{ivc:.0%}" if ivc == ivc else "—", "隐含波动率", "#00D4FF", tip="IV"), unsafe_allow_html=True)
-            oc[1].markdown(stat_card("ATM IV(Put)", f"{ivp:.0%}" if ivp == ivp else "—", "隐含波动率", "#7C5CFC", tip="IV"), unsafe_allow_html=True)
-            oc[2].markdown(stat_card("Put/Call (OI)", f"{snap['put_call_oi_ratio']:.2f}", ">1 偏空对冲", "#FF5C7A"), unsafe_allow_html=True)
-            oc[3].markdown(stat_card("最大OI磁吸位", f"P{snap['max_oi_put_strike']:.0f} / C{snap['max_oi_call_strike']:.0f}", "下方支撑/上方压力", "#2BE6A8"), unsafe_allow_html=True)
+            oc[0].markdown(stat_card("ATM IV(Call)", f"{ivc:.0%}" if ivc == ivc else "—", "隐含波动率", T["info"], tip="IV"), unsafe_allow_html=True)
+            oc[1].markdown(stat_card("ATM IV(Put)", f"{ivp:.0%}" if ivp == ivp else "—", "隐含波动率", T["primary"], tip="IV"), unsafe_allow_html=True)
+            oc[2].markdown(stat_card("Put/Call (OI)", f"{snap['put_call_oi_ratio']:.2f}", ">1 偏空对冲", T["bad"]), unsafe_allow_html=True)
+            oc[3].markdown(stat_card("最大OI磁吸位", f"P{snap['max_oi_put_strike']:.0f} / C{snap['max_oi_call_strike']:.0f}", "下方支撑/上方压力", T["good"]), unsafe_allow_html=True)
             st.plotly_chart(ch.options_oi(snap), use_container_width=True, config=ch.CHART_CONFIG)
             st.caption("⚠️ 期权数据仅当前快照，历史不可得（需付费）；IV 类 regime 条件请用现货历史波动率 proxy。")
         except Exception as e:  # noqa: BLE001
@@ -1428,7 +1349,7 @@ def page_earnings():
         sig = row["significant"]
         col.markdown(stat_card(f"领先 IC {int(row['horizon'])}日", f"{row['ic_real']:+.3f}",
                                f"p={row['perm_pvalue']:.2f} {'显著' if sig else '不显著'} · 假对照{row['ic_fake_mean']:+.3f}",
-                               "#2BE6A8" if sig else "#8A93A6", tip="PEAD"), unsafe_allow_html=True)
+                               T["good"] if sig else T["muted"], tip="PEAD"), unsafe_allow_html=True)
     # 记入全局多重检验账本
     try:
         from analysis import mt_ledger as _mt
@@ -1481,12 +1402,12 @@ def page_events():
         for _, r in ev.iterrows():
             d = pd.Timestamp(r["date"])
             near = pser.index[pser.index.get_indexer([d], method="nearest")[0]]
-            col = "#2BE6A8" if r["type"] == "财报" else "#00D4FF"
+            col = T["good"] if r["type"] == "财报" else T["info"]
             rr = r.get("reaction_5d", float("nan"))
             txt = f"{r['label']}" + (f" {rr:+.0%}" if rr == rr else "")
             mk.append({"time": near.strftime("%Y-%m-%d"), "position": "aboveBar",
                        "color": col, "shape": "circle", "text": txt})
-        render_tv_line(pser, markers=mk, key=f"tvev_{tk}", height=440, color="#9aa7bd", log=True)
+        render_tv_line(pser, markers=mk, key=f"tvev_{tk}", height=440, color=T["muted"], log=True)
         st.caption("🖱️ TradingView 操作：滚轮缩放 · 拖动平移 · 十字光标。圆点=事件(绿=财报/蓝=SEC)，鼠标悬浮看 5 日反应。")
     except Exception:  # noqa: BLE001
         st.plotly_chart(ch.event_timeline_chart(price, ev, title=f"{tk}　事件时间线（客观价格反应）"), use_container_width=True, config=ch.CHART_CONFIG)
@@ -1616,7 +1537,7 @@ def page_briefing():
     st.caption("⚠️ 这是**候选池内的相对排序权重**，不是真实组合仓位。真实仓位上限见下方「组合风险预算」。")
     wc = st.columns(len(briefs)) if briefs else [st]
     for col, (tk, w) in zip(wc, sorted(weights.items(), key=lambda kv: kv[1]["weight"], reverse=True)):
-        col.markdown(stat_card(tk, f"{w['weight']:.0f}%", w["role"], "#7C5CFC"), unsafe_allow_html=True)
+        col.markdown(stat_card(tk, f"{w['weight']:.0f}%", w["role"], T["primary"]), unsafe_allow_html=True)
     st.write("")
 
     # 组合风险预算（相关性感知的真实仓位上限）
@@ -1629,7 +1550,7 @@ def page_briefing():
         for col, b in zip(bc, briefs):
             pn = budg["per_name"][b["ticker"]]
             sub = "高波动已降档" if pn["vol_capped"] else "单票上限"
-            col.markdown(stat_card(f"{b['ticker']} 真实仓位上限", f"≤{pn['cap']:.0%}", sub, "#FFD166"), unsafe_allow_html=True)
+            col.markdown(stat_card(f"{b['ticker']} 真实仓位上限", f"≤{pn['cap']:.0%}", sub, T["gold"]), unsafe_allow_html=True)
         for note in budg["notes"]:
             st.markdown(f'<div class="verdict">🔗 {note}</div>', unsafe_allow_html=True)
         if not budg["notes"]:
@@ -1644,7 +1565,7 @@ def page_briefing():
         wcol = st.columns(len(briefs))
         for col, b in zip(wcol, briefs):
             w = pw["weights"].get(b["ticker"], 0.0)
-            col.markdown(stat_card(b["ticker"], f"{w:.0%}", "组合权重", "#2BE6A8"), unsafe_allow_html=True)
+            col.markdown(stat_card(b["ticker"], f"{w:.0%}", "组合权重", T["good"]), unsafe_allow_html=True)
         cmp = pw.get("compare", {})
         if cmp:
             st.caption("组合年化波动对照：" + " · ".join(f"{k} {v:.1%}" for k, v in cmp.items())
@@ -1668,7 +1589,7 @@ def page_briefing():
             # 证据等级 + 多周期对账
             g = b.get("grade")
             if g:
-                _gc = {"A": "#2BE6A8", "B": "#7CFC9E", "C": "#FFD166", "D": "#FF9F45", "F": "#FF5C7A"}.get(g["grade"], "#8A93A6")
+                _gc = {"A": T["good"], "B": T["good2"], "C": T["gold"], "D": T["amber"], "F": T["bad"]}.get(g["grade"], T["muted"])
                 st.markdown(stat_card(f"证据等级 {g['grade']}", f"封顶 {g['max_position_fraction']:.0%}",
                                       f"{g['confidence']}置信 · {g['action']}", _gc), unsafe_allow_html=True)
                 st.caption(f"📐 证据等级=历史证据强度(非涨跌预测)：{g['meaning']}。" + ("依据：" + "；".join(g["reasons"]) if g.get("reasons") else ""))
@@ -1680,17 +1601,17 @@ def page_briefing():
             es, ev = b.get("engine_state"), b.get("engine_value")
             kc = st.columns(4)
             kc[0].markdown(stat_card("波动分位", f"{b['vol_percentile']:.0%}" if b['vol_percentile'] == b['vol_percentile'] else "—",
-                                     {"low_vol": "低", "mid_vol": "中", "high_vol": "高"}.get(b["vol_state"], ""), "#00D4FF", tip="regime"), unsafe_allow_html=True)
+                                     {"low_vol": "低", "mid_vol": "中", "high_vol": "高"}.get(b["vol_state"], ""), T["info"], tip="regime"), unsafe_allow_html=True)
             if es:
-                c = "#2BE6A8" if es["excess"] > 0 else "#FF5C7A"
+                c = T["good"] if es["excess"] > 0 else T["bad"]
                 kc[1].markdown(stat_card(f"当前状态桶·{b['current_state_bucket']}", f"{es['median']:+.1%}",
                                          f"超额{es['excess']:+.1%}·胜率{es['win_rate']:.0%}{'·显著' if es['significant'] else ''}", c, tip="超额"), unsafe_allow_html=True)
             if ev:
-                c = "#2BE6A8" if ev["excess"] > 0 else "#8A93A6"
+                c = T["good"] if ev["excess"] > 0 else T["muted"]
                 kc[2].markdown(stat_card("估值低位桶(买便宜)", f"{ev['median']:+.1%}",
                                          f"超额{ev['excess']:+.1%}·RR{ev['reward_risk']:.2f}{'·显著' if ev['significant'] else ''}", c, tip="超额"), unsafe_allow_html=True)
             if b.get("next_earnings"):
-                kc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#FFD166"), unsafe_allow_html=True)
+                kc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", T["gold"]), unsafe_allow_html=True)
             if b.get("momentum_trap"):
                 st.markdown('<div class="verdict">⚠️ <b>动量陷阱</b>：当前在回撤中，但回撤桶超额≤0——历史上逢跌买并不优于随机进场。正确做法是等趋势确认/波动回落，而非抢这段回撤。</div>', unsafe_allow_html=True)
 
@@ -1814,18 +1735,18 @@ def page_panorama():
         px = q["price"] if (q.get("ok") and q["price"] == q["price"]) else fb["price"]
         chg = q.get("change_pct"); chv = q.get("change")
         if q.get("ok") and chg == chg:
-            col = "#2BE6A8" if chg >= 0 else "#FF5C7A"
+            col = T["good"] if chg >= 0 else T["bad"]
             arr = "▲" if chg >= 0 else "▼"
             sub = f'<span style="color:{col};font-weight:700">{arr} {chv:+.2f} ({chg:+.2%})</span> · {"🟢 盘中" if _mkt_open_top else "⚪ 休市"}{" · ≈15min延迟" if q.get("delayed") else ""}'
         else:
-            col = "#E6E9EF"; sub = f'收盘 {fb["date"]} · 休市'
+            col = T["text"]; sub = f'收盘 {fb["date"]} · 休市'
         st.markdown(
             f'<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;'
-            f'border-radius:14px;padding:12px 20px;margin:2px 0 10px;background:#ffffff06;border:1px solid #ffffff14">'
-            f'<span style="font-size:1.05rem;color:#8A93A6;font-weight:700">{ticker} 现价</span>'
+            f'border-radius:14px;padding:12px 20px;margin:2px 0 10px;background:var(--card);border:1px solid var(--border)">'
+            f'<span style="font-size:1.05rem;color:var(--muted);font-weight:700">{ticker} 现价</span>'
             f'<span style="font-size:2.6rem;font-weight:800;color:{col};line-height:1">{px:.2f}</span>'
-            f'<span style="font-size:0.95rem;color:#9aa3b2">{sub}</span>'
-            f'<span style="font-size:0.8rem;color:#6b7385;margin-left:auto">仅展示·不入量化</span>'
+            f'<span style="font-size:0.95rem;color:var(--muted)">{sub}</span>'
+            f'<span style="font-size:0.8rem;color:var(--muted);margin-left:auto">仅展示·不入量化</span>'
             f'</div>', unsafe_allow_html=True)
     _hero_price()
 
@@ -1836,14 +1757,14 @@ def page_panorama():
     if _is_holder:
         st.markdown(
             '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 10px;'
-            'background:#7C5CFC1f;border:1px solid #7C5CFC55;border-left:6px solid #7C5CFC;color:#D2D8E3;font-size:0.86rem">'
+            'background:var(--primary-weak);border:1px solid var(--primary-border);border-left:6px solid var(--primary);color:var(--text);font-size:0.86rem">'
             '📦 <b>已持仓视角</b>：重点看下方 <b>🚨 撤离预警 + 📌 已建仓怎么办（守/加/减/离）</b>。'
             '顶部"现在该建多少新仓 / 入场参考价 / 踏空风险"是给<b>新买家</b>的——你不用纠结那些，盯**撤离信号**与止盈止损纪律。</div>',
             unsafe_allow_html=True)
     else:
         st.markdown(
             '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 10px;'
-            'background:#2BE6A81f;border:1px solid #2BE6A855;border-left:6px solid #2BE6A8;color:#D2D8E3;font-size:0.86rem">'
+            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
             '🆕 <b>新建仓视角</b>：重点看 <b>🎯 现在怎么做（裁决/仓位/入场价/踏空） → 📋 操作预案 → 🎯 该在哪建仓</b>。'
             '下方"🚨 撤离预警 / 📌 已建仓"是给<b>已持仓者</b>的，可先略过。<br>'
             '⚠️ 注意：深跌且跌破200线的票，"新建仓(逆势价值·慢建严止损)"与"持仓者(减仓防守)"口径**本就不同**，按你的身份看对应区块。</div>',
@@ -1859,7 +1780,7 @@ def page_panorama():
         # 引擎纪律入参：动量陷阱 / 证据等级 / 无稳健入场区 → 决策卡自动转防守，避免与下方引擎层矛盾
         _card = _dec.decision_card(a, price, _bezc, _mkt.get("fragile", False), _mkt.get("light", ""),
                                    momentum_trap=bool(b.get("momentum_trap")), grade=b.get("grade"))
-        _cc = _card["color"]
+        _cc = tm.remap(_card["color"])
         _e = _card.get("entry")
         # 当前建议仓位%（风险管理叠加规则给出"现在该持多少"）—— 显示在下方大数字三联里
         _posnow = None
@@ -1872,9 +1793,9 @@ def page_panorama():
             pass
         st.markdown(
             f'<div style="border-radius:16px;padding:20px 24px 16px;margin:2px 0 12px;'
-            f'background:linear-gradient(92deg,{_cc}2e,{_cc}08);border:1px solid {_cc}66;border-left:9px solid {_cc}">'
-            f'<div style="font-size:0.78rem;color:#8A93A6;letter-spacing:1px">🎯 现在怎么做 · {a}（距1年高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
-            f'<div style="font-size:1.6rem;font-weight:800;color:#F0F3F8;line-height:1.35;margin-top:6px">{_card["state"]}　▸　{_card["action"]}</div>'
+            f'background:{_cc}1f;border:1px solid {_cc}55;border-left:6px solid {_cc}">'
+            f'<div style="font-size:0.78rem;color:var(--muted);letter-spacing:1px">🎯 现在怎么做 · {a}（距1年高 {_card["drawdown"]:+.1%}）· 市场 {_card.get("market_light","")}</div>'
+            f'<div style="font-size:1.6rem;font-weight:800;color:var(--heading);line-height:1.35;margin-top:6px">{_card["state"]}　▸　{_card["action"]}</div>'
             f'</div>', unsafe_allow_html=True)
         # 三个最该看的数字：建议仓位 / 入场参考价 / 持有周期 —— 放大、最醒目
         # 门控：引擎判定"现在别建新仓"(enter_ok=False)时，三联卡全部转"暂不建仓"口径，
@@ -1889,40 +1810,40 @@ def page_panorama():
                 _holdt = _dec.holding_advice(_card, b, _bezc)
                 _mt[0].markdown(stat_card("🚨 撤离状态", _ewt["level"], _ewt["action"][:26], _ewt["color"], tip="脆弱"), unsafe_allow_html=True)
                 _d2 = _ewt.get("dist_ma200", float("nan"))
-                _dcol = "#FF5C7A" if (_d2 == _d2 and _d2 < 0.04) else "#2BE6A8"
+                _dcol = T["bad"] if (_d2 == _d2 and _d2 < 0.04) else T["good"]
                 _dsub = ("已跌破200线→减半仓" if (_d2 == _d2 and _d2 < 0) else "跌破即趋势破位→减半仓")
                 _mt[1].markdown(stat_card("距撤离线(200日线)", f"{_d2:+.0%}" if _d2 == _d2 else "—", _dsub, _dcol, tip="regime"), unsafe_allow_html=True)
                 _mt[2].markdown(stat_card("📦 现在该怎么办", _holdt["stance"], "守/加/减/离·详见下方", _holdt["color"]), unsafe_allow_html=True)
             except Exception:  # noqa: BLE001
-                _mt[0].markdown(stat_card("📦 已持仓", "见下方", "🚨撤离预警 / 守加减离", "#7C5CFC"), unsafe_allow_html=True)
+                _mt[0].markdown(stat_card("📦 已持仓", "见下方", "🚨撤离预警 / 守加减离", T["primary"]), unsafe_allow_html=True)
         else:
             # 🆕 新建仓口径
             if not _enter_ok:
                 _sub0 = (f"引擎不建议在此建新仓（见上方裁决）；若已持仓，风控暴露上限≈{_posnow:.0%}，见下方『已建仓』"
                          if _posnow is not None else "引擎不建议在此建新仓（见上方裁决）；已持仓者见下方『已建仓』")
-                _mt[0].markdown(stat_card("📊 现在该建多少新仓", "暂不建仓", _sub0, "#FF9F45"), unsafe_allow_html=True)
+                _mt[0].markdown(stat_card("📊 现在该建多少新仓", "暂不建仓", _sub0, T["amber"]), unsafe_allow_html=True)
                 if _e and _e.get("anchor") == _e.get("anchor"):
                     _mt[1].markdown(stat_card("🎯 历史常驻价（暂非买点）", f"{_e['anchor']:.1f}",
-                                              f"{_e['zone']}·{'稳健档但裁决未背书' if _e.get('confident') else '低置信·引擎未背书此处建仓'}", "#8A93A6"), unsafe_allow_html=True)
+                                              f"{_e['zone']}·{'稳健档但裁决未背书' if _e.get('confident') else '低置信·引擎未背书此处建仓'}", T["muted"]), unsafe_allow_html=True)
                 else:
-                    _mt[1].markdown(stat_card("🎯 历史常驻价", "无", "当前无统计稳健点位", "#8A93A6"), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("⏳ 触发条件", "等更深/确认", "见上方裁决：等深跌或趋势/宽度确认再议", "#8A93A6"), unsafe_allow_html=True)
+                    _mt[1].markdown(stat_card("🎯 历史常驻价", "无", "当前无统计稳健点位", T["muted"]), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 触发条件", "等更深/确认", "见上方裁决：等深跌或趋势/宽度确认再议", T["muted"]), unsafe_allow_html=True)
             elif _posnow is not None:
-                _pos_col = "#2BE6A8" if _posnow >= 0.66 else ("#FFD166" if _posnow >= 0.33 else "#FF9F45")
+                _pos_col = T["good"] if _posnow >= 0.66 else (T["gold"] if _posnow >= 0.33 else T["amber"])
                 _mt[0].markdown(stat_card("📊 现在该持多少仓", f"{_posnow:.0%}",
                                           f"{gl_profile}档·目标波动{_PROFILE_VOL.get(gl_profile,0.15):.0%}·这只票满仓=100%(风控暴露·非占组合比例)", _pos_col), unsafe_allow_html=True)
             else:
-                _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", "#8A93A6"), unsafe_allow_html=True)
+                _mt[0].markdown(stat_card("📊 现在该持多少仓", "—", "暂不可用", T["muted"]), unsafe_allow_html=True)
             if _enter_ok and _e and _e.get("anchor") == _e.get("anchor"):
                 _conf_e = _e.get("confident")
-                _ecol = "#2BE6A8" if _conf_e else "#FFD166"
+                _ecol = T["good"] if _conf_e else T["gold"]
                 _et = "✅ 入场参考价(已过闸门)" if _conf_e else "🟢 可分批建仓价(低置信)"
                 _mt[1].markdown(stat_card(_et, f"{_e['anchor']:.1f}",
                                           f"{_e['zone']}·{'✅稳健可执行' if _conf_e else '历史正期望·分批进'}", _ecol), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", "#7C5CFC"), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 建议持有", f"~{_e.get('horizon_months','?')}个月", "引擎校准周期", T["primary"]), unsafe_allow_html=True)
             elif _enter_ok:
-                _mt[1].markdown(stat_card("🟢 可分批建仓", "区间分批", "历史正期望·按区间分批进", "#34C779"), unsafe_allow_html=True)
-                _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方候选执行区间", "#7C5CFC"), unsafe_allow_html=True)
+                _mt[1].markdown(stat_card("🟢 可分批建仓", "区间分批", "历史正期望·按区间分批进", T["good"]), unsafe_allow_html=True)
+                _mt[2].markdown(stat_card("⏳ 建议持有", "~按周期", "见下方候选执行区间", T["primary"]), unsafe_allow_html=True)
         # 🪂 踏空风险：死等深档却没等到的概率 + 机会成本 + Plan B（直接挂在入场卡下，反"光等抄底"）
         # 仅在引擎建议建仓(enter_ok)时显示——若裁决已是"暂不建仓/别越跌越补"，踏空讨论无意义且会与之打架。
         try:
@@ -1930,18 +1851,18 @@ def page_panorama():
             # 踏空风险只对"想新建仓"有意义；已持仓者不显示（与身份 toggle 联动）
             _mrline = _ecmr.format_miss_risk(_ecmr.entry_miss_risk(price, _bezc)) if (_enter_ok and not _is_holder) else None
             if _mrline:
-                _mrcol = "#FF9F45" if "踏空风险高" in _mrline else (
-                    "#FFD166" if ("踏空风险中" in _mrline or "要等很久" in _mrline) else "#2BE6A8")
+                _mrcol = T["amber"] if "踏空风险高" in _mrline else (
+                    T["gold"] if ("踏空风险中" in _mrline or "要等很久" in _mrline) else T["good"])
                 st.markdown(f'<div style="border-radius:12px;padding:9px 15px;margin:6px 0 2px;'
                             f'background:{_mrcol}1c;border:1px solid {_mrcol}55;border-left:5px solid {_mrcol};'
-                            f'color:#D2D8E3;font-size:0.84rem">🪂 {_mrline}</div>', unsafe_allow_html=True)
+                            f'color:var(--text);font-size:0.84rem">🪂 {_mrline}</div>', unsafe_allow_html=True)
         except Exception:  # noqa: BLE001
             pass
         # 入场后 / 离场 一行操作摘要（细节见下方📋操作预案）
         st.markdown(
-            f'<div style="border-radius:12px;padding:10px 16px;margin:8px 0 2px;background:#ffffff08;border:1px solid #ffffff14">'
-            f'<span style="color:#9aa3b2;font-size:0.84rem">📈 <b>入场后</b>：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</span><br>'
-            f'<span style="color:#9aa3b2;font-size:0.84rem">🚪 <b>离场</b>：{"；".join(_card["exit_rules"])}</span>'
+            f'<div style="border-radius:12px;padding:10px 16px;margin:8px 0 2px;background:var(--card);border:1px solid var(--border)">'
+            f'<span style="color:var(--muted);font-size:0.84rem">📈 <b>入场后</b>：{_card["post_entry"]["add"]}；涨了 {_card["post_entry"]["trim"]}；{_card["post_entry"]["stop"]}</span><br>'
+            f'<span style="color:var(--muted);font-size:0.84rem">🚪 <b>离场</b>：{"；".join(_card["exit_rules"])}</span>'
             f'</div>', unsafe_allow_html=True)
         if _is_holder:
             st.caption("📦 已持仓口径：上方=撤离状态 / 距撤离线 / 现在该怎么办；详细守/加/减/离 + 触发式止盈止损见下方『📌 已经持有』。")
@@ -1988,19 +1909,19 @@ def page_panorama():
 
     # ---- 📍 关键状态一行（紧跟裁决：把"现在在哪"看全；现价见顶部大字条）----
     _oc = st.columns(4)
-    _oc[0].markdown(stat_card("距历史高", f"{b['drawdown']:+.0%}", "全期峰值回撤·引擎分桶口径", "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
+    _oc[0].markdown(stat_card("距历史高", f"{b['drawdown']:+.0%}", "全期峰值回撤·引擎分桶口径", T["bad"], tip="回撤"), unsafe_allow_html=True)
     _up0 = b.get("trend_position", 0) > 0
     _oc[1].markdown(stat_card("趋势", "均线上方" if _up0 else "均线下方",
-                              f"距200线 {b['trend_position']:+.0%}", "#2BE6A8" if _up0 else "#FF5C7A", tip="regime"), unsafe_allow_html=True)
+                              f"距200线 {b['trend_position']:+.0%}", T["good"] if _up0 else T["bad"], tip="regime"), unsafe_allow_html=True)
     _vp0 = b["vol_percentile"]
     _oc[2].markdown(stat_card("波动状态", {"low_vol": "低", "mid_vol": "中", "high_vol": "高"}.get(b["vol_state"], "—") + "波动",
-                              f"分位 {_vp0:.0%}" if _vp0 == _vp0 else "—", "#00D4FF", tip="regime"), unsafe_allow_html=True)
+                              f"分位 {_vp0:.0%}" if _vp0 == _vp0 else "—", T["info"], tip="regime"), unsafe_allow_html=True)
     if b.get("next_earnings"):
-        _oc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", "#7C5CFC"), unsafe_allow_html=True)
+        _oc[3].markdown(stat_card("下次财报", b["next_earnings"], f"{b['days_to_earnings']} 天后", T["primary"]), unsafe_allow_html=True)
     elif a in _ETF_SET:
-        _oc[3].markdown(stat_card("下次财报", "—", "ETF·无单公司财报", "#8A93A6"), unsafe_allow_html=True)
+        _oc[3].markdown(stat_card("下次财报", "—", "ETF·无单公司财报", T["muted"]), unsafe_allow_html=True)
     else:
-        _oc[3].markdown(stat_card("下次财报", "—", "未取到(限流/暂无日程)·稍后刷新", "#8A93A6"), unsafe_allow_html=True)
+        _oc[3].markdown(stat_card("下次财报", "—", "未取到(限流/暂无日程)·稍后刷新", T["muted"]), unsafe_allow_html=True)
     st.write("")
 
     # 🚀 一键转 Claude 联网读全文+深度推理（最显眼处；app 给校准数字，Claude 补读网推理）
@@ -2018,7 +1939,7 @@ def page_panorama():
 
     def _pcard(col, title, accent, items):
         body = "".join(
-            f'<div style="font-size:.85rem;line-height:1.55;color:#D2D8E3;margin:5px 0;'
+            f'<div style="font-size:.85rem;line-height:1.55;color:var(--text);margin:5px 0;'
             f'padding-left:12px;border-left:2px solid {accent}55">{x}</div>'
             for x in (items or ["—"]))
         col.markdown(
@@ -2029,34 +1950,34 @@ def page_panorama():
     # 📋 操作预案（新建仓用）：新建仓身份默认展开，持仓者自动折叠（点开仍可看）
     _pe = st.expander("📋 操作预案（🆕 新建仓怎么操作）", expanded=not _is_holder)
     r1 = _pe.columns(3)
-    _pcard(r1[0], "🎯 建仓", "#FFD166", pbk.get("entry"))
-    _pcard(r1[1], "📈 涨了怎么操作", "#2BE6A8", pbk.get("if_up"))
-    _pcard(r1[2], "📉 跌了怎么操作", "#FF5C7A", pbk.get("if_down"))
+    _pcard(r1[0], "🎯 建仓", T["gold"], pbk.get("entry"))
+    _pcard(r1[1], "📈 涨了怎么操作", T["good"], pbk.get("if_up"))
+    _pcard(r1[2], "📉 跌了怎么操作", T["bad"], pbk.get("if_down"))
     r2 = _pe.columns(2)
-    _pcard(r2[0], "⏱️ 时间 / 事件", "#00D4FF", pbk.get("time_event"))
-    _pcard(r2[1], "🛡️ 风控", "#7C5CFC", pbk.get("risk"))
+    _pcard(r2[0], "⏱️ 时间 / 事件", T["info"], pbk.get("time_event"))
+    _pcard(r2[1], "🛡️ 风控", T["primary"], pbk.get("risk"))
     _pe.caption("⚠️ 机械 if-then 预案：价位是「**若到达就行动**」的区间(非预测)，**非买卖指令**；动量陷阱/未过闸门时自动转防守口径。")
 
     # 📌 已建仓 + 🚨撤离预警（持仓者用）：持仓身份默认展开，新建仓自动折叠（点开仍可看）
     if _card is not None:
         try:
             _hold = _dec.holding_advice(_card, b, _bezc)
-            _hcol = _hold["color"]
+            _hcol = tm.remap(_hold["color"])
             _ph = st.expander("📌 已经持有？守/加/减/离 + 🚨 撤离预警", expanded=_is_holder)
             try:
                 _ef = c_fragility(zstart, end).get("cur", {})
                 _ew = _dec.exit_warning(price, _ef.get("fragile", False), _ef.get("pctile"))
-                _ewc = _ew["color"]
+                _ewc = tm.remap(_ew["color"])
                 _chips = "".join(
                     f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:2px 9px;border-radius:7px;'
-                    f'background:#ffffff0a;border:1px solid #ffffff1f;font-size:0.78rem;color:#C7CEDA">{s["state"]}</span>'
+                    f'background:var(--card);border:1px solid var(--border);font-size:0.78rem;color:var(--text)">{s["state"]}</span>'
                     for s in _ew.get("signals", []))
                 _ph.markdown(
                     f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 10px;'
-                    f'background:linear-gradient(92deg,{_ewc}2e,{_ewc}08);border:1px solid {_ewc}66;border-left:8px solid {_ewc}">'
-                    f'<div style="font-size:1.12rem;font-weight:800;color:#F0F3F8">🚨 撤离预警 · {_ew["level"]}</div>'
+                    f'background:{_ewc}1f;border:1px solid {_ewc}55;border-left:6px solid {_ewc}">'
+                    f'<div style="font-size:1.12rem;font-weight:800;color:var(--heading)">🚨 撤离预警 · {_ew["level"]}</div>'
                     f'<div style="margin:6px 0 4px">{_chips}</div>'
-                    f'<div style="color:#D2D8E3;font-size:0.86rem">▸ {_ew["action"]}</div>'
+                    f'<div style="color:var(--text);font-size:0.86rem">▸ {_ew["action"]}</div>'
                     f'</div>', unsafe_allow_html=True)
                 # 撤离明细（四信号）—— 内联（避免 expander 套 expander）
                 for s in _ew.get("signals", []):
@@ -2072,13 +1993,13 @@ def page_panorama():
                 pass
             _ph.markdown(
                 f'<div style="border-radius:14px;padding:14px 18px;margin:6px 0 8px;'
-                f'background:linear-gradient(92deg,{_hcol}26,{_hcol}08);border:1px solid {_hcol}55;border-left:7px solid {_hcol}">'
-                f'<div style="font-size:1.18rem;font-weight:800;color:#F0F3F8">{_hold["stance"]}</div>'
-                f'<div style="color:#C7CEDA;font-size:0.9rem;margin-top:5px">{_hold["headline"]}</div>'
+                f'background:{_hcol}1f;border:1px solid {_hcol}55;border-left:6px solid {_hcol}">'
+                f'<div style="font-size:1.18rem;font-weight:800;color:var(--heading)">{_hold["stance"]}</div>'
+                f'<div style="color:var(--text);font-size:0.9rem;margin-top:5px">{_hold["headline"]}</div>'
                 f'</div>', unsafe_allow_html=True)
             _ha = _ph.columns(2)
-            _pcard(_ha[0], "🔧 现在的动作", "#2BE6A8", _hold["actions"])
-            _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", "#FF9F45", _hold["triggers"])
+            _pcard(_ha[0], "🔧 现在的动作", T["good"], _hold["actions"])
+            _pcard(_ha[1], "🎯 触发式止盈 / 止损（到价才动）", T["amber"], _hold["triggers"])
             _ph.caption("⚠️ 已建仓视角与上方建仓视角**同源**(回撤/趋势/脆弱/动量陷阱/证据等级)、口径一致；价位是「到了才行动」的触发区间。")
         except Exception as _e:  # noqa: BLE001
             st.caption(f"已建仓建议暂不可用（{type(_e).__name__}）——其余分析照常。")
@@ -2102,21 +2023,21 @@ def page_panorama():
     if not _eok2:
         st.markdown(
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:#FF9F451c;border:1px solid #FF9F4555;border-left:6px solid #FF9F45;color:#D2D8E3;font-size:0.86rem">'
+            'background:var(--amber-weak);border:1px solid var(--amber-border);border-left:6px solid var(--amber);color:var(--text);font-size:0.86rem">'
             f'⚠️ <b>当前总裁决：暂不建仓</b>（{_why or "证据不足"}）。{_principle} '
             '故下面只当"历史相对较优档在哪"看，<b>不是买入信号</b>；按裁决条件（等更深回撤 / 趋势或宽度确认）再议。</div>',
             unsafe_allow_html=True)
     elif _conf2:
         st.markdown(
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:#2BE6A81c;border:1px solid #2BE6A855;border-left:6px solid #2BE6A8;color:#D2D8E3;font-size:0.86rem">'
+            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
             f'✅ <b>当前总裁决：可建仓 · 且有"稳健入场区"</b>（过了 DSR≥0.95 / CI下界>基准 等闸门）。{_principle} '
             '这是<b>极少数</b>闸门全过的情况（回测显示个股/科技半导体历史上几乎不出现），'
             '下面价位可<b>按档分批执行</b>（仍按置信度控仓）。</div>', unsafe_allow_html=True)
     else:
         st.markdown(
             '<div style="border-radius:12px;padding:11px 16px;margin:2px 0 8px;'
-            'background:#2BE6A814;border:1px solid #34C77955;border-left:6px solid #34C779;color:#D2D8E3;font-size:0.86rem">'
+            'background:var(--good-weak);border:1px solid var(--good-border);border-left:6px solid var(--good);color:var(--text);font-size:0.86rem">'
             '🟢 <b>当前总裁决：可分批建仓</b>（温和正期望 · 择时低置信）。'
             '回测（<b>PIT 无前视</b>）显示这类「正期望回撤档」分批进<b>历史上跑赢「随便买」</b>'
             '（浅跌 0–10% 档尤佳、胜率约 70–82%），只是没到 DSR≥0.95 那条「高置信精准买点」线。'
@@ -2143,18 +2064,18 @@ def page_panorama():
             _hm = int(round(bez.get("horizon", horizon) / 21))
             # 命名随"闸门状态"升降，杜绝把候选区间当买点：
             if not _eok2:
-                _tc = "#8A93A6"; _t0 = f"📍 相对较优档·{_anc}（暂非买点）"; _t1 = "📍 历史相对较优档（暂非买点）"
+                _tc = T["muted"]; _t0 = f"📍 相对较优档·{_anc}（暂非买点）"; _t1 = "📍 历史相对较优档（暂非买点）"
             elif _conf2:
-                _tc = "#2BE6A8"; _t0 = f"✅ 入场区·{_anc}（可执行）"; _t1 = "✅ 稳健入场区（已过闸门）"
+                _tc = T["good"]; _t0 = f"✅ 入场区·{_anc}（可执行）"; _t1 = "✅ 稳健入场区（已过闸门）"
             else:
-                _tc = "#34C779"; _t0 = f"🟢 可分批建仓·{_anc}（低置信·正期望）"; _t1 = "🟢 可分批建仓区（低置信）"
+                _tc = "var(--good)"; _t0 = f"🟢 可分批建仓·{_anc}（低置信·正期望）"; _t1 = "🟢 可分批建仓区（低置信）"
             _bc = st.columns(4)
             _d = bez.get("anchor_distance", float("nan"))
             _bc[0].markdown(stat_card(_t0, f"{bez['anchor_price']:.1f}",
                                       f"距现价 {_d:+.1%}·持有~{_hm}月" if _d == _d else bez["zone_label"], _tc), unsafe_allow_html=True)
-            _bc[1].markdown(stat_card(_t1, _bs, f"{bez['zone_label']}·持有~{_hm}月", "#FFD166" if _eok2 else "#8A93A6"), unsafe_allow_html=True)
+            _bc[1].markdown(stat_card(_t1, _bs, f"{bez['zone_label']}·持有~{_hm}月", T["gold"] if _eok2 else T["muted"]), unsafe_allow_html=True)
             _bc[2].markdown(stat_card("历史超基准", f"{bez['excess_median']:+.1%}",
-                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", "#7C5CFC", tip="远期收益"), unsafe_allow_html=True)
+                                      f"盈亏比 {bez['reward_risk']:.1f}·胜率 {bez['win_rate']:.0%}", T["primary"], tip="远期收益"), unsafe_allow_html=True)
             _ci = bez["ci"]
             _dsr = bez.get("dsr", float("nan"))
             _dsr_s = f"·DSR{_dsr:.2f}" if _dsr == _dsr else ""
@@ -2190,7 +2111,7 @@ def page_panorama():
         _mc = st.columns([1, 3])
         _mc[0].markdown(stat_card("市场环境", _curfz.get("light", "—"),
                                   f"宽度分位 {_curfz.get('pctile', float('nan')):.0%}" if _curfz.get("pctile") == _curfz.get("pctile") else "—",
-                                  "#FF5C7A" if _curfz.get("fragile") else "#2BE6A8", tip="脆弱"), unsafe_allow_html=True)
+                                  T["bad"] if _curfz.get("fragile") else T["good"], tip="脆弱"), unsafe_allow_html=True)
         _mc[1].markdown(f'<div class="verdict">🧭 没到位怎么办（现价距1年高 {_cd:+.1%}）：'
                         f'<b>{_wc["action"]}</b> — {_wc["detail"]}</div>', unsafe_allow_html=True)
     except Exception:  # noqa: BLE001
@@ -2278,7 +2199,7 @@ def page_panorama():
     if _g or _hz:
         gcol = st.columns([1, 3])
         if _g:
-            _gc = {"A": "#2BE6A8", "B": "#7CFC9E", "C": "#FFD166", "D": "#FF9F45", "F": "#FF5C7A"}.get(_g["grade"], "#8A93A6")
+            _gc = {"A": T["good"], "B": T["good2"], "C": T["gold"], "D": T["amber"], "F": T["bad"]}.get(_g["grade"], T["muted"])
             gcol[0].markdown(stat_card(f"证据等级 {_g['grade']}", f"封顶 {_g['max_position_fraction']:.0%}",
                                        f"{_g['confidence']}置信 · {gl_profile}", _gc), unsafe_allow_html=True)
         with gcol[1]:
@@ -2301,7 +2222,7 @@ def page_panorama():
             if _hz_weak: _bits.append(f"多周期「{_hz.get('action','')}」")
             st.markdown(
                 '<div style="border-radius:12px;padding:10px 16px;margin:2px 0 4px;'
-                'background:#FFD16614;border:1px solid #FFD16655;border-left:6px solid #FFD166;color:#D2D8E3;font-size:0.85rem">'
+                'background:var(--gold-weak);border:1px solid var(--gold);border-left:6px solid var(--gold);color:var(--text);font-size:0.85rem">'
                 f'⚠️ <b>证据等级 {_g["grade"]} 偏乐观、请降级看</b>：这个等级主要来自「估值低位(买便宜)」论据，'
                 f'但 {"、".join(_bits)} → **即时择时上并无优势**。'
                 '把"等级 A/B"理解成"长期估值/赔率不差"，<b>不等于"现在就该重仓建"</b>；以裁决/撤离与多周期为准。</div>',
@@ -2315,10 +2236,10 @@ def page_panorama():
             st.markdown("##### 📈📉 趋势全程分布（历史类比 · 分布非预测）")
             st.markdown(
                 f'<div style="border-radius:12px;padding:12px 16px;margin:2px 0 6px;'
-                f'background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
-                f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{_rp["headline"]}</div>'
-                + "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
-                + f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
+                f'background:var(--primary-weak);border:1px solid var(--primary-border);border-left:5px solid var(--primary)">'
+                f'<div style="color:var(--text);font-size:0.84rem;margin-bottom:4px">{_rp["headline"]}</div>'
+                + "".join(f'<div style="color:var(--text);font-size:0.85rem;line-height:1.6">{l}</div>' for l in _rp["lines"])
+                + f'<div style="color:var(--muted);font-size:0.84rem;margin-top:5px">📏 {_rp["price_range"]}</div>'
                 f'</div>', unsafe_allow_html=True)
             st.caption("📖 它回答的是「**历史上像今天这种深度的状态，后来全程怎么走**」"
                        "（再跌/反弹/见底时长/收复时长的分布）。" + _rp["caveat"])
@@ -2332,20 +2253,20 @@ def page_panorama():
     with st.spinner("事件雷达：全网查询 IPO/经济日历…"):
         radar = c_event_radar(a, _today.isoformat(), b.get("next_earnings"), 45)
     _src_cn = {"auto": "规则", "web": "全网", "manual": "手填"}
-    _sevcol = {"高": "#FF5C7A", "中": "#FFD166", "低": "#8A93A6"}
-    _rc = "#FF5C7A" if radar["n_high"] else "#7C5CFC"
+    _sevcol = {"高": T["bad"], "中": T["gold"], "低": T["muted"]}
+    _rc = T["bad"] if radar["n_high"] else T["primary"]
     chips = "".join(
         f'<span style="display:inline-block;margin:3px 6px 3px 0;padding:3px 9px;border-radius:8px;'
-        f'background:{_sevcol.get(e["severity"],"#8A93A6")}22;border:1px solid {_sevcol.get(e["severity"],"#8A93A6")}66;'
-        f'font-size:0.8rem;color:#E6E9EF">{e["date"].strftime("%m-%d")}·{e["days_ahead"]}天后 '
+        f'background:{_sevcol.get(e["severity"],T["muted"])}22;border:1px solid {_sevcol.get(e["severity"],T["muted"])}66;'
+        f'font-size:0.8rem;color:var(--text)">{e["date"].strftime("%m-%d")}·{e["days_ahead"]}天后 '
         f'{e["category"]}{("·"+e["title"]) if e.get("title") else ""}</span>'
         for e in radar["events"][:8])
     st.markdown(
         f'<div style="border-radius:14px;padding:13px 18px;margin:2px 0 6px;'
-        f'background:linear-gradient(92deg,{_rc}1f,{_rc}08);border:1px solid {_rc}44;border-left:6px solid {_rc}">'
-        f'<div style="font-size:0.8rem;color:#8A93A6;letter-spacing:0.5px">🛰️ 事件雷达 · 未来45天 '
+        f'background:{_rc}1f;border:1px solid {_rc}44;border-left:6px solid {_rc}">'
+        f'<div style="font-size:0.8rem;color:var(--muted);letter-spacing:0.5px">🛰️ 事件雷达 · 未来45天 '
         f'（{radar["n_high"]} 项高风险 · {radar.get("n_web",0)} 项全网自动抓取）· <b>仅提醒、不入量化</b></div>'
-        f'<div style="margin-top:7px">{chips or "<span style=\'color:#8A93A6\'>无登记事件</span>"}</div>'
+        f'<div style="margin-top:7px">{chips or "<span style=\'color:var(--muted)\'>无登记事件</span>"}</div>'
         f'</div>', unsafe_allow_html=True)
     with st.expander("🛰️ 事件雷达明细（全网自动：IPO 日历 + 经济日历）+ 新闻线索"):
         st.caption("⚠️ 特大/一次性事件（巨型IPO抽流动性、并购、监管判决…）**无法回测、绝不进量化结果**；"
@@ -2425,7 +2346,7 @@ def page_panorama():
                                 (ec_cols[2], "engine_best", "最优倾斜桶")]:
             e = b.get(key)
             if e:
-                c = "#2BE6A8" if e["excess"] > 0 else "#8A93A6"
+                c = T["good"] if e["excess"] > 0 else T["muted"]
                 sub = f"超额{e['excess']:+.1%}·胜率{e['win_rate']:.0%}{'·显著' if e.get('significant') else ''}"
                 col.markdown(stat_card(f"{label}", f"{e['median']:+.1%}", sub, c, tip="状态桶"), unsafe_allow_html=True)
     esr = b.get("earnings_stats")
@@ -2443,7 +2364,7 @@ def page_panorama():
                 pd_now = None
             if pd_now and pd_now.get("actionable"):
                 st.markdown(f'<div class="verdict">📈 <b>财报后漂移(PEAD · 工具唯一通过安慰剂检验的免费信号)</b><br>'
-                            f'{pd_now["verdict"]}<br><span style="color:#8A93A6;font-size:0.82rem">{pd_now["note"]}</span></div>',
+                            f'{pd_now["verdict"]}<br><span style="color:var(--muted);font-size:0.82rem">{pd_now["note"]}</span></div>',
                             unsafe_allow_html=True)
             elif pd_now is not None:
                 st.caption("📈 PEAD：当前不在财报后漂移窗口内（或该票同类财报样本不足）。")
@@ -2460,14 +2381,14 @@ def page_panorama():
             _acc = cal.get("accuracy", float("nan"))
             cc[0].markdown(stat_card("📊 判断准确率", f"{_acc:.0%}" if _acc == _acc else "—",
                                      f"{cal.get('n_judged',0)} 条可判·累计 {cal.get('n_total',0)}",
-                                     "#2BE6A8" if (_acc == _acc and _acc >= 0.5) else "#FFD166", tip="校准"), unsafe_allow_html=True)
-            cc[1].markdown(stat_card("已成熟", f"{cal.get('n_matured',0)}", "走完horizon可评", "#00D4FF"), unsafe_allow_html=True)
+                                     T["good"] if (_acc == _acc and _acc >= 0.5) else T["gold"], tip="校准"), unsafe_allow_html=True)
+            cc[1].markdown(stat_card("已成熟", f"{cal.get('n_matured',0)}", "走完horizon可评", T["info"]), unsafe_allow_html=True)
             if cal.get("n_matured"):
                 rh, pw = cal.get("realized_hit", float("nan")), cal.get("pred_win_rate_mean", float("nan"))
                 cc[2].markdown(stat_card("实现命中率", f"{rh:.0%}", f"引擎预测 {pw:.0%}",
-                                         "#2BE6A8" if (rh == rh and pw == pw and abs(rh - pw) < 0.12) else "#FFD166"), unsafe_allow_html=True)
+                                         T["good"] if (rh == rh and pw == pw and abs(rh - pw) < 0.12) else T["gold"]), unsafe_allow_html=True)
                 cc[3].markdown(stat_card("实现超额(均)", f"{cal.get('realized_excess_mean',float('nan')):+.1%}", f"Brier {cal.get('brier',float('nan')):.2f}",
-                                         "#2BE6A8" if cal.get("realized_excess_mean", 0) > 0 else "#FF5C7A"), unsafe_allow_html=True)
+                                         T["good"] if cal.get("realized_excess_mean", 0) > 0 else T["bad"]), unsafe_allow_html=True)
                 # 逐条近期已成熟信号 + 判断对/错标注
                 _m = ev[ev["matured"] == True].copy() if "matured" in ev.columns else pd.DataFrame()  # noqa: E712
                 if not _m.empty:
@@ -2541,10 +2462,10 @@ def page_panorama():
             st.markdown(f'<div class="verdict">{ec.format_zone_verdict(row, horizon)}</div>', unsafe_allow_html=True)
             zc = st.columns(4)
             rr = row["reward_risk"]
-            zc[0].markdown(stat_card("远期收益中位", f"{row['median']:+.1%}", f"基准 {row['baseline_median']:+.1%}", "#2BE6A8", tip="远期收益"), unsafe_allow_html=True)
-            zc[1].markdown(stat_card("盈亏比", f"{rr:.2f}" if rr == rr else "—", "赚的÷要忍的浮亏", "#7C5CFC", tip="盈亏比"), unsafe_allow_html=True)
-            zc[2].markdown(stat_card("期望值", f"{row['expectancy']:+.1%}", f"胜率 {row['win_rate']:.0%}", "#2BE6A8" if row["expectancy"] > 0 else "#FF5C7A", tip="期望值"), unsafe_allow_html=True)
-            xcol = "#2BE6A8" if (row["ci_low"] > 0 or row["ci_high"] < 0) else "#8A93A6"
+            zc[0].markdown(stat_card("远期收益中位", f"{row['median']:+.1%}", f"基准 {row['baseline_median']:+.1%}", T["good"], tip="远期收益"), unsafe_allow_html=True)
+            zc[1].markdown(stat_card("盈亏比", f"{rr:.2f}" if rr == rr else "—", "赚的÷要忍的浮亏", T["primary"], tip="盈亏比"), unsafe_allow_html=True)
+            zc[2].markdown(stat_card("期望值", f"{row['expectancy']:+.1%}", f"胜率 {row['win_rate']:.0%}", T["good"] if row["expectancy"] > 0 else T["bad"], tip="期望值"), unsafe_allow_html=True)
+            xcol = T["good"] if (row["ci_low"] > 0 or row["ci_high"] < 0) else T["muted"]
             zc[3].markdown(stat_card("比基准多", f"{row['excess_median']:+.1%}", f"N≈{int(row['n_events'])}·中位95%CI[{row['ci_low']:+.0%},{row['ci_high']:+.0%}]", xcol, tip="超额"), unsafe_allow_html=True)
         show = z[["zone", "price_low", "price_high", "n_events", "win_rate", "median", "reward_risk", "expectancy", "excess_median"]].rename(
             columns={"zone": "价位带(回撤)", "price_low": "价位低", "price_high": "价位高", "n_events": "历史次数",
@@ -2562,9 +2483,9 @@ def page_panorama():
             _cur = float(price.iloc[-1]); _poc = float(_vp["poc"])
             _rel = "上方（POC=支撑）" if _cur >= _poc else "下方（POC=压力）"
             cvp = st.columns(3)
-            cvp[0].markdown(stat_card("POC 最高换手价", f"{_poc:.1f}", f"现价在其{_rel}", "#00D4FF", tip="POC"), unsafe_allow_html=True)
-            cvp[1].markdown(stat_card("高换手价值区(70%)", f"{_vp['value_area'][0]:.0f}–{_vp['value_area'][1]:.0f}", "成交最集中带", "#7C5CFC", tip="Volume Profile"), unsafe_allow_html=True)
-            cvp[2].markdown(stat_card("现价 vs POC", f"{_cur:.1f}", f"距POC {(_cur/_poc-1):+.1%}", "#FFD166"), unsafe_allow_html=True)
+            cvp[0].markdown(stat_card("POC 最高换手价", f"{_poc:.1f}", f"现价在其{_rel}", T["info"], tip="POC"), unsafe_allow_html=True)
+            cvp[1].markdown(stat_card("高换手价值区(70%)", f"{_vp['value_area'][0]:.0f}–{_vp['value_area'][1]:.0f}", "成交最集中带", T["primary"], tip="Volume Profile"), unsafe_allow_html=True)
+            cvp[2].markdown(stat_card("现价 vs POC", f"{_cur:.1f}", f"距POC {(_cur/_poc-1):+.1%}", T["gold"]), unsafe_allow_html=True)
             st.plotly_chart(ch.candle_with_levels(_ohlcv_vp, _vp, title=f"{a} K线 + 筹码分布（近1年日线）", logy=True),
                             use_container_width=True, config=ch.CHART_CONFIG)
             st.caption("📖 **左侧紫色横柱=每个价位累计成交量(筹码)**，直接叠在K线上：柱越长该价位换手越密、支撑/压力越强；"
@@ -2618,20 +2539,20 @@ def page_panorama():
         else:
             _abc = st.columns(4)
             _bt = _ab["beta"]
-            _btcol = "#FF9F45" if (_bt == _bt and _bt >= 1.3) else ("#2BE6A8" if (_bt == _bt and _bt < 0.8) else "#7C5CFC")
+            _btcol = T["amber"] if (_bt == _bt and _bt >= 1.3) else (T["good"] if (_bt == _bt and _bt < 0.8) else T["primary"])
             _abc[0].markdown(stat_card(f"β（对 {_bench}）", f"{_bt:.2f}" if _bt == _bt else "—",
                                        f"近1年 {_ab['beta_1y']:.2f}" if _ab['beta_1y'] == _ab['beta_1y'] else "市场敏感度", _btcol, tip="β"), unsafe_allow_html=True)
             _aa = _ab["alpha_ann"]; _aci = _ab["alpha_ci"]; _asig = _ab["alpha_significant"]
-            _acol = ("#2BE6A8" if (_asig and _aa > 0) else ("#FF5C7A" if (_asig and _aa < 0) else "#8A93A6"))
+            _acol = (T["good"] if (_asig and _aa > 0) else (T["bad"] if (_asig and _aa < 0) else T["muted"]))
             _abc[1].markdown(stat_card("α（年化）", f"{_aa:+.1%}" if _aa == _aa else "—",
                                        ("显著" if _asig else "**不显著**(CI跨0)") + f"·CI[{_aci[0]:+.0%},{_aci[1]:+.0%}]", _acol, tip="α"), unsafe_allow_html=True)
             _bd, _bu = _ab["beta_down"], _ab["beta_up"]
-            _bdcol = "#FF5C7A" if (_bd == _bd and _bu == _bu and _bd - _bu > 0.15) else "#7C5CFC"
+            _bdcol = T["bad"] if (_bd == _bd and _bu == _bu and _bd - _bu > 0.15) else T["primary"]
             _abc[2].markdown(stat_card("下行β / 上行β", f"{_bd:.2f} / {_bu:.2f}" if (_bd == _bd and _bu == _bu) else "—",
                                        "跌时vs涨时敏感度", _bdcol, tip="β"), unsafe_allow_html=True)
             _r2 = _ab["r2"]
             _abc[3].markdown(stat_card("R² / 相关", f"{_r2:.0%} / {_ab['corr']:.2f}" if _r2 == _r2 else "—",
-                                       "收益被市场解释的比例", "#00D4FF", tip="R²"), unsafe_allow_html=True)
+                                       "收益被市场解释的比例", T["info"], tip="R²"), unsafe_allow_html=True)
             _ablines = "<br>".join(x for x in [_ab.get("beta_note"), _ab.get("drift_note"),
                                                _ab.get("risk_note"), "🎯 " + _ab.get("alpha_verdict", "")] if x)
             st.markdown(f'<div class="verdict">{_ablines}</div>', unsafe_allow_html=True)
@@ -2645,7 +2566,7 @@ def page_panorama():
         ro = c_regime_overlay(a, "2014-01-01", end)
         ex, ov = ro["exposure"], ro["overlay"]
         st.markdown(stat_card("今日建议暴露", f"{ex['exposure']:.0%}", "满仓的百分比(只降不加杠杆)",
-                              "#2BE6A8" if ex["exposure"] >= 0.8 else ("#FFD166" if ex["exposure"] >= 0.5 else "#FF5C7A")),
+                              T["good"] if ex["exposure"] >= 0.8 else (T["gold"] if ex["exposure"] >= 0.5 else T["bad"])),
                     unsafe_allow_html=True)
         if ex["factors"]:
             fdf = pd.DataFrame([{"状态因子": f["name"], "当前": f["state"], "暴露乘子": f"×{f['mult']:.2f}"} for f in ex["factors"]])
@@ -2654,12 +2575,12 @@ def page_panorama():
         st.markdown("**波动目标 overlay vs 闭眼持有（年化 / 夏普 / 回撤 · 只降不加杠杆）**")
         oc = st.columns(4)
         o_, hh_ = ov["overlay"], ov["hold"]
-        oc[0].markdown(stat_card("overlay 年化", f"{o_['cagr']:+.0%}", f"持有 {hh_['cagr']:+.0%}", "#7C5CFC"), unsafe_allow_html=True)
+        oc[0].markdown(stat_card("overlay 年化", f"{o_['cagr']:+.0%}", f"持有 {hh_['cagr']:+.0%}", T["primary"]), unsafe_allow_html=True)
         oc[1].markdown(stat_card("overlay 夏普", f"{o_['sharpe']:.2f}", f"持有 {hh_['sharpe']:.2f}",
-                                 "#2BE6A8" if o_["sharpe"] >= hh_["sharpe"] else "#8A93A6", tip="Sharpe"), unsafe_allow_html=True)
+                                 T["good"] if o_["sharpe"] >= hh_["sharpe"] else T["muted"], tip="Sharpe"), unsafe_allow_html=True)
         oc[2].markdown(stat_card("overlay 最大回撤", f"{o_['maxdd']:.0%}", f"持有 {hh_['maxdd']:.0%}",
-                                 "#2BE6A8" if o_["maxdd"] >= hh_["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-        oc[3].markdown(stat_card("平均暴露", f"{ov['avg_exposure']:.0%}", f"目标波动 {ov['target_vol']:.0%}", "#00D4FF"), unsafe_allow_html=True)
+                                 T["good"] if o_["maxdd"] >= hh_["maxdd"] else T["bad"], tip="回撤"), unsafe_allow_html=True)
+        oc[3].markdown(stat_card("平均暴露", f"{ov['avg_exposure']:.0%}", f"目标波动 {ov['target_vol']:.0%}", T["info"]), unsafe_allow_html=True)
         st.plotly_chart(ch.equity_compare(ov["equity"], title="波动目标 overlay vs 持有"), use_container_width=True, config=ch.CHART_CONFIG)
         st.caption("📖 波动目标=按近期波动反比缩放仓位(平静加、动荡减，上限不加杠杆)。常以**更低回撤换更稳夏普**，"
                    "年化可能略低——这是风控 edge，不是择时预测。")
@@ -2702,13 +2623,13 @@ def page_fragility():
     o, h = stab["overlay"], stab["hold"]
     if o:
         mc = st.columns(5)
-        mc[0].markdown(stat_card("年化", f"{o['cagr']:+.0%}", f"持有 {h['cagr']:+.0%}", "#7C5CFC"), unsafe_allow_html=True)
-        mc[1].markdown(stat_card("波动", f"{o['vol']:.0%}", f"持有 {h['vol']:.0%}", "#00D4FF", tip="波动"), unsafe_allow_html=True)
+        mc[0].markdown(stat_card("年化", f"{o['cagr']:+.0%}", f"持有 {h['cagr']:+.0%}", T["primary"]), unsafe_allow_html=True)
+        mc[1].markdown(stat_card("波动", f"{o['vol']:.0%}", f"持有 {h['vol']:.0%}", T["info"], tip="波动"), unsafe_allow_html=True)
         mc[2].markdown(stat_card("最大回撤", f"{o['maxdd']:.0%}", f"持有 {h['maxdd']:.0%}",
-                                 "#2BE6A8" if o["maxdd"] >= h["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-        mc[3].markdown(stat_card("最差年", f"{o['worst_year']:+.0%}", f"持有 {h['worst_year']:+.0%}", "#FFD166"), unsafe_allow_html=True)
-        mc[4].markdown(stat_card("滚动1年正收益", f"{o['pos_roll1y']:.0%}", "历史滚动(回看)1年收益为正的占比", "#2BE6A8"), unsafe_allow_html=True)
-        st.line_chart(stab["equity"], color=["#2BE6A8", "#8A93A6"])
+                                 T["good"] if o["maxdd"] >= h["maxdd"] else T["bad"], tip="回撤"), unsafe_allow_html=True)
+        mc[3].markdown(stat_card("最差年", f"{o['worst_year']:+.0%}", f"持有 {h['worst_year']:+.0%}", T["gold"]), unsafe_allow_html=True)
+        mc[4].markdown(stat_card("滚动1年正收益", f"{o['pos_roll1y']:.0%}", "历史滚动(回看)1年收益为正的占比", T["good"]), unsafe_allow_html=True)
+        st.line_chart(stab["equity"], color=[T["good"], T["muted"]])
         st.caption(f"📖 {_uni} · 目标波动{_tv:.0%}：绿=稳定配置(风险叠加)，灰=闭眼持有。"
                    f"最长水下 {o['longest_underwater_m']} 个月、{o['pos_months']:.0%} 的月份为正。"
                    "调低目标波动→更稳、回撤更浅、收益略低。**这是为稳定收益设计的核心配置**。非投资建议。")
@@ -2723,13 +2644,13 @@ def page_fragility():
     if not cur.get("available"):
         st.warning("数据不足，无法计算。"); return
     cc = st.columns(4)
-    col = "#FF5C7A" if cur["fragile"] else "#2BE6A8"
+    col = T["bad"] if cur["fragile"] else T["good"]
     cc[0].markdown(stat_card("当前状态", cur["light"], f"截至 {cur['date']}", col), unsafe_allow_html=True)
-    cc[1].markdown(stat_card("市场宽度", f"{cur['breadth']:.0%}", "个股在自身200线上方", "#00D4FF"), unsafe_allow_html=True)
+    cc[1].markdown(stat_card("市场宽度", f"{cur['breadth']:.0%}", "个股在自身200线上方", T["info"]), unsafe_allow_html=True)
     cc[2].markdown(stat_card("宽度历史分位", f"{cur['pctile']:.0%}", f"<{cur['thresh']:.0%} 触发预警", col, tip="分位"), unsafe_allow_html=True)
     e63 = ev.get(63, {})
     cc[3].markdown(stat_card("信号预警力", f"{e63.get('lift', float('nan')):.2f}x" if e63.get("lift") == e63.get("lift") else "—",
-                             f"未来63日大跌概率(误报{e63.get('fp', 0):.0%})", "#7C5CFC", tip="lift"), unsafe_allow_html=True)
+                             f"未来63日大跌概率(误报{e63.get('fp', 0):.0%})", T["primary"], tip="lift"), unsafe_allow_html=True)
     st.markdown(f'<div class="verdict">{"🔴 宽度恶化已触发——历史上未来3个月大跌概率约为平时的 "+format(e63.get("lift",0),".1f")+" 倍，建议系统性降仓（注意：约 60% 是假警报，这是降仓开关非崩盘预言）。" if cur["fragile"] else "🟢 市场宽度健康，无脆弱性预警——不必因此降仓。"}</div>',
                 unsafe_allow_html=True)
     # 实测预警力表
@@ -2746,7 +2667,7 @@ def page_fragility():
     fr_df = fzz["frame"].dropna()
     if not fr_df.empty:
         st.markdown("##### 宽度历史分位走势（越低越脆弱）")
-        st.line_chart(fr_df[["pctile"]].rename(columns={"pctile": "宽度分位"}), color="#FF9F45")
+        st.line_chart(fr_df[["pctile"]].rename(columns={"pctile": "宽度分位"}), color=T["amber"])
 
     # 等 / 追 指南
     st.divider()
@@ -2758,8 +2679,8 @@ def page_fragility():
     cur_dd = float(px2.iloc[-1] / hi.iloc[-1] - 1.0)
     g = fg.wait_or_chase(cur_dd, fragile_now=cur["fragile"], is_index=(a2 in ("SPY", "QQQ", "DIA", "IWM")))
     gc = st.columns(3)
-    gc[0].markdown(stat_card("现价距1年高", f"{cur_dd:+.1%}", a2, "#FFD166"), unsafe_allow_html=True)
-    gc[1].markdown(stat_card("操作", g["action"], g["headline"], "#FF5C7A" if g["fragile"] else "#2BE6A8"), unsafe_allow_html=True)
+    gc[0].markdown(stat_card("现价距1年高", f"{cur_dd:+.1%}", a2, T["gold"]), unsafe_allow_html=True)
+    gc[1].markdown(stat_card("操作", g["action"], g["headline"], T["bad"] if g["fragile"] else T["good"]), unsafe_allow_html=True)
     gc[2].markdown(stat_card("市场环境", cur["light"], f"宽度分位 {cur['pctile']:.0%}", col), unsafe_allow_html=True)
     st.markdown(f'<div class="verdict">{g["detail"]}</div>', unsafe_allow_html=True)
     st.caption("📖 回测结论：高位附近'等浅回调'历史上更亏(回调70%不来)→应追/分批；唯一该'等'的是深回撤区(指数−20~30%有edge)；脆弱性触发→一切偏防守。非投资建议。")
@@ -2775,14 +2696,14 @@ def page_fragility():
     s_, h_ = bt["strategy"], bt["hold"]
     oc = st.columns(4)
     oc[0].markdown(stat_card("夏普", f"{s_['sharpe']:.2f}", f"持有 {h_['sharpe']:.2f}",
-                             "#2BE6A8" if s_["sharpe"] >= h_["sharpe"] else "#FFD166", tip="Sharpe"), unsafe_allow_html=True)
+                             T["good"] if s_["sharpe"] >= h_["sharpe"] else T["gold"], tip="Sharpe"), unsafe_allow_html=True)
     oc[1].markdown(stat_card("最大回撤", f"{s_['maxdd']:.0%}", f"持有 {h_['maxdd']:.0%}",
-                             "#2BE6A8" if s_["maxdd"] >= h_["maxdd"] else "#FF5C7A", tip="回撤"), unsafe_allow_html=True)
-    oc[2].markdown(stat_card("年化", f"{s_['cagr']:+.0%}", f"持有 {h_['cagr']:+.0%}", "#7C5CFC"), unsafe_allow_html=True)
-    oc[3].markdown(stat_card("当前建议仓位", f"{bt['current_position']:.0%}", f"平均 {bt['avg_position']:.0%}", "#00D4FF"), unsafe_allow_html=True)
+                             T["good"] if s_["maxdd"] >= h_["maxdd"] else T["bad"], tip="回撤"), unsafe_allow_html=True)
+    oc[2].markdown(stat_card("年化", f"{s_['cagr']:+.0%}", f"持有 {h_['cagr']:+.0%}", T["primary"]), unsafe_allow_html=True)
+    oc[3].markdown(stat_card("当前建议仓位", f"{bt['current_position']:.0%}", f"平均 {bt['avg_position']:.0%}", T["info"]), unsafe_allow_html=True)
     eq = bt["equity"]
     if eq is not None and not eq.empty:
-        st.line_chart(eq, color=["#2BE6A8", "#8A93A6"])
+        st.line_chart(eq, color=[T["good"], T["muted"]])
     from analysis import overlay as _ov
     st.markdown(f'<div class="verdict">{_ov.verdict(bt)}</div>', unsafe_allow_html=True)
     st.caption(f"🧭 板块适用性：{_ov.sector_effectiveness(a3)}")
@@ -2805,7 +2726,7 @@ def page_fragility():
                              "卡玛": f"{m['calmar']:.2f}", "最大回撤": f"{m['maxdd']:.0%}"})
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         if not pbt["equity"].empty:
-            st.line_chart(pbt["equity"], color=["#2BE6A8", "#8A93A6", "#7C5CFC"][:pbt["equity"].shape[1]])
+            st.line_chart(pbt["equity"], color=[T["good"], T["muted"], T["primary"]][:pbt["equity"].shape[1]])
         ov_m, ho_m = pbt["overlay"], pbt["hold"]
         win = (ov_m["sharpe"] >= ho_m["sharpe"] and ov_m["maxdd"] >= ho_m["maxdd"])
         st.markdown(f'<div class="verdict">{"✅" if win else "🟡"} 产品系统 vs 闭眼持有：'
@@ -2828,7 +2749,7 @@ def page_fragility():
         if len(rs_o) > 10:
             rsdf = pd.DataFrame({"叠加": rs_o, "持有": rs_h}).dropna()
             st.markdown("**📈 滚动 1 年夏普**（监控 edge 是否衰减——叠加线应多数时间≥持有）")
-            st.line_chart(rsdf, color=["#2BE6A8", "#8A93A6"])
+            st.line_chart(rsdf, color=[T["good"], T["muted"]])
     st.caption("📖 这是把工具的可部署规则用到整个聚焦组合的真实回测。结论：风险调整指标(夏普/索提诺/卡玛/回撤)优于持有与SPY。非投资建议。")
 
 def page_industry():
@@ -2848,14 +2769,14 @@ def page_industry():
     st.markdown(f'<div class="verdict">🧭 <b>{sec} 当前动向</b>（{d["n"]}只·截至{d["asof"]}）：{ind.sector_state_label(d)}</div>',
                 unsafe_allow_html=True)
     c = st.columns(4)
-    _bc = "#FF5C7A" if (d["breadth_pctile"] == d["breadth_pctile"] and d["breadth_pctile"] < 0.2) else "#2BE6A8"
+    _bc = T["bad"] if (d["breadth_pctile"] == d["breadth_pctile"] and d["breadth_pctile"] < 0.2) else T["good"]
     c[0].markdown(stat_card("宽度(在200线上)", f"{d['breadth']:.0%}",
                             f"历史分位 {d['breadth_pctile']:.0%}" if d["breadth_pctile"] == d["breadth_pctile"] else "—", _bc, tip="脆弱"), unsafe_allow_html=True)
-    _rc = "#2BE6A8" if d["rs_252"] > 0 else "#FF5C7A"
+    _rc = T["good"] if d["rs_252"] > 0 else T["bad"]
     c[1].markdown(stat_card("相对大盘(近1年)", f"{d['rs_252']:+.0%}", f"近3月 {d['rs_63']:+.0%}", _rc), unsafe_allow_html=True)
     c[2].markdown(stat_card("内部相关性", f"{d['corr']:.2f}" if d["corr"] == d["corr"] else "—",
-                            "高=β主导/低=个股分化", "#00D4FF", tip="相关"), unsafe_allow_html=True)
-    c[3].markdown(stat_card("成分分散度(近3月)", f"{d['dispersion']:.0%}", "越大=分化越剧烈", "#7C5CFC"), unsafe_allow_html=True)
+                            "高=β主导/低=个股分化", T["info"], tip="相关"), unsafe_allow_html=True)
+    c[3].markdown(stat_card("成分分散度(近3月)", f"{d['dispersion']:.0%}", "越大=分化越剧烈", T["primary"]), unsafe_allow_html=True)
 
     lc = st.columns(2)
     lc[0].markdown("**🏆 龙头(近3月)**：" + "　".join(f"{k} {v:+.0%}" for k, v in d["leaders"]))
@@ -2876,11 +2797,11 @@ def page_industry():
     st.markdown("##### 📈📉 板块情景分布（历史类比 · 分布非预测）")
     sc = ind.sector_scenarios(d)
     if sc:
-        _sc_html = "".join(f'<div style="color:#D2D8E3;font-size:0.85rem;line-height:1.6">{l}</div>' for l in sc["lines"])
+        _sc_html = "".join(f'<div style="color:var(--text);font-size:0.85rem;line-height:1.6">{l}</div>' for l in sc["lines"])
         st.markdown(
-            f'<div style="border-radius:12px;padding:12px 16px;background:#7C5CFC14;border:1px solid #7C5CFC44;border-left:5px solid #7C5CFC">'
-            f'<div style="color:#C7CEDA;font-size:0.84rem;margin-bottom:4px">{sc["headline"]}</div>{_sc_html}'
-            f'<div style="color:#9aa3b2;font-size:0.84rem;margin-top:5px">📏 {sc["price_range"]}（板块等权指数口径）</div></div>',
+            f'<div style="border-radius:12px;padding:12px 16px;background:var(--primary-weak);border:1px solid var(--primary-border);border-left:5px solid var(--primary)">'
+            f'<div style="color:var(--text);font-size:0.84rem;margin-bottom:4px">{sc["headline"]}</div>{_sc_html}'
+            f'<div style="color:var(--muted);font-size:0.84rem;margin-top:5px">📏 {sc["price_range"]}（板块等权指数口径）</div></div>',
             unsafe_allow_html=True)
         st.caption("📖 " + sc["caveat"])
     else:
@@ -2949,7 +2870,7 @@ def page_position_card():
     # —— 今日四档暴露(含🔥杠杆进取) ——
     st.markdown("##### 📊 今日建议暴露（v3 连续定仓·已验证；非投资建议）")
     ec = st.columns(4)
-    _pcol = {"conservative": "#00D4FF", "moderate": "#2BE6A8", "aggressive": "#FF9F45", "leveraged": "#FF5C7A"}
+    _pcol = {"conservative": T["info"], "moderate": T["good"], "aggressive": T["amber"], "leveraged": T["bad"]}
     for i, k in enumerate(["conservative", "moderate", "aggressive", "leveraged"]):
         ev = g["exposure"][k]
         _lev = f"·上限{ev['max_lev']:g}×" if ev.get("leveraged") else ""
@@ -2968,7 +2889,7 @@ def page_position_card():
         st.markdown("##### 📈 历史暴露轨迹（中性档·复核引擎在崩盘年是否真的减仓）")
         norm = (hist["price"] / hist["price"].iloc[0])
         chart_df = pd.DataFrame({"价格(归一)": norm, "建议暴露(0-1)": hist["exposure"]})
-        st.line_chart(chart_df, color=["#8A93A6", "#2BE6A8"])
+        st.line_chart(chart_df, color=[T["muted"], T["good"]])
         st.caption("绿线=v3 建议暴露(0-1)，灰线=价格归一。崩盘段绿线应明显下沉(自动减仓)，平时贴近满仓。")
     st.write("")
 

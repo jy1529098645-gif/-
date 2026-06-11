@@ -105,27 +105,27 @@ def term(key: str, label: str | None = None) -> str:
 
 
 def inject_css() -> str:
-    """悬浮提示样式（在 app.py 注入一次）。"""
+    """悬浮提示样式（在 app.py 注入一次）。配色用主题 CSS 变量，明暗自适应。"""
     return """
     <style>
     .qterm {
-        border-bottom: 1px dashed rgba(0,212,255,0.7);
-        cursor: help; position: relative; color: #BFD8FF;
+        border-bottom: 1px dashed var(--primary-border);
+        cursor: help; position: relative; color: var(--primary);
     }
     .qterm:hover::after {
         content: attr(data-tip);
         position: absolute; left: 0; top: 145%; z-index: 9999;
         width: max-content; max-width: 340px;
-        background: #0F1422;
-        color: #E6E9EF; border: 1px solid rgba(124,92,252,0.5);
+        background: var(--card);
+        color: var(--text); border: 1px solid var(--border);
         border-radius: 10px; padding: 10px 13px; font-size: 0.82rem;
         font-weight: 400; line-height: 1.55; letter-spacing: 0;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5); white-space: normal;
+        box-shadow: var(--shadow); white-space: normal;
         text-transform: none;
     }
     .qterm:hover::before {
         content: ""; position: absolute; left: 14px; top: 132%; z-index: 9999;
-        border: 6px solid transparent; border-bottom-color: rgba(124,92,252,0.5);
+        border: 6px solid transparent; border-bottom-color: var(--border);
     }
     /* 移动端：提示框不超出视口宽度 */
     @media (max-width: 768px) {

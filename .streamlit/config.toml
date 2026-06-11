@@ -1,9 +1,10 @@
 [theme]
+# shadcn/ui (slate) 暗色默认；运行时可在侧边栏切换明/暗（见 frontend/theme.py）。
 base = "dark"
-primaryColor = "#7C5CFC"
-backgroundColor = "#0B0E14"
-secondaryBackgroundColor = "#141925"
-textColor = "#E6E9EF"
+primaryColor = "#6366f1"
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#e2e8f0"
 font = "sans serif"
 
 [server]

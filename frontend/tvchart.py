@@ -9,7 +9,15 @@ from __future__ import annotations
 import pandas as pd
 from streamlit_lightweight_charts import renderLightweightCharts
 
-_UP, _DN = "#2BE6A8", "#FF5C7A"
+from frontend import theme as _theme
+
+
+def _up() -> str:
+    return _theme.tokens()["candle_up"]
+
+
+def _dn() -> str:
+    return _theme.tokens()["candle_down"]
 
 # ---------------------------------------------------------------------------
 # 周期切换辅助（纯 pandas，不引入 streamlit）：时间范围 / K线粒度 / 标记吸附
@@ -74,15 +82,18 @@ def _candles(ohlcv: pd.DataFrame) -> list[dict]:
 def _volume(ohlcv: pd.DataFrame) -> list[dict]:
     df = ohlcv.dropna(subset=["volume"])
     up = (df["close"] >= df["open"]).to_numpy()
+    tk = _theme.tokens()
+    vup, vdn = tk["vol_up"], tk["vol_down"]
     return [{"time": d.strftime("%Y-%m-%d"), "value": float(v),
-             "color": ("rgba(43,230,168,0.5)" if u else "rgba(255,92,122,0.5)")}
+             "color": (vup if u else vdn)}
             for d, v, u in zip(df.index, df["volume"], up)]
 
 
 def _markers(trades: pd.DataFrame) -> list[dict]:
     m = []
+    up, dn = _up(), _dn()
     for _, t in trades.iterrows():
-        col = _UP if t["return"] > 0 else _DN
+        col = up if t["return"] > 0 else dn
         m.append({"time": pd.Timestamp(t["entry_date"]).strftime("%Y-%m-%d"),
                   "position": "belowBar", "color": col, "shape": "arrowUp", "text": "买"})
         m.append({"time": pd.Timestamp(t["exit_date"]).strftime("%Y-%m-%d"),
@@ -92,27 +103,31 @@ def _markers(trades: pd.DataFrame) -> list[dict]:
 
 
 def _chart_opts(height: int, log: bool = False) -> dict:
-    """统一的 TradingView 图表外观（暗色 + 磁吸十字光标 + 缩放/平移）。"""
+    """统一的 TradingView 图表外观（跟随主题 + 磁吸十字光标 + 缩放/平移）。"""
+    tk = _theme.tokens()
     return {
         "height": height,
-        "layout": {"background": {"type": "solid", "color": "rgba(0,0,0,0)"}, "textColor": "#E6E9EF",
+        "layout": {"background": {"type": "solid", "color": "rgba(0,0,0,0)"}, "textColor": tk["text"],
                    "fontFamily": "Inter, Segoe UI, sans-serif"},
-        "grid": {"vertLines": {"color": "rgba(255,255,255,0.06)"}, "horzLines": {"color": "rgba(255,255,255,0.06)"}},
+        "grid": {"vertLines": {"color": tk["grid"]}, "horzLines": {"color": tk["grid"]}},
         "crosshair": {"mode": 1},  # 1=磁吸十字光标（TradingView 手感）
-        "timeScale": {"timeVisible": True, "rightOffset": 6, "borderColor": "rgba(255,255,255,0.2)"},
-        "rightPriceScale": {"borderColor": "rgba(255,255,255,0.2)", "mode": 1 if log else 0},  # 1=对数
+        "timeScale": {"timeVisible": True, "rightOffset": 6, "borderColor": tk["border"]},
+        "rightPriceScale": {"borderColor": tk["border"], "mode": 1 if log else 0},  # 1=对数
     }
 
 
 def _price_lines(price_lines: list[dict]) -> list[dict]:
-    return [{"price": float(p["price"]), "color": p.get("color", "#00D4FF"), "lineWidth": 1,
+    _info = _theme.tokens()["info"]
+    return [{"price": float(p["price"]), "color": p.get("color", _info), "lineWidth": 1,
              "lineStyle": 2, "axisLabelVisible": True, "title": p.get("title", "")} for p in price_lines]
 
 
 def tv_line(series: pd.Series, markers: list[dict] | None = None, price_lines: list[dict] | None = None,
-            key: str = "tvl", height: int = 460, color: str = "#7C5CFC", log: bool = True) -> None:
+            key: str = "tvl", height: int = 460, color: str | None = None, log: bool = True) -> None:
     """渲染 TradingView 原生折线图（事件时间线等），支持事件标记 + 横向价位线。"""
     s = series.dropna()
+    if color is None:
+        color = _theme.tokens()["primary"]
     data = [{"time": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in s.items()]
     line = {"type": "Line", "data": data,
             "options": {"color": color, "lineWidth": 2, "priceLineVisible": False, "lastValueVisible": True}}
@@ -128,17 +143,18 @@ def tv_candles(ohlcv: pd.DataFrame, trades: pd.DataFrame | None = None,
                height: int = 540, log: bool = False) -> None:
     """渲染 TradingView 原生 K 线 + 成交量副图 + 买卖箭头 + 横向价位线（POC 等）。"""
     chart = _chart_opts(height, log)
+    _u, _d, _info = _up(), _dn(), _theme.tokens()["info"]
     candle = {
         "type": "Candlestick",
         "data": _candles(ohlcv),
-        "options": {"upColor": _UP, "downColor": _DN, "wickUpColor": _UP, "wickDownColor": _DN,
+        "options": {"upColor": _u, "downColor": _d, "wickUpColor": _u, "wickDownColor": _d,
                     "borderVisible": False},
     }
     if trades is not None and len(trades):
         candle["markers"] = _markers(trades)
     if price_lines:
         candle["priceLines"] = [
-            {"price": float(p["price"]), "color": p.get("color", "#00D4FF"), "lineWidth": 1,
+            {"price": float(p["price"]), "color": p.get("color", _info), "lineWidth": 1,
              "lineStyle": 2, "axisLabelVisible": True, "title": p.get("title", "")}
             for p in price_lines
         ]
