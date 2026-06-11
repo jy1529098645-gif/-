@@ -841,7 +841,10 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
     _rsi_s = _sg.rsi(px, int(rsi_window))
     rsi_now = float(_rsi_s.iloc[-1]) if _rsi_s.notna().iloc[-1] else float("nan")
     trend_up = bool(ma200 == ma200 and cur > ma200)
-    fear_pullback = bool(trend_up and not falling_knife and rsi_now == rsi_now and rsi_now < 40
+    # 关键：fear_pullback 必须服从 regime——飞刀/离场红灯时强制为 False，否则前端会同时弹
+    # "🔴暂不建仓"评级 和 "✨优质回踩·可加码"绿条，自相矛盾（市场宽度恶化触发的红灯尤其会撞上）。
+    fear_pullback = bool(trend_up and not falling_knife and not warn_red
+                         and rsi_now == rsi_now and rsi_now < 40
                          and vix_pctile is not None and vix_pctile == vix_pctile and vix_pctile > 0.70)
 
     # 统计'最佳档'降级为参考：单票常 N独立=1、且趋势股最佳档在高点(锚定价>现价)，是噪声非买点。
@@ -881,10 +884,10 @@ def entry_confluence(ohlcv: pd.DataFrame, asset: str = "SPY", best_entry: dict |
         note = (f"⚠️ 当前是**离场红灯**（{warn_label or '破位/宽度恶化'}）——确认趋势坏了，别建新仓。"
                 "入场和离场同一 regime：等站回200线、宽度转健康再说（与下方撤离口径一致）。")
     elif fear_pullback:
-        grade, gtag = "优质回踩（趋势+恐慌折价）·可加码分批", "🟢"
+        grade, gtag = "优质回踩（趋势+恐慌折价）·分批进", "🟢"
         note = (f"✅ **优质回踩**：趋势健康(>200线) + RSI回踩{rsi_now:.0f}(<40) + VIX处历史高分位(恐慌折价)。"
                 "回测验证(含两段样本外)：这种'趋势内逢恐慌回踩'进场**历史胜率/收益均高于普通健康进场**"
-                "(约+3~5pt胜率)——是相对更准的入场窗口，可在支撑处**积极些分批**(仍非保证)。")
+                "(约+3~5pt胜率)——是相对更准的入场窗口，**在支撑处分批进**（恐慌期波动大，小步分批、别一次性梭哈）。")
     elif at_support_now:
         _names = "、".join(s["label"] for s in near_now)
         grade, gtag = "现价即在支撑共振区·可分批", "🟢"

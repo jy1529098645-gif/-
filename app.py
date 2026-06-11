@@ -2203,7 +2203,7 @@ def page_panorama():
         if _efc.get("fear_pullback"):
             st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_efc.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                        f"{(_efc.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证胜率约 67%→72%(两段样本外均胜)，"
-                       f"相对更准的入场窗口，可比平时**积极些分批**。")
+                       f"相对更准的入场窗口，相对更准的入场窗口·**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
         if _efc.get("at_support_now") and _near:
             st.markdown("**现价即在支撑共振区**：" + "".join(
                 f'<span style="display:inline-block;margin:2px 5px 2px 0;padding:2px 9px;border-radius:6px;'
@@ -3102,7 +3102,7 @@ def page_position_card():
             if _ef.get("fear_pullback"):
                 st.success(f"✨ **优质回踩窗口**（趋势健康 + RSI {_ef.get('rsi', float('nan')):.0f} 回踩 + VIX 处 "
                            f"{(_ef.get('vix_pctile') or 0)*100:.0f}% 高分位）——回测验证：这种'趋势内逢恐慌回踩'进场"
-                           f"**历史胜率约 67%→72%**(两段样本外均胜)，是相对更准的入场窗口，可比平时**积极些分批**。")
+                           f"**历史胜率约 67%→72%**(两段样本外均胜)，是相对更准的入场窗口，相对更准的入场窗口·**在支撑处分批进**（恐慌期波动大、小步分批别梭哈）。")
             # 可执行回踩分批区（现价下方最近支撑）—— 这是真正能用的"在哪买"
             if _ef.get("at_support_now") and _near:
                 st.markdown("**现价即在支撑共振区**：" + "".join(
