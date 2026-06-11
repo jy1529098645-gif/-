@@ -554,8 +554,39 @@ def c_entry_confluence(asset: str, start: str, end: str,
                                warn_label=warn_label, vix_pctile=vix_pctile)
 
 @st.cache_data(show_spinner=False, ttl=1800)
+def c_stock_ab(ticker: str, end: str):
+    """单票按工具策略(v3.1中性暴露)回测的 年化/夏普/回撤 + 对SPY的 alpha/beta(快速OLS·无bootstrap)。
+    供建仓扫描多列展示；点估口径(扫描概览用)，要带CI的严谨α见 quant_edge.alpha_beta。"""
+    import numpy as np
+    from data import loader
+    from analysis import position_guidance as pg
+    try:
+        px = loader.load_ohlcv(ticker, "2012-01-01", end)["close"].dropna()
+        spy = loader.load_ohlcv("SPY", "2012-01-01", end)["close"].dropna()
+        if len(px) < 300:
+            return {}
+        ret = px.pct_change(); mc = pg.PROFILES["moderate"]
+        expo = pg._exposure_series(px, mc["tvol"], mc["max_lev"], floor=mc["floor"], slope_floor=mc["slope_floor"])
+        pos = expo.shift(1)
+        sr = (pos * ret - pos.diff().abs().fillna(0) * 0.0010).dropna()
+        idx = sr.index.intersection(spy.pct_change().dropna().index)
+        s = sr.reindex(idx).fillna(0.0); m = spy.pct_change().reindex(idx).fillna(0.0)
+        hr = ret.reindex(idx).fillna(0.0)
+        var_m = float(np.var(m))
+        beta = float(np.cov(s, m)[0, 1] / var_m) if var_m > 0 else float("nan")
+        alpha_ann = float((s.mean() - beta * m.mean()) * 252)
+        def _cagr(r):
+            n = len(r); return ((1 + r).prod() ** (252 / n) - 1.0) if n else float("nan")
+        eq = (1 + s).cumprod(); mdd = float((eq / eq.cummax() - 1.0).min())
+        sharpe = float(s.mean() / s.std() * np.sqrt(252)) if s.std() > 0 else float("nan")
+        return {"cagr": _cagr(s), "cagr_hold": _cagr(hr), "sharpe": sharpe,
+                "maxdd": mdd, "alpha": alpha_ann, "beta": beta}
+    except Exception:  # noqa: BLE001
+        return {}
+
+@st.cache_data(show_spinner=False, ttl=1800)
 def c_build_scan(tickers: tuple, end: str):
-    """全市场建仓扫描：对一批票批量算 入场评级(entry_confluence) + 离场预警 + 关键状态。
+    """全市场建仓扫描：对一批票批量算 入场评级(entry_confluence) + 离场预警 + 工具策略年化/α/β + 关键状态。
     入场用 best_entry={'has_zone':False} 跳过 bootstrap(扫描不需统计锚定价·已降级为噪声)。"""
     from data import loader
     from analysis import decision as dec
@@ -585,11 +616,16 @@ def c_build_scan(tickers: tuple, end: str):
             sup_txt = ("现价在支撑共振区" if ef.get("at_support_now")
                        else (f"{sup['label']} {sup['price']:.1f}（{sup['dist_pct']:+.0%}）" if sup else "—"))
             _wn = ef.get("win_now")
+            _ab = c_stock_ab(tk, end)
             rows.append({
                 "票": tk, "_tag": ef["grade_tag"], "评级": f'{ef["grade_tag"]} {ef["grade"]}',
                 "回调": cur / hi - 1.0, "RSI": ef.get("rsi", float("nan")),
                 "距200线": (cur / ma200 - 1.0) if ma200 == ma200 and ma200 else float("nan"),
                 "现价买胜率": (_wn * 100 if _wn == _wn else float("nan")),
+                "策略年化": (_ab.get("cagr", float("nan")) * 100 if _ab.get("cagr") == _ab.get("cagr") else float("nan")),
+                "αvsSPY": (_ab.get("alpha", float("nan")) * 100 if _ab.get("alpha") == _ab.get("alpha") else float("nan")),
+                "β": _ab.get("beta", float("nan")), "夏普": _ab.get("sharpe", float("nan")),
+                "策略回撤": (_ab.get("maxdd", float("nan")) * 100 if _ab.get("maxdd") == _ab.get("maxdd") else float("nan")),
                 "离场": ew["level"], "现价": cur, "回踩支撑位/状态": sup_txt,
                 "_fear": bool(ef.get("fear_pullback")), "_atsup": bool(ef.get("at_support_now")),
             })
@@ -3321,14 +3357,17 @@ def page_build_scan():
     green = df[df["_tag"].isin(["🟢", "✨"])].sort_values("回调")
     amber = df[df["_tag"] == "🟡"].sort_values("回调")
     red = df[df["_tag"] == "🔴"].sort_values("回调")
-    cols = ["票", "评级", "回调", "RSI", "距200线", "现价买胜率", "离场", "回踩支撑位/状态"]
+    cols = ["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "RSI", "离场", "回踩支撑位/状态"]
     cfg = {"回调": st.column_config.NumberColumn(format="%+.0f%%"),
-           "距200线": st.column_config.NumberColumn(format="%+.0f%%"),
-           "现价买胜率": st.column_config.NumberColumn(format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(幸存者偏差)·非保证"),
+           "现价买胜率": st.column_config.NumberColumn("现价买胜率", format="%.0f%%", help="本票历史上在该回撤深度+趋势健康时半年后为正占比·牛股普遍偏高(幸存者偏差)·非保证"),
+           "策略年化": st.column_config.NumberColumn("策略年化", format="%+.0f%%", help="按工具策略(v3.1中性暴露)2012→今的年化(CAGR)·非持有年化"),
+           "αvsSPY": st.column_config.NumberColumn("α vsSPY", format="%+.0f%%", help="工具策略对SPY的年化超额α(OLS点估)·多因这些是高β成长股+降beta保留"),
+           "β": st.column_config.NumberColumn("β", format="%.2f", help="工具策略对SPY的敏感度(减仓后通常<1)"),
+           "夏普": st.column_config.NumberColumn("夏普", format="%.2f"),
            "RSI": st.column_config.NumberColumn(format="%.0f")}
-    # %列后端是小数，转百分显示
+    # 回调是小数→转百分显示（年化/α/胜率在后端已×100）
     def _pct(d):
-        d = d.copy(); d["回调"] = d["回调"] * 100; d["距200线"] = d["距200线"] * 100; return d
+        d = d.copy(); d["回调"] = d["回调"] * 100; return d
 
     def _show(title, d, note):
         if d.empty:
@@ -3340,7 +3379,8 @@ def page_build_scan():
 
     if flt == "全部" or "可建仓" in flt:
         _show("✅ 现在就到「可建仓支撑」（🟢 可分批 / ✨ 优质回踩）", green,
-              "✨优质回踩=趋势健康+RSI回踩+VIX高分位（回测胜率更高）；🟢=现价在支撑共振区。**分批进、别梭哈**（平均买在比局部底高 5~7% 处）。")
+              "✨优质回踩=趋势健康+RSI回踩+VIX高分位（回测胜率更高）；🟢=现价在支撑共振区。**分批进、别梭哈**（平均买在比局部底高 5~7% 处）。"
+              "策略年化/α/β=按工具暴露规则回测；α多来自票本身质量+降beta保留，非择时超额。")
     if flt == "全部" or "等回踩" in flt:
         _show("🟡 趋势健康、但还没回踩到支撑（等回踩或小仓）", amber,
               "趋势没破，但现价不在支撑上——回踩到「支撑位」列的价再分批，或小仓参与。")
@@ -3348,10 +3388,60 @@ def page_build_scan():
         _show("🔴 破位飞刀·观望（跌得多 ≠ 能买）", red,
               "跌破200线且均线下行=飞刀，工具判观望。别因'看着便宜'接刀——历史上接刀胜率最差、浮亏最深。")
 
+    # —— 🔍 个股详情：点击展开看 基本面 + 新闻 + 深度分析（只对'可建仓'的票，避免一次拉太多）——
+    if not green.empty and (flt == "全部" or "可建仓" in flt):
+        st.markdown("##### 🔍 个股详情（点开看基本面 / 新闻 / 深度分析）")
+        for r in green.to_dict("records"):
+            tk = r["票"]
+            _lab = (f'{r["_tag"]} {tk}　回调{r["回调"]*100:+.0f}%　年化{r.get("策略年化", float("nan")):+.0f}%　'
+                    f'α{r.get("αvsSPY", float("nan")):+.0f}%　胜率{r.get("现价买胜率", float("nan")):.0f}%')
+            with st.expander(_lab):
+                st.markdown(f"**工具策略(v3.1中性暴露)**：年化 {r.get('策略年化', float('nan')):+.0f}% · 夏普 {r.get('夏普', float('nan')):.2f} · "
+                            f"最大回撤 {r.get('策略回撤', float('nan')):+.0f}% · α vsSPY {r.get('αvsSPY', float('nan')):+.0f}% · β {r.get('β', float('nan')):.2f}")
+                st.markdown(f"**入场**：{r['评级']} · 现价 {r['现价']:.1f} · RSI {r.get('RSI', float('nan')):.0f} · "
+                            f"距200线 {r.get('距200线', float('nan'))*100:+.0f}% · 现价买胜率 {r.get('现价买胜率', float('nan')):.0f}% · "
+                            f"回踩支撑 {r['回踩支撑位/状态']} · 离场 {r['离场']}")
+                # 基本面
+                try:
+                    _info = c_fund_info(tk)
+                    def _ff(k, fmt, mul=1.0):
+                        v = _info.get(k)
+                        return fmt.format(v * mul) if (v is not None and v == v) else "—"
+                    st.markdown("**基本面**：市值 " + _ff("marketCap", "{:.0f}B", 1e-9) + " · PE " + _ff("trailingPE", "{:.1f}")
+                                + " · 前瞻PE " + _ff("forwardPE", "{:.1f}") + " · PEG " + _ff("pegRatio", "{:.2f}")
+                                + " · 营收增 " + _ff("revenueGrowth", "{:+.0%}") + " · 净利率 " + _ff("profitMargins", "{:+.0%}")
+                                + " · ROE " + _ff("returnOnEquity", "{:+.0%}") + " · 负债/权益 " + _ff("debtToEquity", "{:.0f}"))
+                    _tgt = _info.get("targetMeanPrice")
+                    if _tgt and _tgt == _tgt and r["现价"]:
+                        st.caption(f"分析师目标均价 {_tgt:.1f}（距现价 {_tgt/r['现价']-1:+.0%}）· 评级 {_info.get('recommendationKey') or '—'} · "
+                                   f"{_info.get('numberOfAnalystOpinions') or '?'} 家"
+                                   + (f" · ⚠️数据{_info['_stale']}" if _info.get("_stale") else ""))
+                except Exception as _e:  # noqa: BLE001
+                    st.caption(f"基本面暂不可用（限流/{type(_e).__name__}），稍后刷新或点 Claude 深析。")
+                # 新闻(lazy) + Claude
+                _nc = st.columns([1, 1])
+                if _nc[0].button(f"📰 读 {tk} 最新新闻", key=f"scan_news_{tk}", use_container_width=True):
+                    try:
+                        with st.spinner("抓新闻…"):
+                            _arts = c_read_articles(tk, False, end, 4)
+                        if not _arts:
+                            st.caption("暂无抓到新闻。")
+                        for _a in _arts:
+                            st.markdown(f"- [{_a.get('title') or '(无题)'}]({_a.get('url') or '#'}) · {_a.get('provider') or ''} {_a.get('date') or ''}")
+                            if _a.get("excerpts"):
+                                st.caption("　" + " / ".join(_a["excerpts"][:2]))
+                    except Exception as _e:  # noqa: BLE001
+                        st.caption(f"新闻抓取失败（{type(_e).__name__}）。")
+                with _nc[1]:
+                    claude_deep_button(f"🤖 Claude 深析 {tk}",
+                                       f"深度分析 {tk}：读全网新闻全文 + 作战简报，给一句话判断、为什么是这些价位、"
+                                       f"已发生什么、未来催化剂、市场已price in 什么、中长期定位（quant-deep-brief 口径·校准非预测）。",
+                                       key=f"scan_cl_{tk}", hint=False)
+
     st.divider()
-    st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯。"
-               "数据按上一收盘计。下单按你券商实时价 + 支撑位挂分批单。")
-    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "RSI", "距200线", "现价买胜率", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
+    st.caption("📖 「可建仓」= 趋势健康 + 现价/回踩在技术支撑，**不是预测最低点**；离场列=该票当前撤离预警灯；"
+               "策略年化/α/β=按工具暴露规则回测(点估)，α多来自票本身质量+降beta保留非择时。数据按上一收盘计。")
+    _md = "# 建仓扫描 " + uni + "\n\n" + pd.DataFrame(rows)[["票", "评级", "回调", "现价买胜率", "策略年化", "αvsSPY", "β", "夏普", "离场", "回踩支撑位/状态"]].to_markdown(index=False)
     st.download_button("⬇️ 导出扫描结果(Markdown)", _md, file_name=f"建仓扫描_{uni}_{end}.md", mime="text/markdown")
 
 
